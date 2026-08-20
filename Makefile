@@ -83,6 +83,23 @@ seed: ## Charger le jeu de démonstration (entièrement fictif)
 	cd apps/api && PYTHONPATH=src ../../$(PY) -m metreo_api.seed
 
 .PHONY: skills
+clean-install: ## Prouver qu'une installation depuis les seuls manifestes démarre
+	$(PYTHON) scripts/check_clean_install.py --constraints constraints/api.txt
+
+lock: ## Régénérer constraints/api.txt depuis une résolution propre
+	@tmp=$$(mktemp -d); \
+	$(PYTHON) -m venv $$tmp/venv; \
+	$$tmp/venv/bin/pip install --quiet --upgrade pip; \
+	$$tmp/venv/bin/pip install --quiet ./packages/domain "./apps/api[dev,postgres]"; \
+	{ echo "# Verrou de résolution Python, régénéré par : make lock"; \
+	  echo "# Les manifestes (pyproject.toml) restent la source de vérité des"; \
+	  echo "# dépendances ; ce fichier ne fait que figer la résolution obtenue,"; \
+	  echo "# afin qu'une installation d'aujourd'hui soit celle de la CI."; \
+	  $$tmp/venv/bin/pip freeze --exclude-editable \
+	    | grep -viE '^(metreo-api|metreo-domain)=='; } > constraints/api.txt; \
+	rm -rf $$tmp; \
+	echo "constraints/api.txt régénéré."
+
 skills: ## Contrôler les skills du dépôt
 	$(PY) scripts/check_skills.py
 
@@ -119,6 +136,7 @@ verify: ## Tout vérifier, dans l'ordre de la CI, sans rien masquer
 	@$(MAKE) --no-print-directory test-domain
 	@$(MAKE) --no-print-directory test-api
 	@$(MAKE) --no-print-directory test-api-postgres
+	@$(MAKE) --no-print-directory clean-install
 	@$(MAKE) --no-print-directory skills
 	@$(MAKE) --no-print-directory secrets
 	@$(MAKE) --no-print-directory compose-config
