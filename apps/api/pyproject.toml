@@ -8,7 +8,11 @@ dependencies = [
   "uvicorn[standard]>=0.30",
   "sqlalchemy>=2.0.30",
   "alembic>=1.13",
-  "pydantic>=2.7",
+  # L'extra "email" est requis, pas optionnel : schemas.py utilise EmailStr,
+  # qui lève ImportError sans email-validator. La CI l'installait
+  # explicitement dans sa ligne pip, ce qui masquait le manque ici — une
+  # installation faite depuis ce fichier seul était cassée.
+  "pydantic[email]>=2.7",
   "pydantic-settings>=2.3",
   "python-multipart>=0.0.9",
   "pyjwt>=2.8",
