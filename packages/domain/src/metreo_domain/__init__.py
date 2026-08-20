@@ -4,6 +4,7 @@ Pure Python, no framework and no I/O. Everything here is deterministic and is
 the single source of truth for money, units and price computation.
 """
 
+from . import bounds
 from .errors import (
     AmbiguousConversionError,
     CurrencyMismatchError,
@@ -74,6 +75,7 @@ __all__ = [
     "TaxRate",
     "Unit",
     "UnknownUnitError",
+    "bounds",
     "compute_estimate",
     "compute_flat_line_price",
     "compute_line_price",

@@ -20,6 +20,7 @@ from pydantic import (
     field_serializer,
 )
 
+from metreo_domain import bounds
 from metreo_domain.money import canonical_text
 
 
@@ -296,11 +297,29 @@ class PriceItemPage(BaseModel):
     page: Page
 
 
+def _bounded(bound: bounds.Bound) -> Any:
+    """Champ Pydantic dérivé d'une borne métier du domaine.
+
+    La valeur des bornes vit dans ``metreo_domain.bounds`` et nulle part
+    ailleurs : redéclarer ici un maximum en dur produirait deux vérités qui
+    divergeraient à la première correction.
+    """
+    if bound.minimum_inclusive:
+        return Field(ge=bound.minimum, le=bound.maximum)
+    return Field(gt=bound.minimum, le=bound.maximum)
+
+
+def _bounded_opt(bound: bounds.Bound) -> Any:
+    if bound.minimum_inclusive:
+        return Field(default=None, ge=bound.minimum, le=bound.maximum)
+    return Field(default=None, gt=bound.minimum, le=bound.maximum)
+
+
 class PriceItemCreate(BaseModel):
     code: str = Field(min_length=1, max_length=60)
     label: str = Field(min_length=1, max_length=255)
     unit_code: str = Field(min_length=1, max_length=12)
-    unit_price: Decimal = Field(ge=0)
+    unit_price: Decimal = _bounded(bounds.UNIT_PRICE)
     family: str | None = None
     resource_kind: Literal[
         "material", "labor", "equipment", "transport", "disposal", "subcontract", "other"
@@ -362,23 +381,23 @@ class ComponentSpecIn(BaseModel):
     resource_kind: Literal[
         "material", "labor", "equipment", "transport", "disposal", "subcontract", "other"
     ] = "other"
-    consumption: Decimal | None = None
+    consumption: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
     resource_unit_code: str | None = None
-    unit_price: Decimal | None = None
-    loss_ratio: Decimal | None = None
+    unit_price: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
+    loss_ratio: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
     convert_boq_quantity: bool = False
-    density_value: Decimal | None = None
+    density_value: Decimal | None = _bounded_opt(bounds.DENSITY)
     density_source: str | None = None
-    output_rate: Decimal | None = None
-    hourly_rate: Decimal | None = None
-    crew_size: Decimal | None = None
-    payload_value: Decimal | None = None
+    output_rate: Decimal | None = _bounded_opt(bounds.OUTPUT_RATE)
+    hourly_rate: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
+    crew_size: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
+    payload_value: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
     payload_unit_code: str | None = None
-    cost_per_rotation: Decimal | None = None
+    cost_per_rotation: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
     round_up: bool = True
-    distance_km: Decimal | None = None
-    rate_per_km: Decimal | None = None
-    lump_sum_amount: Decimal | None = None
+    distance_km: Decimal | None = _bounded_opt(bounds.DISTANCE_KM)
+    rate_per_km: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
+    lump_sum_amount: Decimal | None = _bounded_opt(bounds.TOTAL)
 
 
 class CompositePriceCreate(BaseModel):
@@ -422,12 +441,14 @@ class BoqItemCreate(BaseModel):
     position: str = Field(min_length=1, max_length=40)
     designation: str = Field(min_length=1)
     unit_code: str = Field(default="fft", max_length=12)
-    quantity: Decimal = Field(default=Decimal("0"), ge=0)
+    quantity: Decimal = Field(
+        default=Decimal("0"), ge=bounds.QUANTITY.minimum, le=bounds.QUANTITY.maximum
+    )
     kind: Literal["section", "item", "option", "variant", "provisional"] = "item"
     code: str | None = Field(default=None, max_length=60)
     sort_index: int | None = None
     formula: str | None = None
-    client_quantity: Decimal | None = None
+    client_quantity: Decimal | None = _bounded_opt(bounds.QUANTITY)
     notes: str | None = None
     price_item_id: str | None = None
     composite_price_id: str | None = None
@@ -436,11 +457,11 @@ class BoqItemCreate(BaseModel):
 class BoqItemUpdate(BaseModel):
     designation: str | None = None
     unit_code: str | None = None
-    quantity: Decimal | None = Field(default=None, ge=0)
+    quantity: Decimal | None = _bounded_opt(bounds.QUANTITY)
     kind: Literal["section", "item", "option", "variant", "provisional"] | None = None
     status: Literal["proposed", "verified", "approved", "rejected"] | None = None
     formula: str | None = None
-    client_quantity: Decimal | None = None
+    client_quantity: Decimal | None = _bounded_opt(bounds.QUANTITY)
     notes: str | None = None
     price_item_id: str | None = None
     composite_price_id: str | None = None
