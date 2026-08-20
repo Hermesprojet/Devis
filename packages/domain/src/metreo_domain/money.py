@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_EVEN, ROUND_HALF_UP, Decimal, localcontext
 from typing import Final
 
-from .errors import CurrencyMismatchError
+from .errors import CurrencyMismatchError, NonFiniteAmountError
 
 #: Working precision for intermediate computations. Wide enough that chained
 #: multiplications (quantity x consumption x price x coefficient) do not lose
@@ -35,14 +35,32 @@ def to_decimal(value: object) -> Decimal:
     decimal literal the caller wrote instead of the binary artefact.
     """
     if isinstance(value, Decimal):
-        return value
+        return _finite(value)
     if isinstance(value, int):
         return Decimal(value)
     if isinstance(value, float):
-        return Decimal(repr(value))
+        return _finite(Decimal(repr(value)))
     if isinstance(value, str):
-        return Decimal(value.strip().replace(" ", "").replace(",", "."))
+        return _finite(Decimal(value.strip().replace(" ", "").replace(",", ".")))
     raise TypeError(f"cannot convert {type(value).__name__} to Decimal")
+
+
+def _finite(value: Decimal) -> Decimal:
+    """Refuse ``Infinity`` et ``NaN`` dès la porte d'entrée.
+
+    Les laisser passer ne produit pas une valeur fausse mais une valeur
+    *incomparable* : toute vérification de borne en aval lève
+    ``InvalidOperation`` au lieu de refuser proprement, et le montant finit en
+    base si aucune comparaison n'a lieu.
+    """
+    if not value.is_finite():
+        raise NonFiniteAmountError(
+            f"{value} n'est pas un montant exploitable. "
+            "Vérifier la source de la valeur : un champ vide, une division par "
+            "zéro en amont ou un import mal formé produisent ce cas.",
+            value=str(value),
+        )
+    return value
 
 
 def canonical_text(value: object) -> str:

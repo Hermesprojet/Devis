@@ -17,6 +17,7 @@ from ..schemas import (
     BoqItemBulkCreate,
     BoqItemCreate,
     BoqItemOut,
+    BoqItemTransition,
     BoqItemUpdate,
     BoqOut,
 )
@@ -286,6 +287,87 @@ def update_item(
     return item
 
 
+#: Machine d'états des lignes de bordereau. Une transition absente est refusée
+#: plutôt qu'ignorée : « rejeté » ne revient pas silencieusement à « proposé »,
+#: et « approuvé » ne se quitte que par une décision explicite.
+ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
+    "proposed": frozenset({"verified", "rejected"}),
+    "verified": frozenset({"approved", "proposed", "rejected"}),
+    "approved": frozenset({"verified", "rejected"}),
+    "rejected": frozenset({"proposed"}),
+}
+
+
+@router.post(
+    "/boq-items/{item_id}/transition",
+    response_model=BoqItemOut,
+    summary="Changer le statut d'une ligne",
+)
+def transition_item(
+    item_id: str,
+    payload: BoqItemTransition,
+    context: TenantContext = Depends(require(Permission.BOQ_APPROVE)),
+    session: Session = Depends(session_scope),
+) -> BoqItem:
+    """Seul chemin vers un changement de statut.
+
+    Exige `BOQ_APPROVE` dans tous les sens : approuver, rejeter et déclasser
+    engagent autant l'un que l'autre. Déclasser sans droit rouvrirait le verrou
+    qui protège les quantités approuvées.
+    """
+    item = get_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
+    before = item.status
+    target = payload.status
+
+    if target == before:
+        return item
+
+    if target not in ALLOWED_TRANSITIONS.get(before, frozenset()):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "illegal_status_transition",
+                "message": f"Un poste « {before} » ne peut pas passer à « {target} ».",
+                "from": before,
+                "to": target,
+                "allowed": sorted(ALLOWED_TRANSITIONS.get(before, frozenset())),
+            },
+        )
+
+    if before == "approved" and not payload.reason:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "transition_reason_required",
+                "message": "Quitter le statut approuvé exige un motif.",
+            },
+        )
+
+    item.status = target
+    session.flush()
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        # « approuvé » garde son nom propre : c'est l'action que l'on cherche
+        # dans le journal, et la noyer dans un générique la rendrait
+        # introuvable.
+        action=("boq_item.approved" if target == "approved" else "boq_item.status_changed"),
+        object_type="boq_item",
+        object_id=item.id,
+        summary=f"Poste {item.position} : {before} → {target}",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        payload={
+            "from": before,
+            "to": target,
+            "quantity": str(item.quantity),
+            "unit": item.unit_code,
+            "reason": payload.reason,
+        },
+    )
+    return item
+
+
 @router.post(
     "/boq-items/{item_id}/approve",
     response_model=BoqItemOut,
@@ -296,20 +378,24 @@ def approve_item(
     context: TenantContext = Depends(require(Permission.BOQ_APPROVE)),
     session: Session = Depends(session_scope),
 ) -> BoqItem:
+    """Raccourci vers la transition « approuvé », gardé pour compatibilité.
+
+    Passe par la même machine d'états : une ligne rejetée doit d'abord
+    revenir à « proposé », elle ne saute pas directement à « approuvé ».
+    """
     item = get_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
-    item.status = "approved"
-    session.flush()
-    audit.record(
-        session,
-        organization_id=context.organization_id,
-        action="boq_item.approved",
-        object_type="boq_item",
-        object_id=item.id,
-        summary=f"Poste {item.position} approuvé ({item.quantity} {item.unit_code})",
-        actor_user_id=context.user.id,
-        actor_email=context.user.email,
+    if item.status == "approved":
+        return item
+    if item.status == "proposed":
+        # Chemin courant : proposé → vérifié → approuvé, franchi d'un coup par
+        # celui qui détient déjà le droit d'approuver.
+        item.status = "verified"
+    return transition_item(
+        item_id,
+        BoqItemTransition(status="approved"),
+        context=context,
+        session=session,
     )
-    return item
 
 
 @router.delete(

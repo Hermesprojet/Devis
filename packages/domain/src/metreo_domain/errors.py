@@ -57,3 +57,27 @@ class MissingPriceError(DomainError):
 
 class PricingConfigurationError(DomainError):
     code = "pricing_configuration"
+
+
+class OutOfBoundsError(DomainError):
+    """Une valeur sort de la plage acceptée pour son rôle métier.
+
+    Vit ici plutôt que dans ``bounds`` pour que ``money`` puisse la lever sans
+    dépendre du module de bornes : un montant non fini est refusé dès sa
+    conversion, bien avant qu'une borne ne soit consultée.
+    """
+
+    code = "out_of_bounds"
+
+
+class NonFiniteAmountError(OutOfBoundsError):
+    """``Infinity`` ou ``NaN`` là où un montant est attendu.
+
+    Refusé à la conversion, et non plus loin : ``Decimal("NaN") > x`` ne rend
+    pas ``False``, il lève ``InvalidOperation``. Une valeur non finie qui entre
+    dans le moteur fait donc échouer la première comparaison de borne venue,
+    sous la forme d'une exception non métier — et, si elle l'évite, elle
+    atteint la base.
+    """
+
+    code = "non_finite_amount"

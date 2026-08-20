@@ -124,6 +124,7 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
         },
         "PATCH /api/v1/boq-items/{item_id}": {"designation": "Renommé"},
         "POST /api/v1/boq-items/{item_id}/approve": {},
+        "POST /api/v1/boq-items/{item_id}/transition": {"status": "verified"},
         "POST /api/v1/price-books": {"name": "Bibliothèque"},
         "POST /api/v1/price-books/{price_book_id}/versions": {"label": "v1"},
         "POST /api/v1/price-books/versions/{version_id}/items": {

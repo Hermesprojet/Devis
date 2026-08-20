@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
 
-from .errors import DomainError
+from .errors import OutOfBoundsError
 
 #: Capacité brute du stockage, dérivée de ``NUMERIC(28, 10)``.
 SQL_PRECISION: Final[int] = 28
@@ -37,12 +37,6 @@ SQL_SCALE: Final[int] = 10
 #: 999 999 999 999 999 999,999 999 999 9, soit tout ce qui est strictement
 #: inférieur à 10^18. La valeur 10^18 elle-même ne tient pas.
 SQL_MAX_ABS: Final[Decimal] = Decimal(10) ** (SQL_PRECISION - SQL_SCALE)
-
-
-class OutOfBoundsError(DomainError):
-    """Une valeur sort de la plage acceptée pour son rôle métier."""
-
-    code = "out_of_bounds"
 
 
 @dataclass(frozen=True, slots=True)

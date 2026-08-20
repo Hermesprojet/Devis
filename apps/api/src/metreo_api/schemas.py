@@ -454,12 +454,29 @@ class BoqItemCreate(BaseModel):
     composite_price_id: str | None = None
 
 
+class BoqItemTransition(BaseModel):
+    """Changement de statut explicite, distinct d'une modification de contenu."""
+
+    status: Literal["proposed", "verified", "approved", "rejected"]
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class BoqItemUpdate(BaseModel):
+    # Un champ inconnu est refusé plutôt qu'ignoré. Sans cela, un
+    # `PATCH {"status": "approved"}` renvoyait 200 sans rien changer : le
+    # privilège n'était pas obtenu, mais l'appelant croyait l'avoir eu, et le
+    # défaut restait invisible en lisant les réponses.
+    model_config = ConfigDict(extra="forbid")
+
     designation: str | None = None
     unit_code: str | None = None
     quantity: Decimal | None = _bounded_opt(bounds.QUANTITY)
     kind: Literal["section", "item", "option", "variant", "provisional"] | None = None
-    status: Literal["proposed", "verified", "approved", "rejected"] | None = None
+    # `status` est délibérément absent. Le laisser ici rendait la matrice
+    # route-permission verte tout en offrant une élévation de privilège par un
+    # champ : un porteur de BOQ_WRITE refusé sur /approve obtenait le même
+    # résultat par PATCH. Les changements de statut passent par
+    # /boq-items/{id}/transition, qui exige BOQ_APPROVE.
     formula: str | None = None
     client_quantity: Decimal | None = _bounded_opt(bounds.QUANTITY)
     notes: str | None = None

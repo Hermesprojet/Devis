@@ -14,6 +14,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
+from .bounds import check_total
 from .money import DEFAULT_ROUNDING, Money, RoundingPolicy, canonical_text, money_sum
 from .pricing import (
     Component,
@@ -225,6 +226,21 @@ def compute_estimate(
                 included_in_total=included,
             )
         )
+
+    # Chaque ligne a déjà été contrôlée par `compute_line_price`. Leur somme,
+    # elle, ne l'a pas été : trois lignes acceptables produisent un total qui
+    # ne l'est pas. Les taxes sont incluses parce que le TTC est stocké et
+    # exporté au même titre que le HT.
+    check_total(direct.amount, label="déboursé sec de l'estimation")
+    check_total(cost.amount, label="prix de revient de l'estimation")
+    check_total(selling.amount, label="prix de vente HT de l'estimation")
+    check_total(options.amount, label="total des options")
+    for tax in taxes:
+        check_total(tax_accumulator[tax.code].amount, label=f"total de {tax.code}")
+    check_total(
+        selling.amount + sum(tax_accumulator[t.code].amount for t in taxes),
+        label="total TTC de l'estimation",
+    )
 
     return EstimateResult(
         currency=currency,

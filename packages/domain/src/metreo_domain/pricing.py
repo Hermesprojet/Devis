@@ -24,6 +24,7 @@ from decimal import Decimal, localcontext
 from enum import Enum
 from typing import Any, Protocol
 
+from .bounds import check_total
 from .errors import InvalidRateError, PricingConfigurationError
 from .money import WORKING_PRECISION, Money, RoundingPolicy, canonical_text, money_sum, to_decimal
 from .units import Density, Quantity, convert, get_unit
@@ -583,6 +584,13 @@ def compute_line_price(
         currency,
     )
     tax_amounts = tuple((tax, selling_price_ht.scaled_by(tax.rate)) for tax in taxes)
+
+    # Les bornes d'entrée ne suffisent pas : une quantité et un prix unitaire
+    # chacun dans sa plage produisent un total qui n'y est pas. C'est ici, sur
+    # le montant CALCULÉ, que le stockage est réellement protégé.
+    check_total(direct_cost.amount, label="déboursé sec de la ligne")
+    check_total(cost_price.amount, label="prix de revient de la ligne")
+    check_total(selling_price_ht.amount, label="prix de vente HT de la ligne")
 
     return LinePriceResult(
         quantity=quantity,
