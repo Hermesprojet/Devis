@@ -101,7 +101,7 @@ lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	  echo "# Les manifestes (pyproject.toml) restent la source de vérité des"; \
 	  echo "# dépendances ; ce fichier ne fait que figer la résolution obtenue."; \
 	  $$tmp/venv/bin/pip freeze --exclude-editable \
-	    | grep -viE '^(metreo-api|metreo-domain)=='; } > constraints/api.txt; \
+	    | grep -viE '^metreo-'; } > constraints/api.txt; \
 	rm -rf $$tmp; \
 	echo "constraints/api.txt régénéré."
 

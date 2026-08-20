@@ -32,6 +32,23 @@ def main() -> int:
     parser.add_argument("--constraints", default=None)
     args = parser.parse_args()
 
+    if args.constraints:
+        lock = (ROOT / args.constraints).read_text(encoding="utf-8")
+        unportable = [
+            line
+            for line in lock.splitlines()
+            if line and not line.startswith("#") and ("@" in line or line.startswith("/"))
+        ]
+        if unportable:
+            # `pip freeze` écrit les paquets installés depuis un chemin local
+            # sous la forme « nom @ file:///... ». Un tel verrou épingle
+            # l'arborescence de la machine qui l'a produit : il échoue partout
+            # ailleurs, et il y fuite un chemin personnel.
+            print("Verrou non portable — chemins locaux épinglés :", file=sys.stderr)
+            for line in unportable:
+                print(f"  {line}", file=sys.stderr)
+            return 1
+
     with tempfile.TemporaryDirectory() as tmp:
         env_dir = Path(tmp) / "venv"
         print(f"Environnement vierge : {env_dir}")
@@ -51,7 +68,11 @@ def main() -> int:
         proc = run(install)
         if proc.returncode != 0:
             print("ÉCHEC de l'installation :", file=sys.stderr)
-            print(proc.stdout[-3000:], proc.stderr[-3000:], file=sys.stderr)
+            # Sortie complète : pip place la section « The conflict is caused
+            # by » au milieu, et la tronquer avait masqué la cause réelle
+            # pendant deux tours de CI.
+            print(proc.stdout, file=sys.stderr)
+            print(proc.stderr, file=sys.stderr)
             return 1
 
         # Aucune dépendance de développement n'est installée : le contrôle
