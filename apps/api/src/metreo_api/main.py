@@ -70,22 +70,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request_id = request.headers.get("X-Request-Id") or uuid.uuid4().hex
         token = request_id_var.set(request_id)
         started = time.perf_counter()
+        # Le `reset` doit venir APRÈS la journalisation, pas avant : placé dans
+        # un `finally` en amont du `logger.info`, il vidait la variable de
+        # contexte et chaque ligne de journal portait `request_id: "-"`. La
+        # corrélation annoncée n'existait donc pour aucune requête.
         try:
             response = await call_next(request)
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            response.headers["X-Request-Id"] = request_id
+            logger.info(
+                "http_request",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                },
+            )
+            return response
         finally:
             request_id_var.reset(token)
-        duration_ms = round((time.perf_counter() - started) * 1000, 2)
-        response.headers["X-Request-Id"] = request_id
-        logger.info(
-            "http_request",
-            extra={
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": duration_ms,
-            },
-        )
-        return response
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:

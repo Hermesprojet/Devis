@@ -22,7 +22,9 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from metreo_domain.errors import UnknownUnitError
+from metreo_domain import bounds
+from metreo_domain.bounds import OutOfBoundsError
+from metreo_domain.errors import DomainError, UnknownUnitError
 from metreo_domain.money import to_decimal
 from metreo_domain.units import get_unit
 
@@ -162,17 +164,57 @@ class ParsedRow:
         return not self.errors
 
 
-def _parse_decimal(value: str, column: str, errors: list[RowError]) -> Decimal | None:
+def _parse_decimal(
+    value: str,
+    column: str,
+    errors: list[RowError],
+    *,
+    bound: bounds.Bound | None = None,
+) -> Decimal | None:
+    """Convertit et **borne**, comme le fait la saisie manuelle.
+
+    L'import contournait les bornes des schémas Pydantic : un prix de 1e20 ou
+    un `Infinity` entraient sans un mot. `DomainError` est rattrapée en plus
+    des erreurs arithmétiques parce que `to_decimal` refuse désormais les
+    valeurs non finies — sans cela, un `Infinity` dans une cellule ferait
+    échouer tout le fichier au lieu de la seule ligne fautive.
+    """
     if value is None or not str(value).strip():
         return None
     try:
         parsed = to_decimal(str(value))
+    except DomainError as exc:
+        errors.append(RowError(column, exc.code, f"« {value} » : {exc.message}"))
+        return None
     except (InvalidOperation, ArithmeticError, ValueError, TypeError):
         errors.append(
             RowError(column, "invalid_number", f"« {value} » n'est pas un nombre valide.")
         )
         return None
+    if bound is not None:
+        try:
+            bound.check(parsed, label=column)
+        except OutOfBoundsError as exc:
+            errors.append(RowError(column, exc.code, exc.message))
+            return None
     return parsed
+
+
+def _check_length(value: str | None, column: str, maximum: int, errors: list[RowError]) -> None:
+    """Les longueurs SQL sont des règles métier, pas un détail de stockage.
+
+    Sans ce contrôle, une valeur trop longue passe la prévisualisation puis
+    échoue à l'écriture — sur PostgreSQL par une erreur SQL, sur SQLite par une
+    troncature silencieuse. Les deux sont pires qu'un refus de ligne.
+    """
+    if value and len(value) > maximum:
+        errors.append(
+            RowError(
+                column,
+                "too_long",
+                f"« {value[:20]}… » fait {len(value)} caractères, maximum {maximum}.",
+            )
+        )
 
 
 def _parse_date(value: str, column: str, errors: list[RowError]) -> date | None:
@@ -266,7 +308,9 @@ def parse_csv(
                     )
                 )
 
-        price = _parse_decimal(values.get("unit_price", ""), "unit_price", errors)
+        price = _parse_decimal(
+            values.get("unit_price", ""), "unit_price", errors, bound=bounds.UNIT_PRICE
+        )
         if price is None and not any(e.column == "unit_price" for e in errors):
             errors.append(RowError("unit_price", "required", "Le prix unitaire est obligatoire."))
         elif price is not None and price < 0:
@@ -301,18 +345,44 @@ def parse_csv(
                 RowError("valid_to", "invalid_range", "La date de fin précède la date de début.")
             )
 
-        min_quantity = _parse_decimal(values.get("min_quantity", ""), "min_quantity", errors)
+        min_quantity = _parse_decimal(
+            values.get("min_quantity", ""), "min_quantity", errors, bound=bounds.QUANTITY
+        )
         lead_time_raw = values.get("lead_time_days", "")
         lead_time: int | None = None
         if lead_time_raw:
             try:
-                lead_time = int(Decimal(lead_time_raw.replace(",", ".")))
+                as_decimal = Decimal(lead_time_raw.replace(",", "."))
             except (InvalidOperation, ValueError):
                 errors.append(
                     RowError(
                         "lead_time_days", "invalid_number", f"Délai « {lead_time_raw} » invalide."
                     )
                 )
+            else:
+                # Un délai est un nombre entier de jours. Tronquer 1,5 en 1
+                # produit une donnée fausse que personne ne verra jamais :
+                # mieux vaut refuser la ligne et laisser corriger.
+                if not as_decimal.is_finite() or as_decimal != as_decimal.to_integral_value():
+                    errors.append(
+                        RowError(
+                            "lead_time_days",
+                            "not_an_integer",
+                            f"Délai « {lead_time_raw} » : un nombre entier de jours est attendu.",
+                        )
+                    )
+                elif as_decimal < 0:
+                    errors.append(
+                        RowError("lead_time_days", "negative", "Un délai ne peut pas être négatif.")
+                    )
+                else:
+                    lead_time = int(as_decimal)
+
+        _check_length(code, "code", 60, errors)
+        _check_length(values.get("label"), "label", 255, errors)
+        _check_length(values.get("supplier_name"), "supplier_name", 200, errors)
+        _check_length(values.get("region_code"), "region_code", 20, errors)
+        _check_length(values.get("family"), "family", 120, errors)
 
         duplicate_in_file = False
         if code:
