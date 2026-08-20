@@ -27,7 +27,7 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 | 3 | Création d'un projet | ✅ | `routers/projects.py` |
 | 4 | Import CSV avec prévisualisation et erreurs | ✅ | `test_price_import.py` (15 tests) |
 | 5 | Création manuelle d'un bordereau | ✅ | `test_boq.py` (12 tests) |
-| 6 | Calcul déterministe d'un sous-détail | ✅ | `test_pricing.py` (28 tests) |
+| 6 | Calcul déterministe d'un sous-détail | ✅ | `test_pricing.py` (26 tests) |
 | 7 | Version d'estimation gelable | ✅ | `test_estimating.py` |
 | 8 | Export CSV et aperçu de devis imprimable | ✅ | `test_estimating.py` |
 | 9 | Audit des actions principales | ✅ | `test_audit.py` (10 tests) |
