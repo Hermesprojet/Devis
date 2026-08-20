@@ -84,11 +84,11 @@ seed: ## Charger le jeu de démonstration (entièrement fictif)
 
 .PHONY: skills
 clean-install: ## Prouver qu'une installation depuis les seuls manifestes démarre
-	$(PYTHON) scripts/check_clean_install.py --constraints constraints/api.txt
+	$(PY) scripts/check_clean_install.py --constraints constraints/api.txt
 
 lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	@tmp=$$(mktemp -d); \
-	$(PYTHON) -m venv $$tmp/venv; \
+	$(PY) -m venv $$tmp/venv; \
 	$$tmp/venv/bin/pip install --quiet --upgrade pip; \
 	$$tmp/venv/bin/pip install --quiet ./packages/domain "./apps/api[dev,postgres]"; \
 	{ echo "# Verrou de résolution Python, régénéré par : make lock"; \
