@@ -5,7 +5,7 @@ staged CSV imports, sub-details, bill of quantities, estimates with freezable
 versions, and the append-only audit journal.
 
 Revision ID: d88792b38c2d
-Revises: 
+Revises:
 Create Date: 2026-08-20 17:26:42.408810+00:00
 """
 
