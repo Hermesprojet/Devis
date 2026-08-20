@@ -192,6 +192,36 @@ jobs:
           echo "Dossier de vérification rattaché à $commit"
 
 
+  audit:
+    name: Vulnérabilités des dépendances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          pip install ./packages/domain "./apps/api[dev,postgres]"
+          # Le rapport est consigné dans les journaux du job. Il ne fait pas
+          # échouer la construction aujourd'hui : les avis en cours exigent des
+          # montées de version majeures, tranchées séparément et testées — voir
+          # docs/PHASE1_VERIFICATION.md, section « Vulnérabilités connues ».
+          pip-audit --progress-spinner off || true
+      - name: Dépendances JavaScript
+        working-directory: apps/web
+        run: |
+          npm ci
+          npm audit || true
+      - name: Rappel
+        run: |
+          echo "::notice::Rapport consigné, non bloquant. La montée de Next.js"
+          echo "::notice::vers 16.3 est suivie dans docs/PHASE1_VERIFICATION.md."
+
   secrets:
     name: Aucun secret commité
     runs-on: ubuntu-latest

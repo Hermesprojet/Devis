@@ -1,6 +1,8 @@
 # Vérification de la Phase 1
 
-> Ce document est **lié à un commit précis**. Les compteurs qu'il contient sont
+> Ce document est **lié au commit qu'il vérifie** — celui sur lequel `make verify`
+> et `make e2e` ont réellement tourné, donc le parent du commit qui l'introduit :
+> un document ne peut pas citer sa propre empreinte. Les compteurs qu'il contient sont
 > vrais pour ce commit et faux dès le suivant : c'est la raison pour laquelle ils
 > vivent ici et nulle part ailleurs — ni dans les skills, ni dans le `README.md`.
 > Pour le régénérer, relancer `make verify` sur le commit concerné et reprendre
@@ -10,12 +12,12 @@
 
 | | |
 | --- | --- |
-| Commit | `6ccab1dcc946a79c9b42dcadc2f593f8f2f65a04` |
-| Abrégé | `6ccab1d` |
+| Commit | `7fda8bae72a09e0eed9c106c2c4c7e4d9a844f92` |
+| Abrégé | `7fda8ba` |
 | Branche | `claude/new-session-jdj11s` |
 | Pull request | [#1](https://github.com/Hermesprojet/Devis/pull/1) (brouillon) |
 | Tête Alembic | `d88792b38c2d` |
-| Fichiers versionnés | 117 |
+| Fichiers versionnés | 119 |
 
 ## Environnement de la vérification
 
@@ -78,9 +80,41 @@ l'annonce explicitement plutôt que de passer en silence.
 make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
 ```
 
+## Reproductibilité depuis un clone propre
+
+Vérifié réellement, pas supposé : `git clone` depuis GitHub dans un répertoire
+vide, puis `make install`, `make verify` et `make e2e`. Tout passe.
+
+Ce contrôle a trouvé un défaut que rien d'autre ne pouvait voir :
+`apps/api/pyproject.toml` déclarait `pydantic>=2.7` alors que `schemas.py`
+utilise `EmailStr`, qui exige l'extra `email`. Les trois jobs de CI
+installaient une liste de paquets écrite à la main — contenant
+`pydantic[email]` — au lieu d'installer le paquet lui-même : ils validaient un
+jeu de dépendances qui n'était pas celui du dépôt. Les deux sont corrigés, et
+la CI installe désormais `./apps/api` avec ses extras, si bien qu'un manque
+dans `pyproject.toml` casse la CI plutôt que le premier `git clone`.
+
+## Vulnérabilités connues des dépendances
+
+Consignées par le job « Vulnérabilités des dépendances », **sans faire échouer
+la construction** : les correctifs exigent des montées de version majeures, à
+trancher et à tester séparément. Rien n'est masqué — le rapport complet est
+dans les journaux du job.
+
+| Paquet | Gravité | Correctif | Exposition réelle aujourd'hui |
+| --- | --- | --- | --- |
+| `next` 15.5.4 | critique | ≥ 16.3.0 | Le produit n'est pas déployé. Les avis portent sur Server Actions, l'Image Optimizer, le middleware et le cache RSC — aucun n'est utilisé ici. À traiter **avant tout déploiement**. |
+| `postcss` | haute | montée transitive via `next` | idem |
+| `sharp` | haute | ≥ 0.35.0, transitive via `next` | idem |
+| `setuptools` 79.0.1 | — | ≥ 83.0.0 | outil de construction, absent de l'exécution |
+
+Le passage à Next.js 16 est un changement majeur : il change le comportement
+du framework et doit être fait dans sa propre tranche, avec les parcours
+Playwright pour filet.
+
 ## Intégration continue
 
-Sept jobs, `.github/workflows/ci.yml`, permissions du jeton limitées à
+Huit jobs, `.github/workflows/ci.yml`, permissions du jeton limitées à
 `contents: read` :
 
 | Job | Ce qu'il prouve |
@@ -91,6 +125,7 @@ Sept jobs, `.github/workflows/ci.yml`, permissions du jeton limitées à
 | Web | types et build de production |
 | Parcours web (Playwright) | les écrans fonctionnent contre l'API réelle |
 | Skills du dépôt | frontmatter, chemins cités, absence de données volatiles |
+| Vulnérabilités des dépendances | rapport `pip-audit` et `npm audit` consigné |
 | Aucun secret commité | pas de `.env` versionné, pas de motif de secret |
 
 ## Scénarios d'acceptation couverts
@@ -164,7 +199,7 @@ Sept jobs, `.github/workflows/ci.yml`, permissions du jeton limitées à
 ## Reproduire cette vérification
 
 ```bash
-git checkout 6ccab1d
+git checkout 7fda8ba
 make install
 make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
 make e2e
