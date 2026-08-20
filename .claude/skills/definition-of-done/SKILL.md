@@ -1,7 +1,9 @@
 ---
 name: definition-of-done
-description: À utiliser dès qu'une tranche de travail Metreo approche de sa fin ou qu'il faut dire si elle est finie — avant d'écrire « terminé », « livré », « prêt », « ça marche » ou « phase N close », avant de committer ou de demander une revue, pour lancer la bonne série de vérifications (pytest du domaine et de l'API, ruff format, ruff check, mypy, alembic upgrade/downgrade, seed, npm run typecheck et build), pour rédiger le compte rendu de fin d'itération (fonctionnalités réellement opérationnelles, fichiers créés ou modifiés, commandes de démarrage, résultats des tests, décisions et hypothèses, limites connues, prochaine tranche), pour trancher si un écran statique, un mock ou une fonction sans test métier peut être annoncé comme disponible, pour marquer des données de démonstration is_demo_data, pour vérifier que README.md, docs/ROADMAP.md et .env.example disent encore la vérité sur ce qui existe, ou pour décider ce qui ne doit jamais être commité (clé, .env, donnée personnelle réelle, prix de marché réel).
+description: À utiliser à la FIN d'une tranche de travail Metreo, quand il faut dire si elle est finie — avant d'écrire « terminé », « livré », « prêt », « ça marche » ou « phase N close », avant de committer ou de demander une revue, pour lancer la bonne série de vérifications (pytest du domaine et de l'API, ruff format, ruff check, mypy, alembic upgrade/downgrade, seed, npm run typecheck et build), pour lire les cinq jobs de CI, pour rédiger le compte rendu de fin d'itération (fonctionnalités réellement opérationnelles, fichiers créés ou modifiés, commandes de démarrage, résultats des tests, décisions et hypothèses, limites connues, prochaine tranche), pour trancher si un écran statique, un mock ou une fonction sans test métier peut être annoncé comme disponible, pour marquer des données de démonstration is_demo_data, pour vérifier que README.md, docs/ROADMAP.md et .env.example disent encore la vérité, ou pour décider ce qui ne doit jamais être commité. Décrit la PREUVE attendue, pas la règle métier prouvée.
 ---
+
+# Metreo — critères de « terminé » (phase 1, en vigueur)
 
 ## 1. La règle
 
@@ -27,7 +29,7 @@ phases), `docs/ROADMAP.md` (critères de fin, phase par phase, avec preuve).
 | 8 | Audit ajouté si nécessaire | `audit.record(...)` (`apps/api/src/metreo_api/services/audit.py`) sur création, modification, gel, export, import, changement de droits, plus un test dans `apps/api/tests/test_audit.py` |
 | 9 | Logs sans données sensibles | Champs passés au `JsonFormatter` (`apps/api/src/metreo_api/logging_config.py`) : identifiants, compteurs, durées. Jamais de contenu de document, de jeton, de mot de passe, d'adresse e-mail réelle ni de prix nominatif |
 | 10 | Documentation et `.env.example` à jour | Toute variable `METREO_*` **nouvelle** lue par `apps/api/src/metreo_api/config.py` est ajoutée à `.env.example` avec un commentaire — `app_name`, `api_prefix` et `jwt_algorithm` y manquent encore, c'est une dette, pas un précédent ; `README.md` et `docs/ROADMAP.md` corrigés dans le même lot |
-| 11 | Rien de sensible commité | `.gitignore` couvre `.env`, `/var/`, `*.sqlite3`, `*.key`, `*.pem` ; le job `secrets` de `.github/workflows/ci.yml` refuse un `.env` versionné et les motifs de clés |
+| 11 | Rien de sensible commité | Le job `secrets` de `.github/workflows/ci.yml` au vert (§5) ; règles de fond sur les secrets : **multitenant-security** |
 | 12 | Limites annoncées honnêtement | Tableau des phases de `README.md`, `docs/ROADMAP.md` et, dans l'interface, la carte « Modules à venir » de `apps/web/src/app/parametres/page.tsx` — son texte est écrit en dur : le porter sur la clé `common.notImplemented` de `apps/web/src/lib/i18n.ts`, définie mais encore inutilisée |
 
 ## 3. Ce qui ne peut jamais être appelé « terminé »

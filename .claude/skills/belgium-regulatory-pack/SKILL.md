@@ -1,9 +1,9 @@
 ---
 name: belgium-regulatory-pack
-description: Règles des packs pays/région versionnés de Metreo, à appliquer dès qu'une tâche touche RegionProfile, la table region_profiles, les packs BE-WAL / BE-VLG / BE-BRU / FR, Wallonie, Flandre, Bruxelles, une locale fr-BE / nl-BE / de-BE / fr-FR, la terminologie métré, meetstaat, bestek, cahier spécial des charges, CCTP, DPGF, DQE ou BPU, un taux de TVA ou une date d'effet, un numéro d'entreprise BCE, un SIREN ou un SIRET, la traçabilité des terres excavées, une classification de déchets, une mention légale de devis, l'ajout d'un pays ou d'une région, un connecteur Walterre ou Embuild, ou dès qu'un code, un export ou une réponse risque d'énoncer une obligation réglementaire sans version, sans date d'effet, sans source officielle datée ni réserve de validation par un spécialiste.
+description: À utiliser dès qu'une variation par PAYS ou par RÉGION entre en jeu dans Metreo — RegionProfile et la table region_profiles, les packs BE-WAL / BE-VLG / BE-BRU / FR, Wallonie, Flandre, Bruxelles, une locale fr-BE / nl-BE / de-BE / fr-FR, la terminologie locale (métré, meetstaat, bestek, cahier spécial des charges, CCTP, DPGF, DQE, BPU), un taux de TVA et sa date d'effet, le format d'un numéro d'entreprise BCE/KBO, d'un SIREN ou d'un SIRET, la traçabilité des terres excavées, une classification de déchets, une mention légale de devis, l'ajout d'un pays ou d'une région — ou dès qu'un code, un export ou une réponse risque d'énoncer une obligation réglementaire sans version, sans date d'effet, sans source officielle datée ni réserve de validation par un spécialiste. Concerne le CONTENU versionné de la règle, pas les connecteurs qui iraient la chercher (supplier-rfq) ni le calcul qui l'applique (price-engine).
 ---
 
-# Metreo — packs pays/région versionnés
+# Metreo — packs pays/région versionnés (phase 1 partielle, phases 5-6 prévues)
 
 **État réel : partiellement implémenté.** La table existe, quatre packs sont
 semés en `draft` ou `planned` avec `disclaimer`, **aucune règle n'est validée
@@ -70,7 +70,7 @@ versions du même `code`, c'est le mécanisme prévu.
 | Terminologie locale | `terminology` (JSON) | implémenté, 4 clés seulement (§ 5) |
 | Règles de validation régionales | `rules` (JSON) | implémenté, 2 clés semées : `soil_traceability` (BE-WAL, BE-VLG, BE-BRU), `identifiers` (BE-WAL, BE-VLG, FR) |
 | Sources officielles | `sources` (JSON) | structure implémentée, **contenu vide** |
-| Unités et arrondis | `OrganizationSettings.rounding_scale`, `rounding_mode`, `unit_price_scale` | par organisation, **pas encore rattaché au pack** — calculs : skill `price-engine` |
+| Unités et arrondis | `OrganizationSettings.rounding_scale`, `rounding_mode`, `unit_price_scale` | par organisation, **pas encore rattaché au pack** — calculs : **price-engine** |
 | Taux de taxe et dates | `TaxRateRow` (`tax_rates`, `applies_from`, `applies_to`, `is_default`, `source`) résolu par `services/estimating.py` → `active_taxes()` | par organisation, **pas encore alimenté par le pack** |
 | Mentions et modèles de documents | — | prévu phase 5/6 ; `services/exports.py` produit un CSV et un HTML sans modèle régional |
 | Classifications de travaux et de déchets | — | prévu, rien dans le dépôt |
@@ -120,7 +120,7 @@ Valeurs FR semées dans `BE-WAL`, NL dans `BE-VLG`, France dans le pack `FR` ;
   valeur d'une autre région.
 - Ajouter une clé : l'ajouter dans **tous** les packs du même pays dans le même
   commit, et étendre `test_region_packs_declare_their_status_and_disclaimer`.
-- Glossaire de calcul (déboursé sec, frais généraux, marge) : `btp-product-rules`.
+- Glossaire de calcul (déboursé sec, frais généraux, marge) : **btp-product-rules**.
 
 ## 6. France — préparé, non implémenté
 
@@ -148,16 +148,15 @@ est un défaut de conception.
 
 ## 8. Sources officielles et connecteurs
 
-- **Ne jamais supposer qu'une API existe parce qu'un site web existe** :
-  `walterre.be`, `embuild.be` et les autres. Vérifier documentation et
-  conditions officielles au moment de l'implémentation ; à défaut, prévoir un
-  import/export utilisateur. Aucun scraping (voir `btp-product-rules`).
-- Aucun connecteur n'est implémenté : aucun modèle `Connector`, aucun appel
-  sortant. Ne pas décrire une intégration comme disponible.
 - Toute règle inscrite dans un pack cite une source officielle **datée**
   (`checked_on`) et conserve la référence dans le pack, pas dans un commentaire.
+  Une source officielle n'est pas un connecteur : les modes d'accès admis et
+  l'interdiction du scraping sont posés par **btp-product-rules**, leur mise en
+  œuvre par **supplier-rfq**.
+- Aucun connecteur n'est implémenté : aucun modèle `Connector`, aucun appel
+  sortant. Ne pas décrire une intégration comme disponible.
 - Aucune sortie de LLM, d'OCR ou de recherche web ne devient une règle de pack
-  sans validation humaine tracée (skill `document-analysis`).
+  sans validation humaine tracée (**document-analysis**).
 
 ## 9. Jamais d'avis juridique automatique
 
@@ -176,7 +175,7 @@ est un défaut de conception.
   `rounding`, mais **pas** la version du pack. Si une règle de pack entre dans un
   calcul ou dans une mention de devis, ajouter cette référence au gel par
   migration : sinon la traçabilité est fausse. Un devis gelé ne se recalcule
-  jamais parce qu'un pack a changé (skill `price-engine`).
+  jamais parce qu'un pack a changé (**price-engine**).
 
 ## 10. Procédure de modification d'un pack
 
@@ -186,12 +185,10 @@ est un défaut de conception.
 4. Test dans `apps/api/tests/test_platform.py`.
 5. Décision structurante consignée dans `docs/adr/`.
 6. Isolation et permissions inchangées : `region_profiles` est global et en
-   lecture seule côté API — voir `multitenant-security`. Critères de sortie :
-   `definition-of-done`.
+   lecture seule côté API — voir **multitenant-security**. Critères de sortie :
+   **definition-of-done**.
 
 ## Signaux d'alerte
-
-Arrête-toi et corrige dès que tu constates l'un de ces points :
 
 - Un `if` sur `region_code` ou `country_code` qui décide d'une règle
   réglementaire, d'un taux, d'une mention ou d'un document obligatoire.

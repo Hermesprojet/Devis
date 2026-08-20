@@ -1,9 +1,9 @@
 ---
 name: btp-product-rules
-description: Constitution produit de Metreo (SaaS d'étude de prix et de devis BTP belge) à consulter avant toute décision d'architecture, tout nouveau module, tout code touchant aux prix, quantités, documents, IA/OCR/LLM ou intégrations externes, et dès qu'apparaissent les mots métré, meetstaat, bordereau, CCTP, cahier spécial des charges, déboursé sec, frais généraux, aléas, marge, gel de devis, tenant, RGPD, scraping, connecteur, secret, migration ou fournisseur, ou dès qu'une réponse risque d'inventer un prix, de présenter un chiffre comme certain, d'écrire une donnée extraite sans validation humaine, de modifier un devis gelé, de mélanger deux organisations ou de verrouiller le produit sur un prestataire.
+description: Constitution produit de Metreo (SaaS belge d'étude de prix et de devis BTP), à consulter quand aucun des sept autres skills ne couvre la question, quand deux d'entre eux semblent se contredire, ou avant une décision structurante d'architecture, de format, de dépendance, de découpage en tranches ou de nouveau module. Invariants transverses — outil d'aide à la décision et jamais d'avis certain, frontière IA / calcul métier, human in the loop, traçabilité des sources, versionnage et gel, intégrations autorisées, absence de verrouillage fournisseur, glossaire métier FR/NL/EN (métré, meetstaat, bordereau, DQE, BPU, CSC, déboursé sec) et état d'avancement réel des phases 1 à 6. Les règles détaillées de calcul, de documents, de plans, de packs régionaux, d'achats, de sécurité et de livraison appartiennent aux skills spécialisés, et ce fichier arbitre entre eux.
 ---
 
-# Metreo — principes produit non négociables
+# Metreo — constitution produit (transverse, phases 1 à 6)
 
 Constitution (section 2 du cahier des charges maître) : en cas de contradiction avec un autre skill, **ce fichier gagne**.
 
@@ -33,7 +33,7 @@ Metreo est un **outil d'aide à la décision** pour métreurs et deviseurs (terr
   (`money.py`, `units.py`, `pricing.py`, `estimate.py`, `errors.py`) : pur,
   déterministe, sans I/O ni réseau.
 - Mêmes entrées ⇒ mêmes chiffres, avec décomposition lisible
-  (`LinePriceResult`, `MarkupStepResult`, `formula`). Détail : `price-engine`.
+  (`LinePriceResult`, `MarkupStepResult`, `formula`). Détail : **price-engine**.
 - Le code IA n'écrit **jamais** dans une table approuvée : il crée une
   proposition structurée qu'un service métier valide.
 
@@ -56,10 +56,9 @@ Metreo est un **outil d'aide à la décision** pour métreurs et deviseurs (terr
   révision, page, zone ; pour un plan : feuille, calque, objet, coordonnées.
 - Les citations sont des **objets de première classe**, jamais du texte libre.
 - Implémenté : `PriceItem.source`, `PriceItem.confidence`, `ImportBatch.sha256`,
-  journal `AuditEvent` chaîné par `previous_hash`/`hash`/`sequence`
-  (`services/audit.py` : `record`, `compute_hash`, `verify_chain`). C'est de la
-  **tamper-evidence**, pas de la tamper-proofing : le dire tel quel.
-- Toute action sensible (import, gel, export) passe par `record()` (`services/audit.py`).
+  journal `AuditEvent` chaîné. Toute action sensible (import, gel, export) passe
+  par `record()` (`services/audit.py`). Mécanique de la chaîne, garanties réelles
+  et vocabulaire à employer : **multitenant-security**.
 
 ## 5. Zéro hallucination silencieuse
 
@@ -95,7 +94,7 @@ Metreo est un **outil d'aide à la décision** pour métreurs et deviseurs (terr
   marges plus restreints que les quantités (`COST_READ`, `MARGIN_READ`).
 - Hébergement UE, minimisation, chiffrement, rétention configurable, export et
   suppression encadrée ; logs sans données sensibles (`logging_config.py`) ;
-  données de démonstration fictives uniquement. Détail : `multitenant-security`.
+  données de démonstration fictives uniquement. Détail : **multitenant-security**.
 
 ## 8. Intégrations autorisées uniquement
 
@@ -107,7 +106,7 @@ Metreo est un **outil d'aide à la décision** pour métreurs et deviseurs (terr
 - Aucun document client utilisé pour entraîner un modèle sans consentement.
 - Règles réglementaires : source officielle datée conservée dans le pack
   régional, `status: draft` tant qu'un juriste n'a pas validé (voir les
-  `RegionProfile` de `seed.py`). Détail : skill `belgium-regulatory-pack`.
+  `RegionProfile` de `seed.py`). Détail : **belgium-regulatory-pack**.
 
 ## 9. Pas de verrouillage fournisseur
 
@@ -122,12 +121,10 @@ présentée comme réelle.
 
 ## 10. Secrets
 
-- Jamais de secret dans le dépôt : toute configuration passe par des variables d'environnement préfixées `METREO_` (`config.py`).
-- `Settings.validate_startup()` refuse `auth_mode=dev`, un `jwt_secret` vide ou
-  SQLite en `staging`/`production` : ne pas contourner ce garde-fou.
-- `.gitignore` exclut `.env`, `.env.*`, `*.pem`, `*.key` ; `.env.example` est
-  versionné et fait foi : toute variable obligatoire y figure, sans valeur
-  utilisable. La CI refuse un `.env` indexé (détail : `multitenant-security`).
+Jamais de secret dans le dépôt : toute configuration passe par des variables
+d'environnement préfixées `METREO_` (`config.py`), et `Settings.validate_startup()`
+est un garde-fou qu'on ne contourne pas. Modes d'authentification, contenu de
+`.env.example` et contrôle CI : **multitenant-security**.
 
 ## 11. Méthode de travail
 
@@ -138,7 +135,7 @@ présentée comme réelle.
 - **Tests écrits avec le code**, pas après (`packages/domain/tests/`,
   `apps/api/tests/`) : un calcul métier sans test n'est pas livré.
 - Inspecter avant d'écraser du code existant ; annoncer une modification
-  importante avant de la faire. Checklist de sortie : `definition-of-done`.
+  importante avant de la faire. Checklist de sortie : **definition-of-done**.
 - Toute fonction « prototype », « mock » ou « non certifiée » est signalée comme telle dans l'interface **et** la documentation.
 
 ## 12. Règles de décision
@@ -149,7 +146,7 @@ présentée comme réelle.
 | Formats | Ouverts : PDF, CSV, XLSX, IFC, DXF, GeoJSON, JSON |
 | Fichiers reçus | Conserver l'original **et** son empreinte SHA-256 ; ne jamais retraiter en écrasant la source |
 | Montants | `Decimal` via `Money` / `RoundingPolicy`, jamais un flottant binaire ; stocker non arrondi, arrondir selon une politique explicite |
-| DWG | Respecter les licences ; ne pas prétendre le supporter fidèlement (voir `cad-bim-takeoff`) |
+| DWG | Respecter les licences ; ne pas prétendre le supporter fidèlement (voir **cad-bim-takeoff**) |
 | Décision structurante | La consigner dans `docs/adr/` |
 
 ## 13. État réel du dépôt
@@ -157,9 +154,9 @@ présentée comme réelle.
 | Phase | État | Ancrage |
 | --- | --- | --- |
 | 1 — domaine, API, gel, audit, import CSV | **implémenté** | `packages/domain/`, `apps/api/`, `fixtures/imports/` |
-| 2 — documents, OCR, extraction, citations | prévu | rien dans le dépôt |
-| 3 — plans, IFC/DXF/DWG, métrés assistés | prévu | rien dans le dépôt |
-| 4 — fournisseurs, demandes de prix, comparatifs | prévu | rien dans le dépôt |
+| 2 — documents, OCR, extraction, citations | prévu | conception seule : `docs/adr/0003-document-storage.md` |
+| 3 — plans, IFC/DXF/DWG, métrés assistés | prévu | aucun code |
+| 4 — fournisseurs, demandes de prix, comparatifs | prévu | aucun code |
 | 5 et 6 — packs BE validés, NL, connecteurs, France | prévu | `RegionProfile` en `status` `draft` / `planned` |
 
 ## 14. Glossaire métier FR / NL / EN
@@ -185,17 +182,15 @@ Terminologie par région : `RegionProfile.terminology` (`boq`, `specification`,
 
 ## 15. Renvois
 
-- `price-engine` — calculs, `Decimal`, arrondis, composants, sensibilité.
-- `document-analysis` — OCR, extraction, citations, validation (phase 2).
-- `cad-bim-takeoff` — plans, IFC/DXF/DWG, métrés assistés (phase 3).
-- `belgium-regulatory-pack` — packs pays/région, terminologie, règles datées.
-- `supplier-rfq` — annuaire fournisseurs, demandes de prix, envoi (phase 4).
-- `multitenant-security` — isolation, rôles, permissions, audit, menaces.
-- `definition-of-done` — critères de « terminé », tests, migrations, revue.
+- **price-engine** — calculs, `Decimal`, arrondis, composants, sensibilité.
+- **document-analysis** — OCR, extraction, citations, validation (phase 2).
+- **cad-bim-takeoff** — plans, IFC/DXF/DWG, métrés assistés (phase 3).
+- **belgium-regulatory-pack** — packs pays/région, terminologie, règles datées.
+- **supplier-rfq** — annuaire fournisseurs, demandes de prix, envoi (phase 4).
+- **multitenant-security** — isolation, rôles, permissions, secrets, audit, menaces.
+- **definition-of-done** — critères de « terminé », tests, migrations, revue.
 
 ## Signaux d'alerte
-
-Arrête-toi et corrige dès que tu constates l'un de ces points :
 
 - Un montant calculé hors de `packages/domain/` (modèle, prompt, code non testé).
 - Un `float` pour un montant, ou un arrondi appliqué avant le total.

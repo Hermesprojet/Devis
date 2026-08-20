@@ -1,9 +1,9 @@
 ---
 name: cad-bim-takeoff
-description: À utiliser dès qu'un plan ou un fichier CAO/BIM entre dans Metreo ou qu'un métré assisté est évoqué — visionneuse et annotation, échelle déclarée ou calibrée, feuilles, calques, cotes, polylignes, blocs, textes, IFC, DXF, DWG, GeoJSON, PostGIS, worker de conversion, bibliothèque de lecture CAO et sa licence, extraction de longueurs/surfaces/volumes depuis un plan, mesure manuelle traçable, rapprochement plan/bordereau, écart entre quantité mesurée et quantité client, contrôle d'unité ou d'ordre de grandeur avant reprise d'une quantité — ou dès qu'on envisage de créer une table de mesures, d'écrire dans BoqItem une quantité issue d'un plan, de toucher une quantité déjà approuvée, d'annoncer un support DWG, ou d'ajouter une dépendance de lecture ou de conversion CAO.
+description: À utiliser pour tout ce qui concerne la GÉOMÉTRIE d'un plan ou d'un fichier CAO/BIM dans Metreo (phase 3, non implémenté) — visionneuse et annotation, échelle déclarée, lue ou calibrée, feuilles, calques, cotes, polylignes, blocs, textes, IFC, DXF, DWG, GeoJSON, PostGIS, worker de conversion, bibliothèque de lecture CAO et sa licence, extraction de longueurs/surfaces/volumes depuis un plan, mesure manuelle traçable, rapprochement plan/bordereau, écart entre quantité mesurée et quantité client, contrôle d'unité ou d'ordre de grandeur avant reprise d'une quantité — ou dès qu'on envisage de créer une table de mesures, d'écrire dans BoqItem une quantité issue d'un plan, de toucher une quantité déjà approuvée, d'annoncer un support DWG, ou d'ajouter une dépendance de lecture ou de conversion CAO. Le stockage, l'OCR et le texte du fichier relèvent de document-analysis ; la valorisation de la quantité mesurée, de price-engine.
 ---
 
-# Métrés assistés, plans et CAO/BIM — phase 3, non implémenté
+# Metreo — métrés assistés, plans et CAO/BIM (phase 3, non implémenté)
 
 Section 6.5 du cahier des charges maître. **Aucune ligne de ce sous-système n'existe dans le
 dépôt** : ce fichier est un cahier des charges, pas une documentation d'API. Chemins abrégés
@@ -14,7 +14,7 @@ sous `apps/api/src/metreo_api/`.
 
 | Sujet | État | Ancrage |
 | --- | --- | --- |
-| Lecture de plan, viewer, mesure, conversion CAO | **inexistant** | aucun fichier ; `apps/worker/`, `packages/contracts/`, `packages/config/` sont des dossiers vides |
+| Lecture de plan, viewer, mesure, conversion CAO | **inexistant** | aucun fichier ; `apps/worker/`, `packages/contracts/`, `packages/config/` ne contiennent qu'un `README.md` |
 | PostGIS | disponible, inutilisé | image `postgis/postgis:16-3.4` (`infra/docker-compose.yml`) ; aucune colonne géométrique dans `models.py` |
 | Cible d'atterrissage d'une quantité | implémenté | `BoqItem` (`unit_code`, `quantity`, `formula`, `client_quantity`, `status`) dans `models.py` |
 | Statuts de validation | implémenté | `proposed` / `verified` / `approved` / `rejected`, contrainte `ck_boq_item_status` |
@@ -80,8 +80,7 @@ Onze champs, tous requis. Une mesure incomplète n'est pas reprenable : elle res
 | Statut | `status` | mêmes valeurs que `BoqItem.status` |
 
 - Ces champs **n'existent pas** en base : les créer via une migration Alembic
-  (`apps/api/alembic/versions/`, `down_revision` = tête courante, `d88792b38c2d` aujourd'hui),
-  jamais à la main.
+  (`apps/api/alembic/versions/`), jamais à la main — procédure dans **definition-of-done**.
 - Sérialiser le lot sous un identifiant de schéma versionné (ex. `metreo.plan.measurement/1`), sur
   le modèle de `SNAPSHOT_SCHEMA = "metreo.estimate.snapshot/1"` (`services/estimating.py`).
 - La citation d'un plan est un objet de première classe, pas du texte libre : structure et
@@ -105,10 +104,9 @@ Onze champs, tous requis. Une mesure incomplète n'est pas reprenable : elle res
 - Aucune unité locale « plan » : toute unité passe par `get_unit()` (alias `ml`→`m`, `m²`→`m2`,
   `tonne`→`t`, `j`→`d`, `ff`→`fft`). Unité inconnue ⇒ `UnknownUnitError`, rendu en 422 avec
   `code: unknown_unit` par `_canonical_unit` (`routers/boq.py`).
-- Conversions uniquement par `convert()`. **Volume → masse refusé** sans `Density` (valeur
-  strictement positive et `source` non vide) ⇒ `AmbiguousConversionError` ; dimensions non
-  pontables ⇒ `IncompatibleUnitsError`. Pas de densité codée en dur dans le code plan. Détails et
-  formules : **price-engine**.
+- Conversions uniquement par `convert()`, jamais réécrites côté plan, et **jamais** de densité
+  codée en dur : les règles de conversion, de densité sourcée et les erreurs levées sont posées par
+  **price-engine**.
 
 ## 6. Contrôles unités et échelles avant toute reprise de quantité
 
@@ -161,13 +159,12 @@ Bloquants, dans cet ordre :
   `ImportBatchRow.raw` / `normalized` / `errors` / `is_valid`) : rien n'atteint une table métier
   avant revue humaine.
 - Le parsing et la géométrie ne vont **pas** dans `packages/domain/` (pur, sans I/O) : un service
-  sous `services/` plus un worker sous `apps/worker/` (vide aujourd'hui). Les montants restent
+  sous `services/` plus un worker sous `apps/worker/` (sans code aujourd'hui). Les montants restent
   dans le domaine.
 - `max_upload_bytes` vaut 25 Mio par défaut (`config.py`) : un IFC dépasse couramment ce seuil —
   décider, configurer, documenter, et parser hors de la requête HTTP.
-- Fixtures anonymisées à ajouter à côté de `fixtures/imports/`, dont un fichier volontairement
-  fautif (échelle absente, unité inconnue, calque vide), sur le modèle de
-  `prix_5_valides_2_erreurs.csv`.
+- Fixtures fictives à ajouter à côté de `fixtures/imports/`, dont un fichier volontairement fautif
+  (échelle absente, unité inconnue, calque vide), sur le modèle de `prix_5_valides_2_erreurs.csv`.
 - Toute nouvelle table porte `organization_id` et se lit via `owned_query` / `get_owned`
   (`services/tenant.py`) : voir **multitenant-security**. Critères de sortie : **definition-of-done**.
 

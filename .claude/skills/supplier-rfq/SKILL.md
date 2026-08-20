@@ -1,7 +1,9 @@
 ---
 name: supplier-rfq
-description: À utiliser dès qu'il est question de fournisseurs, de sous-traitants ou d'achats dans Metreo — construire l'annuaire interne (identité légale, numéro d'entreprise, catégories, zones, contacts, qualifications, assurances, documents de conformité, évaluations, délais, statut RGPD), monter un lot de consultation et une demande de prix, rédiger un brouillon d'e-mail multilingue FR/NL/EN, choisir et masquer les pièces jointes, envoyer ou relancer une consultation, brancher ou évaluer un connecteur de recherche et d'enrichissement (Google Places, Embuild, Walterre, LinkedIn, registres publics), trancher une question de scraping ou de conditions d'utilisation, importer une offre reçue et la comparer à périmètre égal (unités, quantités, délais, validité, exclusions, variantes), ou diagnostiquer un message parti sans confirmation humaine, un comparatif qui additionne des unités différentes, un gagnant désigné automatiquement, une pièce jointe confidentielle envoyée par erreur ou une offre sans document original.
+description: À utiliser dès qu'un TIERS EXTERNE — fournisseur, sous-traitant, service de recherche d'entreprises — entre dans Metreo (phase 4, non implémenté), pour construire l'annuaire interne (identité légale, numéro d'entreprise, catégories, zones, contacts, qualifications, assurances, évaluations, statut RGPD), monter un lot de consultation et une demande de prix, rédiger un brouillon d'e-mail multilingue FR/NL/EN, choisir et masquer les pièces jointes, envoyer ou relancer une consultation, brancher ou évaluer un connecteur de recherche (Google Places, Embuild, Walterre, LinkedIn, registres publics), trancher une question de scraping ou de conditions d'utilisation, importer une offre et la comparer à périmètre égal (unités, quantités, délais, validité, exclusions), ou diagnostiquer un message parti sans confirmation humaine, un comparatif qui additionne des unités différentes, un gagnant désigné automatiquement ou une pièce jointe confidentielle envoyée par erreur.
 ---
+
+# Metreo — fournisseurs, consultations et offres (phase 4, non implémenté)
 
 ## 1. État réel : phase 4, aucune ligne de code
 
@@ -16,9 +18,9 @@ domaine, `main.py` n'inclut que `meta`, `auth`, `organizations`, `projects`, `pr
 - Ne jamais présenter ces fonctions comme disponibles (`apps/web/src/app/parametres/page.tsx`
   annonce qu'elles ne le sont pas), ni livrer un connecteur factice : interface remplaçable +
   implémentation locale étiquetée, comme `Settings.ai_provider="null"` (`config.py`).
-- Tables cibles (cahier des charges §10) : `Supplier`, `SupplierContact`, `SupplierQualification`,
-  `SupplierCategory`, `ServiceArea`, `RFQ`, `RFQPackage`, `RFQRecipient`, `RFQMessage`,
-  `SupplierOffer`, `SupplierOfferLine`, `Connector`, `ConnectorCredentialReference`, `ConnectorRun`.
+- Tables cibles : `Supplier`, `SupplierContact`, `SupplierQualification`, `SupplierCategory`,
+  `ServiceArea`, `RFQ`, `RFQPackage`, `RFQRecipient`, `RFQMessage`, `SupplierOffer`,
+  `SupplierOfferLine`, `Connector`, `ConnectorCredentialReference`, `ConnectorRun`.
 
 ## 2. L'annuaire interne d'abord, le connecteur ensuite
 
@@ -168,16 +170,7 @@ Une saisie sans document original marque l'offre `declared` — valeur par défa
 - L'outil **recommande** (classement, écarts, points d'attention) et **ne sélectionne jamais** le
   gagnant ; le choix est humain, tracé dans l'audit avec son motif. Le comparatif est reproductible.
 
-## 11. Renvois
-
-- Conversions, `Money`, arrondis, sous-détails : **price-engine**. Extraction d'une offre PDF,
-  citations, validation humaine : **document-analysis**. Quantités de plans définissant le périmètre
-  consulté : **cad-bim-takeoff**.
-- Exigences produit générales et interdiction du scraping : **btp-product-rules**. BCE/KBO, TVA,
-  agréations, obligations belges, hébergement UE : **belgium-regulatory-pack**. Isolation,
-  permissions, secrets : **multitenant-security**. Tests et livraison : **definition-of-done**.
-
-## 12. Critères de fin — scénarios d'acceptation 15 et 16
+## 11. Critères de fin — scénarios d'acceptation 15 et 16
 
 Une tranche « achats » n'est pas terminée tant que ces deux tests n'existent pas et ne passent pas, dans `apps/api/tests/` avec les fixtures de `conftest.py` :
 
@@ -190,8 +183,16 @@ Une tranche « achats » n'est pas terminée tant que ces deux tests n'existent 
   et refuse d'être classée ; avec la densité, le montant normalisé s'affiche avec son explication de
   conversion et la source de la densité.
 
-Ajouter le test d'isolation correspondant (modèle : `apps/api/tests/test_tenant_isolation.py`) :
-l'organisation B ne voit ni les fournisseurs, ni les consultations, ni les offres de A.
+Plus le test d'isolation correspondant (**multitenant-security**) : l'organisation B ne voit ni les fournisseurs, ni les consultations, ni les offres de A.
+
+## 12. Renvois
+
+Conversions, `Money`, arrondis, sous-détails : **price-engine**. Extraction d'une offre PDF,
+citations, validation humaine : **document-analysis**. Quantités de plans définissant le périmètre
+consulté : **cad-bim-takeoff**. Exigences produit générales et interdiction du scraping :
+**btp-product-rules**. Format BCE/KBO, TVA, terminologie et obligations régionales :
+**belgium-regulatory-pack**. Isolation, permissions, secrets : **multitenant-security**.
+Tests et livraison : **definition-of-done**.
 
 ## Signaux d'alerte
 
@@ -216,5 +217,4 @@ l'organisation B ne voit ni les fournisseurs, ni les consultations, ni les offre
 - Du scraping sous n'importe quel nom : navigateur headless, parsing HTML d'un tiers, « juste une
   page », contournement de `robots.txt` ou d'un captcha.
 - Une API supposée exister parce que le site existe, ou des conditions citées sans date de consultation.
-- Un fournisseur ou une consultation sans `organization_id`, ou une requête sans `owned_query` / `get_owned`.
-- Un écran, une route ou une note de version laissant croire que le module achats existe déjà.
+- Un fournisseur ou une consultation sans `organization_id`, une requête sans `owned_query` / `get_owned`, ou un écran laissant croire que le module achats existe déjà.

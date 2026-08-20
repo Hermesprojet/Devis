@@ -1,9 +1,11 @@
 ---
 name: multitenant-security
-description: À utiliser dès qu'il faut toucher à l'isolation multi-tenant, à l'authentification ou aux droits de Metreo — ajouter une table portant un organization_id, écrire ou relire un handler dans apps/api/src/metreo_api/routers/, choisir entre 404 et 403 pour une ressource d'un autre tenant, poser un require(Permission.X), modifier security/auth.py, security/roles.py, services/tenant.py (get_owned, owned_query) ou services/audit.py (record, verify_chain), masquer un déboursé, une marge ou un salaire chargé selon COST_READ / MARGIN_READ, définir ou changer une contrainte d'unicité, régler METREO_AUTH_MODE, METREO_JWT_SECRET ou la validation de configuration au démarrage, instruire le modèle de menaces (fuite inter-tenant, lien de téléchargement devinable, fichier piégé, injection de prompt, exfiltration, élévation de privilège, falsification de l'audit), ou compléter apps/api/tests/test_tenant_isolation.py.
+description: À utiliser dès qu'il faut décider QUI a accès à QUOI dans Metreo (phase 1, implémenté) — isolation multi-tenant, authentification, permissions, secrets, audit. Ajouter une table portant un organization_id, écrire ou relire un handler dans apps/api/src/metreo_api/routers/, choisir entre 404 et 403 pour une ressource d'un autre tenant, poser un require(Permission.X), modifier security/auth.py, security/roles.py, services/tenant.py (get_owned, owned_query) ou services/audit.py (record, verify_chain), masquer un déboursé, une marge ou un salaire chargé selon COST_READ / MARGIN_READ, définir une contrainte d'unicité, régler METREO_AUTH_MODE, METREO_JWT_SECRET ou .env.example, instruire le modèle de menaces (fuite inter-tenant, fichier piégé, exfiltration, élévation de privilège, falsification de l'audit), ou compléter apps/api/tests/test_tenant_isolation.py. Référence unique du dépôt sur les secrets et sur la chaîne d'audit.
 ---
 
-## Périmètre
+# Metreo — isolation multi-tenant, droits et audit (phase 1, implémenté)
+
+## 1. Périmètre
 
 | Fichier | Rôle |
 | --- | --- |
@@ -18,10 +20,11 @@ description: À utiliser dès qu'il faut toucher à l'isolation multi-tenant, à
 
 Le calcul des coûts masqués relève de **price-engine**, la TVA et les mentions légales de
 **belgium-regulatory-pack**, l'envoi d'une demande de prix au bon destinataire de **supplier-rfq**,
-l'ingestion de documents non fiables de **document-analysis**, la checklist de sortie de
+l'ingestion de documents non fiables de **document-analysis**, les quantités de plans de
+**cad-bim-takeoff**, les invariants produit de **btp-product-rules**, la checklist de sortie de
 **definition-of-done**.
 
-## Règle 1 — L'organisation vient du jeton, jamais de la requête
+## 2. L'organisation vient du jeton, jamais de la requête
 
 - Un handler ne lit **jamais** un `organization_id` depuis le chemin, la query ou le corps.
   La seule source est `context.organization_id`, où `context: TenantContext = Depends(...)`.
@@ -36,7 +39,7 @@ l'ingestion de documents non fiables de **document-analysis**, la checklist de s
   c'est un endpoint séparé, avec sa propre permission et son propre test — jamais un paramètre
   optionnel greffé sur un handler existant.
 
-## Règle 2 — Tout accès à une ligne métier passe par get_owned()
+## 3. Tout accès à une ligne métier passe par get_owned()
 
 ```python
 project = get_owned(session, Project, context.organization_id, project_id, label="Projet")
@@ -54,7 +57,7 @@ query = owned_query(Estimate, context.organization_id)   # pour les listes
 - `session.get(OrganizationSettings, context.organization_id)` est la seule exception tolérée :
   la clé primaire *est* l'organisation.
 
-## Règle 3 — Une ressource d'un autre tenant renvoie 404, pas 403
+## 4. Une ressource d'un autre tenant renvoie 404, pas 403
 
 - `get_owned` lève `404 {"code": "not_found"}`. Répondre 403 confirmerait qu'un identifiant
   existe : c'est déjà une fuite (énumération d'UUID, comptage de dossiers d'un concurrent).
@@ -63,7 +66,7 @@ query = owned_query(Estimate, context.organization_id)   # pour les listes
 - Conséquence à respecter dans les tests : PATCH, DELETE, export et sous-ressources d'un autre
   tenant renvoient **404**, y compris quand l'objet existe réellement.
 
-## Règle 4 — L'unicité inclut organization_id
+## 5. L'unicité inclut organization_id
 
 Toute contrainte qui pourrait entrer en collision entre deux entreprises porte
 `organization_id` en première colonne. En place : `uq_project_org_reference`,
@@ -73,7 +76,7 @@ Toute contrainte qui pourrait entrer en collision entre deux entreprises porte
 la portée est transitive. Une référence de chantier `2026-001` doit rester utilisable par deux
 entreprises le même jour.
 
-## Règle 5 — L'autorisation est serveur, l'interface ne fait que masquer
+## 6. L'autorisation est serveur, l'interface ne fait que masquer
 
 - Chaque route déclare sa permission : `Depends(require(Permission.BOQ_WRITE))`. Une route
   qui n'utilise que `Depends(current_context)` est un choix explicite (lecture ouverte à tout
@@ -87,7 +90,7 @@ entreprises le même jour.
   `apps/web/src/lib/api.ts`). S'en servir pour cacher un bouton relève de l'ergonomie, pas du
   contrôle : toute action cachée doit rester refusée quand elle est appelée à la main.
 
-## Rôles et matrice de permissions
+## 7. Rôles et matrice de permissions
 
 Six rôles, définis dans `ROLE_PERMISSIONS`. `MARGIN_READ` n'est accordé qu'aux deux premiers.
 
@@ -107,7 +110,7 @@ ne peut pas les exporter (`EXPORT_CLIENT` sans `EXPORT_INTERNAL`) ; hors `org_ad
 Ajouter un rôle ou une permission impose de mettre à jour `ROLE_PERMISSIONS`, l'endpoint
 `/roles` (`apps/api/src/metreo_api/routers/meta.py`) et un test de refus.
 
-## Règle 6 — Coûts et marges : deux permissions distinctes des quantités
+## 8. Coûts et marges : deux permissions distinctes des quantités
 
 `COST_READ` (décomposition, déboursé sec, prix de revient) et `MARGIN_READ` (frais généraux,
 aléas, marge, coefficients commerciaux) sont séparées de `BOQ_READ` / `ESTIMATE_READ` :
@@ -124,7 +127,7 @@ un conducteur lit des quantités sans voir le taux horaire chargé d'une équipe
 - Un nouveau champ portant un coût ou une marge doit être ajouté au masquage **et** au test
   correspondant dans `apps/api/tests/test_estimating.py`.
 
-## Règle 7 — Journal d'audit : append-only, tamper-EVIDENT
+## 9. Journal d'audit : append-only, tamper-EVIDENT
 
 - `audit.record(...)` ajoute un événement numéroté par organisation (`sequence` 1, 2, 3…) dont
   le `hash` SHA-256 couvre le contenu **et** le `previous_hash` de l'événement précédent de la
@@ -142,7 +145,7 @@ un conducteur lit des quantités sans voir le taux horaire chargé d'une équipe
 - Toute action qui engage l'entreprise est journalisée avec acteur, date, action, objet :
   création, approbation de poste, gel de version, export, changement de paramètres.
 
-## Configuration, secrets et environnements
+## 10. Configuration, secrets et environnements
 
 - `METREO_AUTH_MODE=dev` émet des jetons sans mot de passe pour les comptes de démonstration.
   `POST /auth/dev-login` renvoie **404 `dev_login_disabled`** dès que `auth_mode != "dev"` ou
@@ -158,7 +161,7 @@ un conducteur lit des quantités sans voir le taux horaire chargé d'une équipe
 - Les données de démonstration (`apps/api/src/metreo_api/seed.py`, `fixtures/imports/`) sont fictives : jamais de
   fichier client réel dans le dépôt.
 
-## Modèle de menaces — état réel
+## 11. Modèle de menaces — état réel
 
 | Menace | Mesure en place | Reste |
 | --- | --- | --- |
@@ -178,7 +181,7 @@ un conducteur lit des quantités sans voir le taux horaire chargé d'une équipe
 Ne jamais présenter une ligne de la colonne « Reste » comme acquise, ni dans le code, ni dans la
 documentation, ni face à un client.
 
-## Non-régression : le test d'isolation est obligatoire
+## 12. Non-régression : le test d'isolation est obligatoire
 
 Toute nouvelle ressource appartenant à un tenant reçoit un test « l'organisation B reçoit 404 »
 dans `apps/api/tests/test_tenant_isolation.py`, sur le modèle de

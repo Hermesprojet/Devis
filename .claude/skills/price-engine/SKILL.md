@@ -1,9 +1,11 @@
 ---
 name: price-engine
-description: À utiliser dès qu'il faut toucher au moteur de calcul déterministe de Metreo — modifier packages/domain/src/metreo_domain/ (money.py, units.py, pricing.py, estimate.py, errors.py) ou apps/api/src/metreo_api/services/composites.py et estimating.py, ajouter ou corriger un composant de sous-détail (consumption, output_rate, rotation, lump_sum), calculer un déboursé sec, un prix de revient ou un prix de vente HT, régler frais de chantier, frais généraux, aléas, marge on_cost/on_price, taxes ou arrondis (RoundingPolicy), convertir des unités ou passer d'un volume à une masse via une masse volumique sourcée (AmbiguousConversionError, IncompatibleUnitsError), traiter un poste sans prix (MissingPricePolicy), ou diagnostiquer un total faux, un écart de centimes, une division par zéro de rendement, une unité de prix de bibliothèque qui ne colle pas au poste, ou un devis gelé qui ne se recalcule pas à l'identique.
+description: À utiliser dès qu'il faut toucher au moteur de calcul déterministe de Metreo (phase 1, implémenté) — modifier packages/domain/src/metreo_domain/ (money.py, units.py, pricing.py, estimate.py, errors.py) ou apps/api/src/metreo_api/services/composites.py et estimating.py, ajouter ou corriger un composant de sous-détail (consumption, output_rate, rotation, lump_sum), calculer un déboursé sec, un prix de revient ou un prix de vente HT, régler frais de chantier, frais généraux, aléas, marge on_cost/on_price, taxes ou arrondis (RoundingPolicy), convertir des unités ou passer d'un volume à une masse via une masse volumique sourcée (AmbiguousConversionError, IncompatibleUnitsError), traiter un poste sans prix (MissingPricePolicy), geler ou recalculer un devis depuis son instantané, ou diagnostiquer un total faux, un écart de centimes ou un rendement nul. C'est le seul skill qui décrit une arithmétique, les autres n'y renvoient que le résultat.
 ---
 
-## Périmètre
+# Metreo — moteur de calcul déterministe (phase 1, implémenté)
+
+## 1. Périmètre
 
 | Fichier | Rôle |
 | --- | --- |
@@ -15,11 +17,13 @@ description: À utiliser dès qu'il faut toucher au moteur de calcul déterminis
 | `apps/api/src/metreo_api/services/composites.py` | spec JSON ↔ composant du domaine |
 | `apps/api/src/metreo_api/services/estimating.py` | lignes stockées → run moteur, snapshot, gel |
 
-Le domaine est **pur** : ni FastAPI, ni SQLAlchemy, ni `datetime.now()`. Le vocabulaire métier
-BTP relève de **btp-product-rules**, la TVA belge de **belgium-regulatory-pack**, le masquage
-des coûts internes de **multitenant-security**.
+Le domaine est **pur** : ni FastAPI, ni SQLAlchemy, ni `datetime.now()`. Le vocabulaire métier BTP
+relève de **btp-product-rules**, la TVA belge de **belgium-regulatory-pack**, le masquage des coûts
+internes de **multitenant-security**, la provenance des quantités de **document-analysis** et
+**cad-bim-takeoff**, les prix d'offres de **supplier-rfq**, les critères de sortie de
+**definition-of-done**.
 
-## Règle 1 — Decimal, jamais de float binaire
+## 2. Decimal, jamais de float binaire
 
 - Tout montant, taux, quantité, consommation, rendement passe par `to_decimal()` : `Decimal`,
   `int`, `str` (virgule française et espaces gérés), `float` **via son `repr`** — jamais `Decimal(float)`.
@@ -27,7 +31,7 @@ des coûts internes de **multitenant-security**.
 - `Money.__add__` / `__sub__` lèvent `CurrencyMismatchError` plutôt que de deviner un taux de change ; `money_sum([], "EUR")` renvoie un zéro typé, pas `0`.
 - Interdits dans le domaine : `float(...)`, `round(...)`, `%`, `math.*` sur un montant.
 
-## Règle 2 — Non arrondi en interne, arrondi une seule fois à la sortie
+## 3. Non arrondi en interne, arrondi une seule fois à la sortie
 
 - `Money.amount` est **toujours** non arrondi. `1179.144000 EUR` est une valeur légitime.
 - L'arrondi n'existe que dans les `to_dict(policy)` (`ComponentResult`, `MarkupStepResult`,
@@ -43,7 +47,7 @@ des coûts internes de **multitenant-security**.
 - Les décimaux sortent en JSON sous forme de **chaînes**. `selling_price_ht_raw` et `amount_raw`
   exposent volontairement la valeur non arrondie.
 
-## Règle 3 — Toute quantité porte une unité
+## 4. Toute quantité porte une unité
 
 - `Quantity.of(value, unit_code)` uniquement ; un nombre nu n'est jamais une quantité.
 - `get_unit()` résout les alias (`ml`→`m`, `m²`→`m2`, `tonne`/`tn`→`t`, `j`→`d`, `ff`→`fft`) et
@@ -57,7 +61,7 @@ des coûts internes de **multitenant-security**.
 - `ConversionResult.explanation` est reporté dans le `formula` du composant et `density_used.source`
   dans `ComponentResult.density_source`. Une tonne facturée sans source est un défaut.
 
-## Les quatre types de composants
+## 5. Les quatre types de composants
 
 Chacun implémente le `Protocol` `Component` : `compute(boq_quantity, currency) -> ComponentResult`. Exemples ci-dessous vérifiés en exécutant le moteur.
 
@@ -93,7 +97,7 @@ montant       = rotations × per_rotation
 `ResourceKind` (`material`, `labor`, `equipment`, `transport`, `disposal`, `subcontract`, `other`)
 alimente le regroupement `LinePriceResult.cost_by_kind()`.
 
-## Chaîne déboursé sec → prix de vente HT
+## 6. Chaîne déboursé sec → prix de vente HT
 
 Ordre imposé par `compute_line_price`, jamais réordonné : `direct_cost` → frais de chantier →
 frais généraux → **prix de revient** → aléas → marge → **prix de vente HT** → taxes à part.
@@ -120,7 +124,7 @@ Exemple vérifié, déboursé sec 1 000,00 EUR, taux 8 % / 6 % / 3 % / 10 % :
 - Taxes : `TaxRate(code, label, rate, applies_from)` appliquées à `selling_price_ht`, jamais fondues
   dedans ; `total_ttc` est dérivé. Taux en vigueur : `active_taxes()` (`estimating.py`).
 
-## Prix de bibliothèque : l'unité doit correspondre au poste
+## 7. Prix de bibliothèque : l'unité doit correspondre au poste
 
 `compute_flat_line_price(..., price_unit_code=..., density=...)` construit un
 `ConsumptionComponent` à consommation 1 et n'active `convert_boq_quantity` que si le code
@@ -133,7 +137,7 @@ reportée ; (3) sinon refus (`ambiguous_conversion` ou `incompatible_units`).
 imputer le refus **au poste fautif** et joindre un `hint` réclamant un sous-détail explicite.
 Il lève alors `PricingInputError` avec la liste complète : jamais d'estimation partielle.
 
-## Poste sans prix : jamais valorisé à zéro
+## 8. Poste sans prix : jamais valorisé à zéro
 
 - Résolution d'un poste (`build_line_specs`) : composite explicite, puis prix de bibliothèque lié
   **dans la version de bibliothèque gelée par la version de devis**, puis rien.
@@ -144,10 +148,9 @@ Il lève alors `PricingInputError` avec la liste complète : jamais d'estimation
   `OrganizationSettings.missing_price_policy`.
 - `LineKind` : `SECTION` sans prix ni total ; `ITEM` et `PROVISIONAL` dans le total de base ;
   `OPTION` et `VARIANT` chiffrés mais hors total, cumulés dans `options_total_ht`.
-- `MissingPriceError` existe dans `errors.py` mais n'est pas levé par `compute_estimate` :
-  l'absence de prix se signale par le résultat, pas par une exception.
+- `MissingPriceError` existe dans `errors.py` mais n'est pas levé par `compute_estimate` : l'absence de prix se signale par le résultat, pas par une exception.
 
-## Traçabilité obligatoire de toute sortie
+## 9. Traçabilité obligatoire de toute sortie
 
 - Chaque `ComponentResult` porte `formula` (chaîne reproduisant l'arithmétique) et `density_source`
   si une masse volumique a servi ; chaque `MarkupStepResult` porte `base_amount`, `rate`, `amount`,
@@ -159,7 +162,7 @@ Il lève alors `PricingInputError` avec la liste complète : jamais d'estimation
 - `totals_for_display(..., include_internal=False)` retire `components`, `cost_by_kind`,
   `direct_cost`, `cost_price`, `markup_steps` ; qui peut les voir relève de **multitenant-security**.
 
-## Ajouter un nouveau type de composant
+## 10. Ajouter un nouveau type de composant
 
 Six emplacements, dans cet ordre — le docstring de `composites.py` (« ici et nulle part ailleurs »)
 est inexact :
@@ -183,19 +186,16 @@ Tests exigés : formule + cas limite (diviseur nul, unité croisée) dans
 `packages/domain/tests/test_pricing.py` ; aller-retour spec ↔ composant et gel dans
 `apps/api/tests/test_estimating.py`. Le reste des critères relève de **definition-of-done**.
 
-## Tests
+## 11. Tests
 
-```bash
-.venv/bin/python -m pytest packages/domain/tests -q              # 61 tests aujourd'hui
-```
-
+Suite du domaine : `packages/domain/tests` (61 tests aujourd'hui) ; commandes complètes et compteurs
+attendus : **definition-of-done**.
 Tout nouveau calcul se prouve par un test comparant à une valeur **calculée à la main** et écrite
 en dur, pas au résultat du code. `sensitivity()` existe et est testé, mais c'est un utilitaire
 **générique** : l'appelant fournit le `recompute` et nomme ses variations ; les axes du cahier des
 charges (rendement, prix, distance, densité, aléa, marge) ne sont pas précâblés et rien n'est
 exposé par l'API. Scénarios bas/probable/haut, indexation et comparaison prix interne / offre /
-coût réel ne sont pas implémentés (phases ultérieures). Quantités issues de documents ou de plans :
-**document-analysis** et **cad-bim-takeoff** ; prix fournisseurs : **supplier-rfq**.
+coût réel ne sont pas implémentés (phases ultérieures).
 
 ## Signaux d'alerte
 

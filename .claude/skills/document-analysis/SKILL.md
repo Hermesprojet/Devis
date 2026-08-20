@@ -1,22 +1,23 @@
 ---
 name: document-analysis
-description: À utiliser dès qu'il s'agit d'ingérer ou d'exploiter un document de marché dans Metreo — upload de PDF natif ou scanné, DOCX, XLSX, TXT, ZIP, photo de chantier, antivirus et SHA-256, détection de type/langue/qualité, OCR page à page, extraction de tableaux, segmentation avec pages et coordonnées, classification CCTP / cahier spécial des charges / clauses administratives / métré / DQE / BPU / plan / étude géotechnique / rapport de pollution / inventaire amiante / planning / addendum, extraction structurée par schéma JSON, citation page-zone, seuil de confiance, file de validation humaine, recherche plein texte ou sémantique, embeddings, RAG, prompt versionné, adaptateur OCR ou LLM, injection de prompt via un fichier importé, ou dès qu'une réponse risque d'écrire en base une donnée extraite sans citation, sans confiance et sans validation humaine, ou de parler de ce pipeline comme s'il était déjà codé.
+description: À utiliser pour tout ce qui concerne le TEXTE d'un document de marché dans Metreo (phase 2, non implémenté) — upload de PDF natif ou scanné, DOCX, XLSX, TXT, ZIP, photo, antivirus et SHA-256, détection de type/langue/qualité, OCR page à page, extraction de tableaux, segmentation avec pages et coordonnées, classification du document (CCTP, cahier spécial des charges, clauses administratives, métré, DQE, BPU, étude géotechnique, rapport de pollution, inventaire amiante, planning, addendum), extraction structurée par schéma JSON, citation page-zone, seuil de confiance, file de validation humaine, recherche plein texte ou sémantique, embeddings, RAG, prompt versionné, adaptateur OCR ou LLM, injection de prompt via un fichier importé, ou dès qu'une réponse risque d'écrire en base une donnée extraite sans citation, sans confiance et sans validation humaine. Un plan est classé ici, mais sa géométrie et ses mesures relèvent de cad-bim-takeoff ; le contenu réglementaire d'une clause relève de belgium-regulatory-pack.
 ---
 
-# Pipeline documentaire — cahier d'implémentation (phase 2, NON IMPLÉMENTÉ)
+# Metreo — pipeline documentaire (phase 2, non implémenté)
 
 **Aucune ligne de ce pipeline n'existe dans le dépôt.** Pas de table `documents`, pas de
 route d'upload, pas d'OCR, pas d'adaptateur IA : `grep -ri ocr apps packages --include=*.py`
 ne renvoie que le commentaire de `apps/api/src/metreo_api/config.py`. `apps/worker/`,
-`packages/contracts/`, `packages/config/` et `scripts/` sont des dossiers **vides**. Seule la
-conception est arrêtée, dans `docs/adr/0003-document-storage.md` (statut : accepté). Ce fichier
-est un cahier des charges à implémenter, pas une description de code existant : décrire ces
-étapes au présent, importer un symbole d'ici ou répondre « c'est déjà géré » est bloquant.
+`packages/contracts/`, `packages/config/` et `scripts/` ne contiennent qu'un `README.md`,
+**aucun code**. Seule la conception est arrêtée, dans `docs/adr/0003-document-storage.md`
+(statut : accepté). Ce fichier est un cahier des charges à implémenter, pas une description
+de code existant : décrire ces étapes au présent, importer un symbole d'ici ou répondre
+« c'est déjà géré » est bloquant.
 
 Chemins abrégés ci-dessous : `models.py`, `config.py`, `db.py`, `logging_config.py`,
 `schemas.py`, `routers/`, `services/`, `security/` vivent sous `apps/api/src/metreo_api/`.
 
-## Ce sur quoi s'appuyer (existant, vérifié)
+## 1. Ce sur quoi s'appuyer (existant, vérifié)
 
 | Existant | À réutiliser comme |
 | --- | --- |
@@ -33,7 +34,7 @@ Chemins abrégés ci-dessous : `models.py`, `config.py`, `db.py`, `logging_confi
 | service `redis` de `infra/docker-compose.yml` | file d'attente des jobs (aucun worker ne la consomme encore) |
 | `packages/domain/src/metreo_domain/errors.py` : `DomainError` avec `code` stable | erreurs d'extraction typées |
 
-## Les 11 étapes du pipeline
+## 2. Les 11 étapes du pipeline
 
 Asynchrone, observable, relançable étape par étape. Chaque étape écrit son état, sa durée
 et son erreur ; un échec en étape *n* n'efface jamais le résultat des étapes 1..*n-1*.
@@ -56,7 +57,7 @@ Relance : idempotente par `(document_sha256, pipeline_version, step)`. Une relan
 détruit pas une extraction déjà corrigée par un humain — elle crée une nouvelle proposition
 et affiche l'écart.
 
-## Catégories minimales de documents
+## 3. Catégories minimales de documents
 
 `cctp_special_specification` (CCTP / cahier spécial des charges), `administrative_clauses`,
 `boq` (métré, DQE, BPU, bordereau, quantitatif), `plan_architecture`, `plan_structure`,
@@ -68,7 +69,7 @@ Un document peut relever de plusieurs catégories : stocker une liste ordonnée 
 confiance, jamais une seule valeur devinée. Les plans s'arrêtent ici : leur exploitation
 géométrique relève de **cad-bim-takeoff** (phase 3).
 
-## Extractions attendues — toujours avec source et confiance
+## 4. Extractions attendues — toujours avec source et confiance
 
 Aucun champ extrait sans `citation` et `confidence`. Liste minimale : parties, dates,
 références et hiérarchie des documents ; exigences techniques et administratives ; normes
@@ -83,7 +84,7 @@ révisions ; exclusions, réserves et questions à poser au donneur d'ordre.
 Sur sol, pollution et amiante : afficher que l'extraction ne remplace pas l'avis du bureau
 d'étude compétent. Les seuils et obligations belges relèvent de **belgium-regulatory-pack**.
 
-## La citation est un objet de première classe
+## 5. La citation est un objet de première classe
 
 Jamais une chaîne libre du type « voir page 12 ». Structure minimale à persister :
 
@@ -105,7 +106,7 @@ Jamais une chaîne libre du type « voir page 12 ». Structure minimale à persi
 - Toute citation pointe une **révision** précise. Une nouvelle révision ne réécrit pas les
   citations existantes ; elle produit un rapport d'écarts.
 
-## Anti-injection de prompt
+## 6. Anti-injection de prompt
 
 Un fichier importé est une **donnée non fiable**, jamais une instruction.
 
@@ -119,7 +120,7 @@ Un fichier importé est une **donnée non fiable**, jamais une instruction.
 - Test obligatoire (scénario 14) : un PDF de fixture contenant une instruction malveillante
   produit exactement le même comportement système qu'un PDF sans elle.
 
-## Confiance, cache, prompts, journalisation
+## 7. Confiance, cache, prompts, journalisation
 
 - Seuils **configurables par organisation** (au minimum : accepter, proposer, rejeter).
   Sous le seuil bas : aucune proposition créée. Entre les deux : proposition en file de
@@ -139,22 +140,22 @@ Un fichier importé est une **donnée non fiable**, jamais une instruction.
 - Chaque acceptation, correction ou rejet humain passe par `audit.record()`. Une correction
   est conservée pour l'évaluation ; aucun entraînement sur données client sans accord écrit.
 
-## Interfaces à créer
+## 8. Interfaces à créer
 
 Sept ports, définis comme `Protocol` Python, sans dépendance à un fournisseur : `OcrPort`,
 `TableExtractionPort`, `ClassifierPort`, `StructuredLlmPort`, `EmbeddingPort`, `SearchPort`,
 plus l'`ObjectStore` imposé par l'ADR 0003 (S3 ou disque local ; aucun code métier ne connaît
-le fournisseur). Emplacement cohérent avec le dépôt : contrats dans `packages/contracts/`
-(vide aujourd'hui), implémentations dans un futur `services/documents/`, exécution
-asynchrone dans `apps/worker/` (vide aujourd'hui).
+le fournisseur). Emplacement cohérent avec le dépôt : contrats dans `packages/contracts/`,
+implémentations dans un futur `services/documents/`, exécution asynchrone dans `apps/worker/`
+— ces deux dossiers ne contiennent aujourd'hui qu'un `README.md`.
 
-- **Implémentation par défaut : un faux fournisseur local et déterministe** (`local_stub`,
-  la valeur déjà prévue par `Settings.ai_provider`). Il permet de développer et de tester
-  tout le pipeline hors ligne, sans clé et sans envoi externe.
-- `ai_enabled=false` doit désactiver l'envoi externe **et** laisser l'application
-  pleinement utilisable : saisie, métré, calcul, gel, export. C'est déjà testé pour la
-  phase 1 (`test_the_whole_flow_works_with_ai_disabled`, `apps/api/tests/test_platform.py`)
-  et doit le rester.
+- **Implémentation par défaut : un faux fournisseur local et déterministe.**
+  `Settings.ai_provider` est un `Literal["null", "local_stub"]` dont le défaut est `"null"` :
+  `local_stub` est la valeur réservée à ce simulacre, elle n'est branchée sur rien aujourd'hui.
+  Il permettra de développer et de tester le pipeline hors ligne, sans clé et sans envoi externe.
+- `ai_enabled=false` désactive l'envoi externe **et** laisse l'application pleinement
+  utilisable (saisie, métré, calcul, gel, export) : invariant déjà testé en phase 1, à ne
+  jamais casser — voir **definition-of-done**.
 - Politique explicite en cas d'indisponibilité du fournisseur : job en `failed` avec cause
   lisible et relance manuelle, jamais une extraction vide présentée comme un résultat.
 - Un fournisseur externe s'ajoute derrière un port existant, sans toucher aux appelants, et
@@ -164,7 +165,7 @@ asynchrone dans `apps/worker/` (vide aujourd'hui).
   dans `Permission` ni `ROLE_PERMISSIONS` aujourd'hui) : lecture des documents et validation
   des extractions, distinctes de `BOQ_APPROVE`.
 
-## Le RAG ne remplace jamais une requête relationnelle
+## 9. Le RAG ne remplace jamais une requête relationnelle
 
 - Prix, quantités, statuts, totaux, versions : **SQL** sur les tables existantes
   (`price_items`, `boq_items`, `estimate_versions`), via SQLAlchemy et `owned_query`.
@@ -175,7 +176,7 @@ asynchrone dans `apps/worker/` (vide aujourd'hui).
 - L'index vectoriel porte `organization_id` et est filtré **avant** la recherche, pas après
   (voir **multitenant-security**). Un voisin d'un autre tenant est une fuite, pas un bruit.
 
-## Critères de fin — scénarios d'acceptation 11 à 14
+## 10. Critères de fin — scénarios d'acceptation 11 à 14
 
 Aucun de ces quatre scénarios n'est automatisé aujourd'hui. La phase 2 n'est terminée que
 lorsque les quatre sont des tests qui passent (voir aussi **definition-of-done**) :
@@ -189,8 +190,7 @@ lorsque les quatre sont des tests qui passent (voir aussi **definition-of-done**
 14. Une instruction malveillante contenue dans le PDF ne change pas le comportement du
     système : mêmes écritures, mêmes statuts, mêmes appels sortants.
 
-Les fixtures doivent rester fictives et créées dans le projet, à l'image de
-`fixtures/imports/` : aucun cahier des charges réel protégé par le droit d'auteur.
+Fixtures fictives et créées dans le projet, à l'image de `fixtures/imports/` : aucun cahier des charges réel (droit d'auteur, données client) — règle générale dans **definition-of-done**.
 
 ## Signaux d'alerte
 
