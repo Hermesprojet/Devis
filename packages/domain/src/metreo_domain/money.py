@@ -45,6 +45,50 @@ def to_decimal(value: object) -> Decimal:
     raise TypeError(f"cannot convert {type(value).__name__} to Decimal")
 
 
+def canonical_text(value: object) -> str:
+    """Render an **unrounded** decimal as text, one value to one spelling.
+
+    ``Decimal`` keeps the scale it was built with, and the storage backends do
+    not agree on it: PostgreSQL returns ``NUMERIC(28, 10)`` padded to ten
+    decimals — a quantity of 120 comes back as ``Decimal("120.0000000000")``
+    and a zero as ``Decimal("0E-10")`` — while SQLite returns the text that was
+    written. A plain ``str()`` therefore puts the database's formatting habits
+    into snapshots, exports and digests: the same frozen estimate ends up with
+    two different SHA-256 depending on where it was read, and ``0E-10`` leaks
+    into a printed bill of quantities.
+
+    So every decimal that is **not** quantised by a
+    :class:`RoundingPolicy` goes through this function: trailing zeros are
+    dropped and the exponent notation ``normalize()`` produces for round
+    numbers (``1E+2``) is expanded back to ``100``.
+
+    Quantised money keeps ``str(policy.quantize(...))`` instead: there the
+    trailing zeros of ``1000.00`` are the point.
+    """
+    text = format(normalize_decimal(value), "f")
+    return "0" if text in {"-0", "0"} else text
+
+
+def normalize_decimal(value: object) -> Decimal:
+    """The canonical :class:`Decimal` for a value: same number, one scale.
+
+    Applied at the storage boundary (see ``metreo_api.db.Amount``) so that the
+    backend's padding never reaches the arithmetic. Without it, PostgreSQL
+    returns a 6 % rate as ``Decimal("0.0600000000")`` and every product
+    downstream inherits that scale, which then shows up in explanation strings
+    and in the frozen digest even though the values are equal.
+    """
+    decimal_value = to_decimal(value)
+    if not decimal_value.is_finite():
+        raise ValueError(f"valeur décimale non finie: {decimal_value!r}")
+    normalized = decimal_value.normalize()
+    _, _, exponent = normalized.as_tuple()
+    if isinstance(exponent, int) and exponent > 0:
+        # 1E+2 -> 100, rather than letting the exponent reach the output.
+        normalized = normalized.quantize(Decimal(1))
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class RoundingPolicy:
     """Explicit, auditable rounding configuration.

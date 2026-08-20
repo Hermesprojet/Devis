@@ -1,8 +1,14 @@
 """Test harness.
 
-Each test gets a fresh SQLite database created **through the Alembic
-migrations**, not through ``create_all``: a migration that does not reproduce
-the models is a bug the suite should catch, not hide.
+Each test gets a fresh database created **through the Alembic migrations**,
+not through ``create_all``: a migration that does not reproduce the models is
+a bug the suite should catch, not hide.
+
+The suite runs on SQLite by default so that ``pytest`` needs no service. Set
+``METREO_TEST_DATABASE_URL`` to a PostgreSQL URL and the whole suite runs there
+instead, each test in its own schema. That switch is what makes the PostgreSQL
+job in CI a real check: SQLite proves nothing about ``NUMERIC`` precision,
+server-side constraints or transactional DDL.
 """
 
 from __future__ import annotations
@@ -16,10 +22,50 @@ from fastapi.testclient import TestClient
 
 API_ROOT = Path(__file__).resolve().parents[1]
 
+#: PostgreSQL URL the suite should run against, when asked.
+TEST_DATABASE_URL = os.environ.get("METREO_TEST_DATABASE_URL", "").strip()
+
+#: Incremented per test so two schemas never collide inside one run.
+_schema_counter = 0
+
+
+def _next_schema_name() -> str:
+    global _schema_counter
+    _schema_counter += 1
+    return f"metreo_test_{os.getpid()}_{_schema_counter}"
+
 
 @pytest.fixture()
-def database_url(tmp_path: Path) -> str:
-    return f"sqlite+pysqlite:///{tmp_path / 'test.sqlite3'}"
+def database_url(tmp_path: Path) -> Iterator[str]:
+    """A URL pointing at a database this test alone owns."""
+    if not TEST_DATABASE_URL:
+        yield f"sqlite+pysqlite:///{tmp_path / 'test.sqlite3'}"
+        return
+
+    from sqlalchemy import create_engine, text
+
+    schema = _next_schema_name()
+    admin = create_engine(TEST_DATABASE_URL, future=True)
+    with admin.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    admin.dispose()
+
+    separator = "&" if "?" in TEST_DATABASE_URL else "?"
+    # ``options`` reaches libpq, which applies it as the session search_path:
+    # migrations and queries then land in this test's own schema. The value
+    # is left unencoded on purpose — Alembic stores the URL in a
+    # ConfigParser, which would read a percent sign as an interpolation.
+    yield f"{TEST_DATABASE_URL}{separator}options=-csearch_path={schema}"
+
+    admin = create_engine(TEST_DATABASE_URL, future=True)
+    with admin.begin() as connection:
+        connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+    admin.dispose()
+
+
+def running_on_postgresql() -> bool:
+    """For the handful of assertions that only make sense on a real server."""
+    return bool(TEST_DATABASE_URL)
 
 
 @pytest.fixture()

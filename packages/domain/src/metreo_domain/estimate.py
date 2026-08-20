@@ -14,7 +14,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from .money import DEFAULT_ROUNDING, Money, RoundingPolicy, money_sum
+from .money import DEFAULT_ROUNDING, Money, RoundingPolicy, canonical_text, money_sum
 from .pricing import (
     Component,
     LinePriceResult,
@@ -88,7 +88,7 @@ class EstimateLineResult:
             "code": self.code,
             "designation": self.designation,
             "kind": self.kind.value,
-            "quantity": str(self.quantity.value),
+            "quantity": canonical_text(self.quantity.value),
             "unit": self.quantity.unit.code,
             "missing_price": self.missing_price,
             "included_in_total": self.included_in_total,
@@ -122,13 +122,13 @@ class EstimateResult:
             "total_direct_cost": str(policy.quantize(self.total_direct_cost.amount)),
             "total_cost_price": str(policy.quantize(self.total_cost_price.amount)),
             "total_selling_price_ht": str(policy.quantize(self.total_selling_price_ht.amount)),
-            "total_selling_price_ht_raw": str(self.total_selling_price_ht.amount),
+            "total_selling_price_ht_raw": canonical_text(self.total_selling_price_ht.amount),
             "options_total_ht": str(policy.quantize(self.options_total_ht.amount)),
             "taxes": [
                 {
                     "code": tax.code,
                     "label": tax.label,
-                    "rate": str(tax.rate),
+                    "rate": canonical_text(tax.rate),
                     "amount": str(policy.quantize(amount.amount)),
                 }
                 for tax, amount in self.tax_totals
@@ -256,7 +256,7 @@ def sensitivity(
         result = recompute(factor)
         delta = result.total_selling_price_ht - base.total_selling_price_ht
         report[name] = {
-            "factor": str(factor),
+            "factor": canonical_text(factor),
             "total_selling_price_ht": str(
                 DEFAULT_ROUNDING.quantize(result.total_selling_price_ht.amount)
             ),

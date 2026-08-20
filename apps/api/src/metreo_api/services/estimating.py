@@ -26,7 +26,7 @@ from metreo_domain.estimate import (
     MissingPricePolicy,
     compute_estimate,
 )
-from metreo_domain.money import Money, RoundingPolicy, to_decimal
+from metreo_domain.money import Money, RoundingPolicy, canonical_text, to_decimal
 from metreo_domain.pricing import MarginMethod, MarkupPolicy, OverheadBase, TaxRate
 from metreo_domain.units import Quantity
 
@@ -60,13 +60,13 @@ def markup_from_settings(settings: OrganizationSettings) -> MarkupPolicy:
 
 def markup_to_dict(markup: MarkupPolicy) -> dict[str, Any]:
     return {
-        "site_overheads_rate": str(markup.site_overheads_rate),
+        "site_overheads_rate": canonical_text(markup.site_overheads_rate),
         "site_overheads_base": markup.site_overheads_base.value,
-        "general_overheads_rate": str(markup.general_overheads_rate),
+        "general_overheads_rate": canonical_text(markup.general_overheads_rate),
         "general_overheads_base": markup.general_overheads_base.value,
-        "contingency_rate": str(markup.contingency_rate),
+        "contingency_rate": canonical_text(markup.contingency_rate),
         "contingency_base": markup.contingency_base.value,
-        "margin_rate": str(markup.margin_rate),
+        "margin_rate": canonical_text(markup.margin_rate),
         "margin_method": markup.margin_method.value,
     }
 
@@ -140,7 +140,7 @@ def taxes_to_list(taxes: tuple[TaxRate, ...]) -> list[dict[str, Any]]:
         {
             "code": t.code,
             "label": t.label,
-            "rate": str(t.rate),
+            "rate": canonical_text(t.rate),
             "applies_from": t.applies_from,
         }
         for t in taxes
@@ -185,7 +185,7 @@ def build_line_specs(
             "code": item.code or item.position,
             "designation": item.designation,
             "unit_code": item.unit_code,
-            "quantity": str(item.quantity),
+            "quantity": canonical_text(item.quantity),
             "kind": item.kind,
             "status": item.status,
             "pricing": None,
@@ -218,7 +218,7 @@ def build_line_specs(
                     "price_item_id": price_item.id,
                     "price_item_code": price_item.code,
                     "price_item_label": price_item.label,
-                    "unit_price": str(price_item.unit_price),
+                    "unit_price": canonical_text(price_item.unit_price),
                     "currency": price_item.currency,
                     "price_unit_code": price_item.unit_code,
                 }
@@ -358,8 +358,70 @@ def recompute_from_snapshot(snapshot: dict[str, Any]) -> EstimateResult:
     )
 
 
+def _plain_decimal(value: Decimal) -> str:
+    """One decimal value, one spelling.
+
+    ``Decimal("10.00")`` and ``Decimal("10.0")`` are equal but do not share a
+    representation, and the backends disagree on which one they hand back:
+    PostgreSQL returns ``NUMERIC(28, 10)`` padded to ten decimals, SQLite
+    returns the text that was written. Digesting the raw spelling would give
+    the same frozen version two different hashes depending on the database it
+    was read from. Trailing zeros are therefore dropped, and the exponent
+    notation ``normalize()`` produces for round numbers (``1E+2``) is expanded
+    back to ``100``.
+    """
+    if not value.is_finite():
+        raise ValueError(f"Valeur décimale non finie dans un instantané : {value!r}")
+    normalized = value.normalize()
+    _, _, exponent = normalized.as_tuple()
+    if isinstance(exponent, int) and exponent > 0:
+        normalized = normalized.quantize(Decimal(1))
+    text = format(normalized, "f")
+    return "0" if text in {"-0", "0"} else text
+
+
+def canonical_snapshot(value: Any) -> Any:
+    """Rewrite a snapshot into its one canonical shape before hashing.
+
+    Two snapshots that carry the same information must produce the same bytes,
+    and anything whose meaning is not preserved by serialisation is refused
+    rather than coerced. That is why there is no ``default=`` fallback here: a
+    type this function does not know is a bug to fix, not a value to stringify
+    and hope for.
+    """
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, Decimal):
+        # Tagged so that the decimal 10 and the string "10" cannot collide.
+        return {"$dec": _plain_decimal(value)}
+    if isinstance(value, float):
+        raise TypeError(
+            "Un flottant binaire n'a rien à faire dans un instantané d'estimation : "
+            f"{value!r}. Les montants sont des Decimal (voir metreo_domain.money)."
+        )
+    if isinstance(value, date):
+        return {"$date": value.isoformat()}
+    if isinstance(value, dict):
+        return {str(key): canonical_snapshot(value[key]) for key in sorted(value, key=str)}
+    if isinstance(value, (list, tuple)):
+        return [canonical_snapshot(item) for item in value]
+    raise TypeError(f"Type non sérialisable dans un instantané : {type(value).__name__}")
+
+
 def snapshot_digest(snapshot: dict[str, Any]) -> str:
-    material = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str)
+    """SHA-256 of the canonical form of ``snapshot``.
+
+    Tamper-**evident** within the threat model of :mod:`metreo_api.services.audit`:
+    it detects a snapshot edited in place. It is not an immutable ledger — a
+    database administrator able to rewrite the row can recompute the digest to
+    match.
+    """
+    material = json.dumps(
+        canonical_snapshot(snapshot),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 

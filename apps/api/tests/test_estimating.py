@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import csv
 import io
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from fastapi.testclient import TestClient
+
+from metreo_api.db import AMOUNT_SCALE
 
 from .conftest import login
 
@@ -248,11 +251,21 @@ def test_a_later_price_change_does_not_move_a_frozen_total(
 
     after = compute(seeded_client, headers, estimate, version)
     assert after["from_snapshot"] is True
-    # The stored figure is unrounded; the displayed one applies the version's
-    # own rounding policy. Neither moved.
+    # The snapshot keeps the unrounded figure to its full working precision;
+    # the displayed one applies the version's own rounding policy. Neither
+    # moved.
     assert after["result"]["total_selling_price_ht_raw"] == total_before
     assert after["result"]["total_selling_price_ht"] == frozen["total_selling_price_ht_display"]
-    assert after["version"]["total_selling_price_ht"] == total_before
+
+    # The column is a queryable copy at the storage scale, so it carries at
+    # most AMOUNT_SCALE decimals of the snapshot figure — identically on both
+    # backends (see metreo_api.db.Amount). What matters is that it did not
+    # move either.
+    stored = Decimal(after["version"]["total_selling_price_ht"])
+    expected = Decimal(total_before).quantize(
+        Decimal(1).scaleb(-AMOUNT_SCALE), rounding=ROUND_HALF_UP
+    )
+    assert stored == expected
 
 
 def test_a_frozen_version_cannot_be_frozen_again(seeded_client, headers, estimate, version):

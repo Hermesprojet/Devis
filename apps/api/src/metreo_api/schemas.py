@@ -20,15 +20,25 @@ from pydantic import (
     field_serializer,
 )
 
+from metreo_domain.money import canonical_text
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class DecimalOut(ApiModel):
+    """Decimals leave the API as strings, in their canonical spelling.
+
+    A JSON number would be read back as a double by any JavaScript client and
+    lose cents. ``canonical_text`` additionally keeps the spelling independent
+    of the storage backend: without it a quantity read from PostgreSQL travels
+    as ``"120.0000000000"`` and the same quantity read from SQLite as ``"120"``.
+    """
+
     @field_serializer("*", when_used="json")
-    def _decimals_as_strings(self, value: Any) -> Any:  # pragma: no cover - trivial
-        return str(value) if isinstance(value, Decimal) else value
+    def _decimals_as_strings(self, value: Any) -> Any:
+        return canonical_text(value) if isinstance(value, Decimal) else value
 
 
 # -- auth ------------------------------------------------------------------

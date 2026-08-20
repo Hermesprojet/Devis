@@ -9,6 +9,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Aucun job de cette CI n'écrit sur le dépôt : elle ne lit que le code.
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.11"
   NODE_VERSION: "22"
@@ -99,9 +103,15 @@ jobs:
       - name: Jeu de démonstration
         working-directory: apps/api
         run: PYTHONPATH=src python -m metreo_api.seed
-      - name: Contrôle d'isolation multi-tenant sur PostgreSQL
+      - name: Suite complète sur PostgreSQL réel
         working-directory: apps/api
-        run: pytest tests/test_tenant_isolation.py -q
+        # METREO_TEST_DATABASE_URL fait tourner chaque test dans son propre
+        # schéma sur le serveur ; sans lui la conftest retombe sur SQLite et ce
+        # job ne prouverait rien sur NUMERIC, les contraintes ou le DDL
+        # transactionnel.
+        env:
+          METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+        run: pytest -q
 
   web:
     name: Web
@@ -114,7 +124,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - run: npm install
+      - name: Installer (verrouillé)
+        run: npm ci
       - name: Typage
         run: npm run typecheck
       - name: Build

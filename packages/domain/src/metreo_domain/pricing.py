@@ -25,7 +25,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from .errors import InvalidRateError, PricingConfigurationError
-from .money import WORKING_PRECISION, Money, RoundingPolicy, money_sum, to_decimal
+from .money import WORKING_PRECISION, Money, RoundingPolicy, canonical_text, money_sum, to_decimal
 from .units import Density, Quantity, convert, get_unit
 
 
@@ -73,11 +73,11 @@ class ComponentResult:
             "label": self.label,
             "kind": self.kind.value,
             "kind_label": self.kind.label_fr,
-            "resource_quantity": str(self.resource_quantity.value),
+            "resource_quantity": canonical_text(self.resource_quantity.value),
             "resource_unit": self.resource_quantity.unit.code,
             "unit_price": str(policy.quantize_unit_price(self.unit_price.amount)),
             "amount": str(policy.quantize(self.amount.amount)),
-            "amount_raw": str(self.amount.amount),
+            "amount_raw": canonical_text(self.amount.amount),
             "formula": self.formula,
             "density_source": self.density_source,
         }
@@ -375,7 +375,7 @@ class MarkupStepResult:
             "key": self.key,
             "label": self.label,
             "base_amount": str(policy.quantize(self.base_amount.amount)),
-            "rate": str(self.rate),
+            "rate": canonical_text(self.rate),
             "amount": str(policy.quantize(self.amount.amount)),
             "running_total": str(policy.quantize(self.running_total.amount)),
             "formula": self.formula,

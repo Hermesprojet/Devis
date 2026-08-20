@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Any
 
 from metreo_domain.errors import DomainError, UnknownUnitError
-from metreo_domain.money import Money, to_decimal
+from metreo_domain.money import Money, canonical_text, to_decimal
 from metreo_domain.pricing import (
     Component,
     ConsumptionComponent,
@@ -41,11 +41,15 @@ def _decimal_or_none(value: Any) -> Decimal | None:
 
 
 def spec_from_row(row: CompositeComponentRow) -> dict[str, Any]:
-    """Serialise a stored component. Values become strings so JSON round-trips
-    the exact decimal the user entered."""
+    """Serialise a stored component.
+
+    Values become strings so JSON round-trips the exact decimal the user
+    entered, through :func:`~metreo_domain.money.canonical_text` so that the
+    spelling comes from the value and not from the database backend.
+    """
 
     def s(value: Any) -> str | None:
-        return None if value is None else str(value)
+        return None if value is None else canonical_text(value)
 
     spec: dict[str, Any] = {
         "component_type": row.component_type,
