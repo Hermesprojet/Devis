@@ -175,11 +175,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Historique complet : le contrôle ci-dessous vérifie que le commit
+          # cité par docs/PHASE1_VERIFICATION.md existe réellement.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Frontmatter, chemins cités, données volatiles
         run: python scripts/check_skills.py
+      - name: Le dossier de vérification décrit un commit réel
+        # docs/PHASE1_VERIFICATION.md porte des compteurs volontairement figés.
+        # Ils n'ont de sens que rattachés à un commit qui existe.
+        run: |
+          commit=$(grep -oE '\b[0-9a-f]{40}\b' docs/PHASE1_VERIFICATION.md | head -1)
+          if [ -z "$commit" ]; then
+            echo "Aucun commit complet cité dans docs/PHASE1_VERIFICATION.md." >&2
+            exit 1
+          fi
+          git cat-file -e "$commit^{commit}" 2>/dev/null \
+            || { echo "Le commit $commit cité n'existe pas dans ce dépôt." >&2; exit 1; }
+          echo "Dossier de vérification rattaché à $commit"
+
 
   secrets:
     name: Aucun secret commité
