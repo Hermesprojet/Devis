@@ -150,7 +150,9 @@ web : le MVP n'en a pas besoin et chaque dépendance est une surface à mainteni
 
 ## Observabilité
 
-- Logs JSON (`logging_config.py`) avec `request_id` propagé par un middleware et
+- Logs JSON (`logging_config.py`) avec `request_id` propagé par un middleware —
+  repris de l'en-tête `X-Request-Id` ou engendré, renvoyé dans la réponse et
+  inscrit dans chaque événement d'audit de la requête — et
   renvoyé dans l'en-tête `X-Request-Id`.
 - Aucun corps de document, aucun jeton, aucun secret dans les logs.
 - OpenTelemetry n'est pas branché ; le point d'accroche est le middleware de

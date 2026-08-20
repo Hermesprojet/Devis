@@ -277,8 +277,11 @@ annulant les exécutions obsolètes d'une même référence :
 
 ## Reproduire cette vérification
 
+Le commit nommé dans « Ce qui fait foi » ci-dessus — et non un hash recopié
+ici, qui redeviendrait faux au commit suivant.
+
 ```bash
-git checkout 7fda8ba
+git checkout <le commit contrôlé, en tête de ce document>
 make install
 make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
 make e2e

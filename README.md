@@ -127,10 +127,10 @@ l'argent y vit.
 ## Commandes
 
 ```bash
-# Domaine (61 tests, aucune dépendance)
+# Domaine (aucune dépendance)
 python -m pytest packages/domain/tests -q
 
-# API (86 tests, base SQLite créée par les migrations réelles)
+# API (base SQLite créée par les migrations réelles)
 cd apps/api && python -m pytest -q
 
 # Qualité
