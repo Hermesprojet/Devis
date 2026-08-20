@@ -179,8 +179,9 @@ est inexact :
 5. `apps/api/src/metreo_api/schemas.py` : élargir le `Literal` de `ComponentSpecIn`, ajouter les
    champs, puis le mapping explicite dans `create_composite`, fichier
    `apps/api/src/metreo_api/routers/pricebooks.py`.
-6. Migration Alembic dans `apps/api/alembic/versions/` (`down_revision` = tête courante,
-   `d88792b38c2d` aujourd'hui), en `batch_alter_table` pour rester SQLite-compatible.
+6. Migration Alembic dans `apps/api/alembic/versions/` : `down_revision` = la tête courante,
+   que donne `alembic -c apps/api/alembic.ini heads`. En `batch_alter_table`, pour rester
+   compatible SQLite.
 
 Tests exigés : formule + cas limite (diviseur nul, unité croisée) dans
 `packages/domain/tests/test_pricing.py` ; aller-retour spec ↔ composant et gel dans
@@ -188,8 +189,7 @@ Tests exigés : formule + cas limite (diviseur nul, unité croisée) dans
 
 ## 11. Tests
 
-Suite du domaine : `packages/domain/tests` (61 tests aujourd'hui) ; commandes complètes et compteurs
-attendus : **definition-of-done**.
+Suite du domaine : `packages/domain/tests` ; commandes complètes : **definition-of-done**.
 Tout nouveau calcul se prouve par un test comparant à une valeur **calculée à la main** et écrite
 en dur, pas au résultat du code. `sensitivity()` existe et est testé, mais c'est un utilitaire
 **générique** : l'appelant fournit le `recompute` et nomme ses variations ; les axes du cahier des

@@ -131,6 +131,17 @@ jobs:
       - name: Build
         run: npm run build
 
+  skills:
+    name: Skills du dépôt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Frontmatter, chemins cités, données volatiles
+        run: python scripts/check_skills.py
+
   secrets:
     name: Aucun secret commité
     runs-on: ubuntu-latest

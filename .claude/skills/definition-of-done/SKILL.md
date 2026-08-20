@@ -93,9 +93,9 @@ Règles d'usage :
 | Job | Ce qu'il ajoute par rapport au local |
 | --- | --- |
 | `domain` | Installation propre du seul paquet `packages/domain` : une dépendance qui aurait fui vers le domaine casse ici |
-| `api-sqlite` | Format, lint, typage et les 86 tests sur une machine vierge |
-| `api-postgres` | PostgreSQL 16 + PostGIS : `upgrade head` → `downgrade base` → `upgrade head`, `seed`, puis `apps/api/tests/test_tenant_isolation.py` rejoué seul |
-| `web` | `npm install`, `npm run typecheck`, `npm run build` |
+| `api-sqlite` | Format, lint, typage et la suite API sur une machine vierge, sans service |
+| `api-postgres` | PostgreSQL 16 + PostGIS : `upgrade head` → `downgrade base` → `upgrade head`, `seed`, puis **la suite complète** via `METREO_TEST_DATABASE_URL` — sans cette variable la conftest retombe sur SQLite et le job ne prouve rien |
+| `web` | `npm ci` (installation verrouillée), `npm run typecheck`, `npm run build` |
 | `secrets` | Refuse un `.env` versionné et les motifs `sk-…`, `AKIA…`, `BEGIN … PRIVATE KEY` |
 
 Une différence SQLite / PostgreSQL (type `Amount` de `apps/api/src/metreo_api/db.py`, contraintes,
