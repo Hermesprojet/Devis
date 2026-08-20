@@ -38,7 +38,11 @@ def main() -> int:
         venv.EnvBuilder(with_pip=True).create(env_dir)
         python = env_dir / "bin" / "python"
 
-        install = [str(python), "-m", "pip", "install", "--quiet"]
+        # Comme `make install` : un pip d'origine peut être trop ancien pour
+        # les métadonnées de certaines roues.
+        run([str(python), "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
+
+        install = [str(python), "-m", "pip", "install", "--quiet", "--no-cache-dir"]
         if args.constraints:
             install += ["-c", str(ROOT / args.constraints)]
         install += [str(ROOT / "packages" / "domain"), str(ROOT / "apps" / "api")]

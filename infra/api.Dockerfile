@@ -14,6 +14,7 @@ WORKDIR /src
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip
 
 COPY packages/domain /src/packages/domain
 COPY apps/api /src/apps/api

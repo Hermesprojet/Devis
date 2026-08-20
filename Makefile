@@ -90,11 +90,16 @@ lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	@tmp=$$(mktemp -d); \
 	$(PY) -m venv $$tmp/venv; \
 	$$tmp/venv/bin/pip install --quiet --upgrade pip; \
-	$$tmp/venv/bin/pip install --quiet ./packages/domain "./apps/api[dev,postgres]"; \
-	{ echo "# Verrou de résolution Python, régénéré par : make lock"; \
+	$$tmp/venv/bin/pip install --quiet ./packages/domain "./apps/api[postgres]"; \
+	{ echo "# Verrou de résolution des dépendances d'EXÉCUTION, régénéré par : make lock"; \
+	  echo "#"; \
+	  echo "# Ne contient délibérément pas les outils de développement (pytest, ruff,"; \
+	  echo "# mypy). Les y inclure épinglait packaging et pathspec, qui contaminaient"; \
+	  echo "# l'environnement isolé de construction de hatchling et rendaient la"; \
+	  echo "# résolution impossible sur une machine sans cache de roues."; \
+	  echo "#"; \
 	  echo "# Les manifestes (pyproject.toml) restent la source de vérité des"; \
-	  echo "# dépendances ; ce fichier ne fait que figer la résolution obtenue,"; \
-	  echo "# afin qu'une installation d'aujourd'hui soit celle de la CI."; \
+	  echo "# dépendances ; ce fichier ne fait que figer la résolution obtenue."; \
 	  $$tmp/venv/bin/pip freeze --exclude-editable \
 	    | grep -viE '^(metreo-api|metreo-domain)=='; } > constraints/api.txt; \
 	rm -rf $$tmp; \
