@@ -1,5 +1,7 @@
 # Metreo — étude de prix et devis BTP
 
+Création des devis pour travaux publics et construction.
+
 Application professionnelle d'étude de prix, de métré et de devis pour les
 entreprises de terrassement, égouttage, voirie, démolition, génie civil et
 travaux publics. Premier marché : la **Belgique** (Wallonie), avec un modèle de
