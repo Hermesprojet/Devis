@@ -144,7 +144,14 @@ def current_context(
 
 
 def require(permission: Permission):
-    """Dependency factory enforcing one permission."""
+    """Dependency factory enforcing one permission.
+
+    The permission is attached to the returned dependency as
+    ``required_permission``. That attribute is part of the contract, not an
+    implementation detail: ``tests/test_authorization_matrix.py`` walks every
+    mounted route and reads it, so a route added without a permission — or with
+    the wrong one — fails the suite instead of shipping silently.
+    """
 
     def dependency(
         context: TenantContext = Depends(current_context),
@@ -152,6 +159,7 @@ def require(permission: Permission):
         context.require(permission)
         return context
 
+    dependency.required_permission = permission  # type: ignore[attr-defined]
     return dependency
 
 
