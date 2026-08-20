@@ -131,6 +131,45 @@ jobs:
       - name: Build
         run: npm run build
 
+  e2e:
+    name: Parcours web (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Installer l'API
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./packages/domain
+          pip install "fastapi>=0.115,<1.0" "uvicorn[standard]" "sqlalchemy>=2.0.30" alembic \
+                      "pydantic[email]>=2.7" pydantic-settings python-multipart pyjwt
+      - name: Installer le web (verrouillé)
+        working-directory: apps/web
+        run: npm ci
+      - name: Installer Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Parcours de bout en bout
+        working-directory: apps/web
+        # La configuration migre et sème une base jetable, construit le front
+        # avec l'URL de l'API de test — NEXT_PUBLIC_* est inliné à la
+        # compilation — puis démarre les deux serveurs.
+        env:
+          METREO_PYTHON: python
+        run: npx playwright test
+      - name: Rapport en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: apps/web/test-results/
+          retention-days: 7
+
   skills:
     name: Skills du dépôt
     runs-on: ubuntu-latest

@@ -39,3 +39,8 @@ dist/
 
 # Web build/test leftovers
 apps/web/next-env.d.ts
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
-import { api, clearSession, loadSession, type Health, type Me } from '@/lib/api'
+import { api, ApiError, clearSession, loadSession, type Health, type Me } from '@/lib/api'
 import { t } from '@/lib/i18n'
 
 const LINKS = [
@@ -24,6 +24,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [health, setHealth] = useState<Health | null>(null)
   const [checked, setChecked] = useState(false)
+  const [sessionError, setSessionError] = useState<unknown>(null)
 
   useEffect(() => {
     if (!loadSession()) {
@@ -37,9 +38,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
         setMe(profile)
         setHealth(status)
       })
-      .catch(() => {
-        clearSession()
-        router.replace('/')
+      .catch((caught: unknown) => {
+        if (!active) return
+        // Only an actual rejection of the token ends the session. Signing the
+        // user out on *any* failure means a moment of network trouble throws
+        // away their work, and they cannot tell the difference between an
+        // expired token and an unplugged cable.
+        const rejected = caught instanceof ApiError && (caught.status === 401 || caught.status === 403)
+        if (rejected) {
+          clearSession()
+          router.replace('/')
+          return
+        }
+        setSessionError(caught)
       })
       .finally(() => active && setChecked(true))
     return () => {
@@ -95,6 +106,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="notice warning" role="note">
           {t('app.demoBanner')}
         </div>
+        {sessionError !== null && (
+          <div className="notice warning" role="alert">
+            Le service n'a pas répondu. Vous êtes toujours connecté ; réessayez dans un
+            instant.
+          </div>
+        )}
         {children}
       </main>
     </div>

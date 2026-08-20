@@ -7,11 +7,12 @@ refuses to start when ``ENVIRONMENT`` is not a development environment.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -43,16 +44,36 @@ class Settings(BaseSettings):
     ai_enabled: bool = False
     ai_provider: Literal["null", "local_stub"] = "null"
 
-    cors_origins: list[str] = ["http://localhost:3000"]
+    #: Annotated ``NoDecode`` so that the validator below actually runs.
+    #: pydantic-settings JSON-decodes a ``list`` field inside the environment
+    #: source, *before* any ``mode="before"`` validator, so the comma-separated
+    #: form documented in ``.env.example`` used to raise ``SettingsError`` at
+    #: startup — the application could not be configured the way its own
+    #: example file said to. Covered by ``tests/test_configuration.py``.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
     default_currency: str = "EUR"
     default_locale: str = "fr-BE"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+        """Accept the documented comma-separated form, and a JSON list too.
+
+        A JSON array left unparsed would become one nonsensical origin rather
+        than an error, and CORS would silently reject every browser call.
+        """
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"CORS origins: liste JSON invalide ({error})") from error
+            if not isinstance(decoded, list):
+                raise ValueError("CORS origins: le JSON fourni n'est pas une liste")
+            return [str(item).strip() for item in decoded if str(item).strip()]
+        return [item.strip() for item in text.split(",") if item.strip()]
 
     @property
     def is_production(self) -> bool:
