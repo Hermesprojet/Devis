@@ -1,23 +1,39 @@
 # Vérification de la Phase 1
 
-> Ce document est **lié au commit qu'il vérifie** — celui sur lequel `make verify`
-> et `make e2e` ont réellement tourné, donc le parent du commit qui l'introduit :
-> un document ne peut pas citer sa propre empreinte. Les compteurs qu'il contient sont
-> vrais pour ce commit et faux dès le suivant : c'est la raison pour laquelle ils
-> vivent ici et nulle part ailleurs — ni dans les skills, ni dans le `README.md`.
-> Pour le régénérer, relancer `make verify` sur le commit concerné et reprendre
-> les chiffres affichés.
+> **Quatre choses distinctes, souvent confondues.** Ce document décrit une
+> *procédure* reproductible ; il nomme le *dernier commit contrôlé depuis un
+> clone propre* ; la *tête de la PR* est indiquée sur la PR elle-même et peut
+> être plus récente ; et c'est la *CI de cette tête* qui fait foi. Un hash
+> inscrit dans un fichier versionné ne prouve rien par lui-même — un document
+> ne peut pas citer sa propre empreinte, et il vieillit à chaque commit.
+> Les compteurs ci-dessous sont vrais pour le commit nommé et faux dès le
+> suivant : c'est pourquoi ils vivent ici, et ni dans les skills ni dans le
+> `README.md`.
 
-## Commit vérifié
+## Ce qui fait foi
 
 | | |
 | --- | --- |
-| Commit | `7fda8bae72a09e0eed9c106c2c4c7e4d9a844f92` |
-| Abrégé | `7fda8ba` |
+| Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
+| Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
+| Dernier commit contrôlé depuis un clone propre | `26684e8` |
+| Procédure | `make install` puis `make verify` puis `make e2e`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
-| Pull request | [#1](https://github.com/Hermesprojet/Devis/pull/1) (brouillon) |
 | Tête Alembic | `d88792b38c2d` |
-| Fichiers versionnés | 119 |
+
+## Commit contrôlé depuis un clone propre
+
+| | |
+| --- | --- |
+| Commit | `26684e8cfd09e1ba8e50af002785aa77308b7df0` |
+| Abrégé | `26684e8` |
+| Fichiers versionnés | 125 |
+| Exécution CI correspondante | [32424127796](https://github.com/Hermesprojet/Devis/actions/runs/32424127796) — 10 jobs verts |
+
+Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
+ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
+suffit ; quand il touche au code, aux dépendances, aux tests ou à la CI
+elle-même, refaire le clone propre.
 
 ## Environnement de la vérification
 
@@ -59,11 +75,12 @@ commande et s'arrête au premier échec.
 | Format et lint Python | `make lint` | `All checks passed!` | < 1 s |
 | Types — domaine | `mypy packages/domain/src/metreo_domain` | 6 fichiers, aucun problème | ~1 s |
 | Types — API | `mypy apps/api/src/metreo_api` | 27 fichiers, aucun problème | ~2 s |
-| Tests du domaine | `make test-domain` | **61 passed** | 0,1 s |
-| Tests API sur SQLite | `make test-api` | **124 passed** | ~55 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **124 passed** | ~50 s |
+| Tests du domaine | `make test-domain` | **105 passed** | 0,1 s |
+| Tests API sur SQLite | `make test-api` | **130 passed** | ~45 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **130 passed** | ~47 s |
 | Migrations aller-retour | `make migrations` | `upgrade head` → `downgrade base` → `upgrade head` | ~3 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
+| Installation depuis les manifestes | `make clean-install` | 33 chemins, 47 schémas | ~25 s |
 | Contrôle des skills | `make skills` | `8 skills conformes.` | < 1 s |
 | Aucun secret commité | `make secrets` | `aucun secret évident` | < 1 s |
 | Composition Docker | `make compose-config` | `docker compose : valide` | ~1 s |
@@ -94,28 +111,88 @@ jeu de dépendances qui n'était pas celui du dépôt. Les deux sont corrigés, 
 la CI installe désormais `./apps/api` avec ses extras, si bien qu'un manque
 dans `pyproject.toml` casse la CI plutôt que le premier `git clone`.
 
-## Vulnérabilités connues des dépendances
+## Vulnérabilités des dépendances
 
-Consignées par le job « Vulnérabilités des dépendances », **sans faire échouer
-la construction** : les correctifs exigent des montées de version majeures, à
-trancher et à tester séparément. Rien n'est masqué — le rapport complet est
-dans les journaux du job.
+`npm audit` et `pip-audit` sont exécutés à chaque construction par le job
+« Vulnérabilités des dépendances », et le rapport est consigné dans ses
+journaux. **Aucune vulnérabilité connue à ce jour.**
 
-| Paquet | Gravité | Correctif | Exposition réelle aujourd'hui |
+L'état de départ était : une critique et deux hautes. Traitement :
+
+| Paquet | Avant | Après | Avis levés |
 | --- | --- | --- | --- |
-| `next` 15.5.4 | critique | ≥ 16.3.0 | Le produit n'est pas déployé. Les avis portent sur Server Actions, l'Image Optimizer, le middleware et le cache RSC — aucun n'est utilisé ici. À traiter **avant tout déploiement**. |
-| `postcss` | haute | montée transitive via `next` | idem |
-| `sharp` | haute | ≥ 0.35.0, transitive via `next` | idem |
-| `setuptools` 79.0.1 | — | ≥ 83.0.0 | outil de construction, absent de l'exécution |
+| `next` | 15.5.4 | **15.5.23** | tous les avis propres à Next, dont la RCE critique du protocole flight |
+| `postcss` | 8.4.31 | **8.5.26** | GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849, GHSA-fxqj-rqcc-2cmp, GHSA-qx2v-qp2m-jg93 |
+| `sharp` | 0.34.5 | **0.35.3** | GHSA-f88m-g3jw-g9cj (CVE-2026-33327, -33328, -35590, -35591 dans libvips) |
 
-Le passage à Next.js 16 est un changement majeur : il change le comportement
-du framework et doit être fait dans sa propre tranche, avec les parcours
-Playwright pour filet.
+Montée sur la branche de maintenance 15.5, pas de migration vers Next 16 :
+le tag npm `backport` pointe 15.5.23. React reste en 19.1.0, que cette
+version accepte (`peer ^19.0.0`). `postcss` et `sharp` sont des dépendances
+transitives de Next, relevées par des `overrides` ciblés dans
+`apps/web/package.json`.
+
+Une migration majeure vers Next 16 reste une tranche à part, avec analyse des
+changements incompatibles — elle n'est plus imposée par la sécurité.
+
+### Exposition réellement mesurée
+
+Vérifiée dans le code avant de trancher, et non supposée : App Router, mais
+9 des 11 composants portent `'use client'` (les deux autres sont
+`layout.tsx` et `icon.tsx`) ; ni Server Actions, ni route handler, ni
+middleware, ni `next/image` ; `output: 'standalone'`. `postcss` ne traite que
+la feuille de style du dépôt, à la construction. L'exposition était donc
+faible — pas nulle — et elle est close plutôt que documentée.
+
+## Conteneurs
+
+Construits et contrôlés en CI, le proxy de la session de développement
+bloquant le CDN de Docker Hub.
+
+| Contrôle | Résultat |
+| --- | --- |
+| `docker compose config` | valide |
+| Construction `infra/api.Dockerfile` | réussie |
+| Construction `infra/web.Dockerfile` | réussie |
+| UID effectif de l'API | **10001** |
+| UID effectif du front | **1000** |
+| Point de santé déclaré | sur les deux images |
+
+Les deux images sont en plusieurs étapes : les outils de construction ne
+survivent pas à l'étape finale. Le code appartient à `root` alors que le
+processus tourne sous un compte non privilégié — l'application ne peut pas
+réécrire ses propres fichiers. Un seul répertoire lui est ouvert en écriture,
+`/var/lib/metreo`, en 700, monté depuis un volume : c'est là qu'atterriront
+les documents de la phase 2.
+
+Être non-root réduit le risque, il n'isole pas. Ce n'est qu'une mesure parmi
+d'autres avant de traiter des fichiers venant de tiers.
+
+## Bornes numériques
+
+Les colonnes décimales sont des `NUMERIC(28, 10)` : dix décimales, donc
+dix-huit chiffres avant la virgule, soit une capacité **exclusive** de 10^18.
+`metreo_domain.bounds` définit huit bornes métier — quantité, prix unitaire,
+total, taux, rendement, masse volumique, coefficient, distance — chacune avec
+son minimum inclusif ou exclusif, son maximum, ses décimales utiles et son
+unité. Les schémas Pydantic les dérivent au lieu de redéclarer des maxima.
+
+La démonstration a d'abord échoué, et c'est ce qui a corrigé la conception :
+quantité maximale × prix unitaire maximal vaut exactement 10^18 et ne tient
+donc pas. Ce ne sont pas les bornes d'entrée qui protègent le stockage, mais
+celle du **total**, vérifiée sur le résultat calculé avant écriture. La plus
+grande valeur réellement écrite vaut 10^12 — six ordres de grandeur sous la
+capacité, vérifié par `test_no_accepted_value_can_saturate_the_sql_column`.
+
+Un dépassement produit un `422` nommant la borne, la valeur et les deux
+limites, jamais un arrondi silencieux ni une erreur SQL. Un test documente
+honnêtement ce que cette protection ne peut pas attraper : 2,4 saisi en
+g/cm³ au lieu de 2400 kg/m³ reste une masse volumique valide dans la plage.
 
 ## Intégration continue
 
-Huit jobs, `.github/workflows/ci.yml`, permissions du jeton limitées à
-`contents: read` :
+Dix jobs, `.github/workflows/ci.yml`, permissions du jeton limitées à
+`contents: read`, actions tierces épinglées à leur SHA complet, `concurrency`
+annulant les exécutions obsolètes d'une même référence :
 
 | Job | Ce qu'il prouve |
 | --- | --- |
@@ -125,6 +202,8 @@ Huit jobs, `.github/workflows/ci.yml`, permissions du jeton limitées à
 | Web | types et build de production |
 | Parcours web (Playwright) | les écrans fonctionnent contre l'API réelle |
 | Skills du dépôt | frontmatter, chemins cités, absence de données volatiles |
+| Installation depuis les manifestes | un environnement vierge démarre sans paquet implicite |
+| Images Docker | construction, UID effectif non nul, point de santé |
 | Vulnérabilités des dépendances | rapport `pip-audit` et `npm audit` consigné |
 | Aucun secret commité | pas de `.env` versionné, pas de motif de secret |
 
