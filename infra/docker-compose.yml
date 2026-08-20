@@ -1,0 +1,71 @@
+# Environnement local reproductible.
+#   docker compose -f infra/docker-compose.yml up -d db redis
+#   docker compose -f infra/docker-compose.yml --profile app up --build
+#
+# PostGIS est présent dès maintenant parce que le modèle de données prévoit des
+# coordonnées de projet et, en phase 3, des géométries de mesure. Aucune colonne
+# géométrique n'est encore créée.
+
+name: metreo
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-metreo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-metreo}
+      POSTGRES_DB: ${POSTGRES_DB:-metreo}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-metreo} -d ${POSTGRES_DB:-metreo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: infra/api.Dockerfile
+    environment:
+      METREO_ENVIRONMENT: development
+      METREO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-metreo}:${POSTGRES_PASSWORD:-metreo}@db:5432/${POSTGRES_DB:-metreo}
+      METREO_AUTH_MODE: dev
+      METREO_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic -c apps/api/alembic.ini upgrade head &&
+             uvicorn metreo_api.main:app --host 0.0.0.0 --port 8000"
+
+  web:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  db-data:

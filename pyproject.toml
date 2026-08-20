@@ -1,0 +1,42 @@
+# Outillage Python partagé par le monorepo.
+# Les paquets publiables ont leur propre pyproject: packages/domain, apps/api.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["apps/api/alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+  "E501",    # la longueur est gérée par le formateur
+  "B008",    # Depends(...) en valeur par défaut est l'idiome FastAPI
+  "RUF001",  # les chaînes françaises contiennent des caractères typographiques
+  "RUF002",
+  "RUF003",
+  "UP042",   # `str, Enum` est délibéré: `.value` reste explicite partout
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/*" = ["B011"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["metreo_domain", "metreo_api"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = true
+mypy_path = "packages/domain/src:apps/api/src"
+exclude = "apps/api/alembic/versions"
+
+[[tool.mypy.overrides]]
+module = "metreo_domain.*"
+disallow_untyped_defs = true

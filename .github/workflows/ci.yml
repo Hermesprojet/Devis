@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "22"
+
+jobs:
+  domain:
+    name: Domaine (calculs déterministes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Installer
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./packages/domain pytest ruff mypy
+      - name: Format et lint
+        run: |
+          ruff format --check packages/domain
+          ruff check packages/domain
+      - name: Typage
+        run: mypy packages/domain/src/metreo_domain
+      - name: Tests
+        run: pytest packages/domain/tests -q
+
+  api-sqlite:
+    name: API (SQLite, sans service)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Installer
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./packages/domain
+          pip install "fastapi>=0.115,<1.0" "uvicorn[standard]" "sqlalchemy>=2.0.30" alembic \
+                      "pydantic[email]>=2.7" pydantic-settings python-multipart pyjwt \
+                      pytest httpx ruff mypy
+      - name: Format et lint
+        run: |
+          ruff format --check apps/api/src apps/api/tests
+          ruff check apps/api/src apps/api/tests
+      - name: Typage
+        run: mypy apps/api/src/metreo_api
+      - name: Tests
+        working-directory: apps/api
+        run: pytest -q
+
+  api-postgres:
+    name: API (PostgreSQL + PostGIS)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: metreo
+          POSTGRES_PASSWORD: metreo
+          POSTGRES_DB: metreo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U metreo -d metreo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+      METREO_ENVIRONMENT: test
+      METREO_JWT_SECRET: ci-secret-not-used-anywhere-else-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Installer
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./packages/domain
+          pip install "fastapi>=0.115,<1.0" "uvicorn[standard]" "sqlalchemy>=2.0.30" alembic \
+                      "pydantic[email]>=2.7" pydantic-settings python-multipart pyjwt \
+                      "psycopg[binary]" pytest httpx
+      - name: Migrations
+        working-directory: apps/api
+        run: |
+          PYTHONPATH=src alembic -c alembic.ini upgrade head
+          PYTHONPATH=src alembic -c alembic.ini downgrade base
+          PYTHONPATH=src alembic -c alembic.ini upgrade head
+      - name: Jeu de démonstration
+        working-directory: apps/api
+        run: PYTHONPATH=src python -m metreo_api.seed
+      - name: Contrôle d'isolation multi-tenant sur PostgreSQL
+        working-directory: apps/api
+        run: pytest tests/test_tenant_isolation.py -q
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm install
+      - name: Typage
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  secrets:
+    name: Aucun secret commité
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Refuser un .env versionné
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "Un fichier .env est versionné." >&2
+            exit 1
+          fi
+      - name: Motifs de secrets évidents
+        run: |
+          if git grep -nEI '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})' \
+               -- . ':!.github/workflows/ci.yml'; then
+            echo "Motif de secret détecté." >&2
+            exit 1
+          fi
