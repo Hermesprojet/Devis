@@ -54,6 +54,15 @@ services:
     command: >
       sh -c "alembic -c apps/api/alembic.ini upgrade head &&
              uvicorn metreo_api.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 30s
+      retries: 5
+    volumes:
+      # Seul répertoire accessible en écriture au processus applicatif.
+      - api-storage:/var/lib/metreo
 
   web:
     profiles: ["app"]
@@ -69,3 +78,4 @@ services:
 
 volumes:
   db-data:
+  api-storage:

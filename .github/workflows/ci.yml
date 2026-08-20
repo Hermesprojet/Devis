@@ -206,6 +206,36 @@ jobs:
         # pyproject.toml échoue ici, et non chez le premier développeur.
         run: python scripts/check_clean_install.py --constraints constraints/api.txt
 
+  containers:
+    name: Images Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Composition valide
+        run: docker compose -f infra/docker-compose.yml config
+      - name: Construire l'image de l'API
+        run: docker build -f infra/api.Dockerfile -t metreo-api:ci .
+      - name: Construire l'image du front
+        run: docker build -f infra/web.Dockerfile -t metreo-web:ci .
+      - name: L'API ne tourne pas en root
+        # Le point du contrôle : une image qui traitera en phase 2 des fichiers
+        # venant de tiers ne doit pas exécuter son processus en uid 0.
+        run: |
+          uid=$(docker run --rm --entrypoint id metreo-api:ci -u)
+          echo "uid effectif de l'API : $uid"
+          test "$uid" != "0"
+      - name: Le front ne tourne pas en root
+        run: |
+          uid=$(docker run --rm --entrypoint id metreo-web:ci -u)
+          echo "uid effectif du front : $uid"
+          test "$uid" != "0"
+      - name: Les images déclarent un point de santé
+        run: |
+          for image in metreo-api:ci metreo-web:ci; do
+            test "$(docker inspect -f '{{if .Config.Healthcheck}}oui{{else}}non{{end}}' "$image")" = "oui"
+            echo "$image : point de santé déclaré"
+          done
+
   audit:
     name: Vulnérabilités des dépendances
     runs-on: ubuntu-latest
