@@ -29,7 +29,7 @@ n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `2bd069f` |
+| Dernier commit contrôlé depuis un clone propre | `745fe07` |
 | Procédure | `make install` puis `make release-gate`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
@@ -38,10 +38,10 @@ n'atteste que le premier.
 
 | | |
 | --- | --- |
-| Commit | `2bd069fdc2729b889d5266a47aca0f5ba45e0a5b` |
-| Abrégé | `2bd069f` |
-| Fichiers versionnés | 151 |
-| Exécution CI correspondante | [push 32513245504](https://github.com/Hermesprojet/Devis/actions/runs/32513245504) et [pull_request 32513250676](https://github.com/Hermesprojet/Devis/actions/runs/32513250676) — 10/10 chacune |
+| Commit | `745fe07d6bb4b8f83890cc5515379910ec9a96e1` |
+| Abrégé | `745fe07` |
+| Fichiers versionnés | 154 |
+| Exécution CI correspondante | [push 32537195840](https://github.com/Hermesprojet/Devis/actions/runs/32537195840) et [pull_request 32537198110](https://github.com/Hermesprojet/Devis/actions/runs/32537198110) — 10/10 chacune |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -120,8 +120,8 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Types — API | `mypy apps/api/src/metreo_api` | 30 fichiers, aucun problème | ~2 s |
 | Types — scripts | `mypy scripts` | 3 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **359 passed, 7 ignorés** | ~101 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **366 passed** | ~130 s |
+| Tests API sur SQLite | `make test-api` | **407 passed, 13 ignorés** | ~93 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **420 passed** | ~124 s |
 | Migrations aller-retour | `make migrations` | `upgrade head` → `downgrade base` → `upgrade head` | ~3 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
@@ -130,7 +130,7 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Composition Docker | `make compose-config` | `docker compose : valide` | ~1 s |
 | Types du front | `make web-typecheck` | `tsc --noEmit` sans erreur | ~2 s |
 | Build de production | `make web-build` | 9 routes compilées | ~3 s |
-| Parcours navigateur | `make e2e` | **15 passed** | ~49 s |
+| Parcours navigateur | `make e2e` | **15 passed** | ~44 s |
 
 Les tests API tournent **réellement** sur PostgreSQL lorsque
 `METREO_TEST_DATABASE_URL` est défini : chaque test obtient son propre schéma.
