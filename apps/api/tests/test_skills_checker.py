@@ -113,6 +113,32 @@ class TestVolatileCounters:
         directory = write_skill(tmp_path, "faux-skill", body)
         assert checker.lint_skill(directory)
 
+    def test_an_unclosed_code_block_is_refused(self, tmp_path: Path) -> None:
+        """La parité du suivi de blocs est fragile — un oubli la retourne.
+
+        Sans ce contrôle, un délimiteur de fermeture manquant rendait à
+        nouveau invisibles tous les compteurs des blocs suivants, sans le
+        moindre diagnostic : exactement l'angle mort que ce module existe
+        pour fermer.
+        """
+        body = "```bash\npytest -q\n\n## Suite\n\n```bash\n# attendu : 61 passed\n```"
+        directory = write_skill(tmp_path, "faux-skill", body)
+        problems = checker.lint_skill(directory)
+        assert any("non refermé" in problem for problem in problems), problems
+
+    def test_a_counter_after_an_unclosed_block_is_still_seen(self, tmp_path: Path) -> None:
+        """Parité fausse : on cesse de faire confiance à l'état, on lit tout."""
+        body = "```bash\npytest -q\n\n```bash\n# attendu : 61 passed\n```"
+        directory = write_skill(tmp_path, "faux-skill", body)
+        problems = checker.lint_skill(directory)
+        assert any("pytest recopiée" in problem for problem in problems), problems
+
+    def test_an_indented_code_block_is_read(self, tmp_path: Path) -> None:
+        """Quatre espaces suffisent à faire un bloc de code en Markdown."""
+        body = "Exemple :\n\n    # attendu : 61 passed\n    pytest -q\n"
+        directory = write_skill(tmp_path, "faux-skill", body)
+        assert checker.lint_skill(directory)
+
     def test_a_markdown_heading_is_not_a_shell_comment(self, tmp_path: Path) -> None:
         """Un titre reste un titre : il ne doit pas être pris pour du shell."""
         body = "## Étape 4 — lancer la suite\n\nLancer `pytest -q` et lire la sortie."

@@ -405,8 +405,19 @@ def content_disposition(stem: str, extension: str) -> str:
         character if character.isalnum() or character in "-_." else "-" for character in stem
     ).strip("-")
     cleaned = _truncate_utf8(cleaned, MAX_FILENAME_BYTES).strip("-")
+    # La normalisation vient APRÈS la liste blanche et la borne, et elle peut
+    # défaire les deux : NFKD décompose « Ⅷ » en « VIII » — un caractère de
+    # trois octets qui en rend quatre — et « ™ » en « TM », « ﬄ » en « ffl »,
+    # certains espaces insécables en espace ordinaire. Le radical ASCII est
+    # donc refiltré et reborné après coup, sinon il dépasserait la limite
+    # annoncée et réintroduirait des caractères que la liste blanche exclut.
+    decomposed = unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii")
     ascii_stem = (
-        unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii") or "export"
+        "".join(
+            character if character.isalnum() or character in "-_." else "-"
+            for character in decomposed
+        ).strip("-")[:MAX_FILENAME_BYTES]
+        or "export"
     )
     ascii_name = f"{ascii_stem}.{extension}"
     utf8_name = quote(f"{cleaned or 'export'}.{extension}", safe="")

@@ -39,6 +39,7 @@ from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import audit, price_import, pricebook_versions
 from ..services.composites import spec_from_row, validate_spec
+from ..services.locking import lock_owned
 from ..services.price_contract import as_http_detail, validate_price_row
 from ..services.tenant import get_owned, owned_query
 
@@ -425,7 +426,14 @@ def commit_import(
                 "message": "Confirmez explicitement l'écriture dans la bibliothèque.",
             },
         )
-    batch = get_owned(session, ImportBatch, context.organization_id, batch_id, label="Import")
+    # Verrouillé, puis relu — dans cet ordre. Lire le statut d'abord laissait
+    # deux requêtes franchir la garde ensemble : la seconde attendait le verrou
+    # de version, puis rejouait l'import sur son objet resté « previewed » en
+    # mémoire, écrasant `committed_at` et écrivant un second événement
+    # `price_import.committed` pour un seul lot. Un double clic suffisait.
+    batch = lock_owned(session, ImportBatch, context.organization_id, batch_id, label="Import")
+    _version_open_for_writing(session, context, batch.price_book_version_id)
+    session.refresh(batch)
     if batch.status != "previewed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -434,7 +442,6 @@ def commit_import(
                 "message": f"Cet import est déjà « {batch.status} ».",
             },
         )
-    _version_open_for_writing(session, context, batch.price_book_version_id)
 
     outcome = price_import.commit_batch(session, batch, strategy=payload.strategy)
     audit.record(

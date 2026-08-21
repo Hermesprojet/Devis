@@ -129,14 +129,41 @@ def volatile_problems(body: str, skill: str) -> list[str]:
     where it is a Markdown heading. Inside a fence it is a shell comment, and
     that is precisely where the stale counters lived: skipping it made the
     whole check ornamental.
+
+    The fence state is a parity bit, and parity is fragile: one missing
+    closing delimiter — an ordinary editing slip — inverts it for the rest of
+    the file, and every later ``#`` line becomes a "heading" again. That
+    reopens the exact blind spot this function exists to close, silently. An
+    unbalanced fence is therefore reported as a problem in its own right,
+    and the scan falls back to reading every line rather than trusting a
+    state it knows to be wrong.
+
+    Markdown also allows a code block indented by four spaces, with no fence
+    at all. Those lines are read too: a comment hidden there is just as
+    followed as one inside a fence.
     """
     problems: list[str] = []
+    lines = body.splitlines()
+
+    fences = [number for number, line in enumerate(lines, start=1) if _FENCE.match(line)]
+    unbalanced = len(fences) % 2 == 1
+    if unbalanced:
+        problems.append(
+            f"{skill}:{fences[-1]}: bloc de code non refermé — le suivi des blocs "
+            "ne peut plus distinguer un titre Markdown d'un commentaire de shell, "
+            "et les compteurs figés y redeviendraient invisibles. Refermer le bloc."
+        )
+
     in_fence = False
-    for number, line in enumerate(body.splitlines(), start=1):
+    for number, line in enumerate(lines, start=1):
         if _FENCE.match(line):
             in_fence = not in_fence
             continue
-        if not in_fence and line.lstrip().startswith(("#", ">")):
+        # Un bloc indenté de quatre espaces est du code, sans délimiteur.
+        indented_code = line.startswith(("    ", "\t")) and line.strip().startswith("#")
+        # Parité fausse : on ne saute plus rien, quitte à signaler un titre.
+        heading = line.lstrip().startswith(("#", ">"))
+        if not unbalanced and not in_fence and heading and not indented_code:
             continue
         for pattern, label in VOLATILE:
             if re.search(pattern, line, re.IGNORECASE):

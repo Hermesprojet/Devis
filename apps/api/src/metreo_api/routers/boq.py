@@ -24,6 +24,7 @@ from ..schemas import (
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import audit
+from ..services.locking import lock_owned
 from ..services.tenant import get_owned, owned_query
 
 router = APIRouter(tags=["bill-of-quantities"])
@@ -250,6 +251,18 @@ def bulk_create_items(
     return created
 
 
+def _locked_item(session: Session, context: TenantContext, item_id: str) -> BoqItem:
+    """Load a BOQ item and hold it for the decision that follows.
+
+    Reading `status` and then writing leaves room for a concurrent approval to
+    land in between: the quantity of an approved item would then change without
+    the override, without a reason, without `BOQ_APPROVE`, and without the
+    `boq_item.approved_quantity_overridden` event — while the audit trail still
+    claims the approval of a quantity that is no longer the item's.
+    """
+    return lock_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
+
+
 @router.patch("/boq-items/{item_id}", response_model=BoqItemOut, summary="Modifier une ligne")
 def update_item(
     item_id: str,
@@ -257,7 +270,7 @@ def update_item(
     context: TenantContext = Depends(require(Permission.BOQ_WRITE)),
     session: Session = Depends(session_scope),
 ) -> BoqItem:
-    item = get_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
+    item = _locked_item(session, context, item_id)
     changes = payload.model_dump(exclude_unset=True)
     override = bool(changes.pop("override_approved", False))
     reason = changes.pop("override_reason", None)
@@ -388,7 +401,7 @@ def transition_item(
     engagent autant l'un que l'autre. Déclasser sans droit rouvrirait le verrou
     qui protège les quantités approuvées.
     """
-    item = get_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
+    item = _locked_item(session, context, item_id)
     before = item.status
     target = payload.status
 
@@ -457,7 +470,7 @@ def approve_item(
     qui a réellement eu lieu. Une ligne rejetée doit d'abord revenir à
     « proposé », elle ne saute pas directement à « approuvé ».
     """
-    item = get_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
+    item = _locked_item(session, context, item_id)
     if item.status == "approved":
         return item
     return transition_item(
@@ -478,7 +491,7 @@ def delete_item(
     context: TenantContext = Depends(require(Permission.BOQ_WRITE)),
     session: Session = Depends(session_scope),
 ) -> None:
-    item = get_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
+    item = _locked_item(session, context, item_id)
     position = item.position
     session.delete(item)
     session.flush()

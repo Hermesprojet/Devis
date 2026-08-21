@@ -65,7 +65,11 @@ test-domain: ## Tests du moteur de calcul (aucune base requise)
 
 .PHONY: test-api
 test-api: ## Tests de l'API sur SQLite
-	cd apps/api && PYTHONPATH=src ../../$(PY) -m pytest -q
+	@# METREO_TEST_DATABASE_URL est délibérément retirée : héritée de
+	@# l'environnement ou de la ligne de commande de `make verify`, elle faisait
+	@# tourner cette cible sur PostgreSQL. Le chemin SQLite n'était alors jamais
+	@# vérifié, et la même suite tournait deux fois sur le même moteur.
+	cd apps/api && env -u METREO_TEST_DATABASE_URL PYTHONPATH=src ../../$(PY) -m pytest -q
 
 .PHONY: test-api-postgres
 test-api-postgres: ## Tests de l'API sur PostgreSQL réel (METREO_TEST_DATABASE_URL)
@@ -79,15 +83,41 @@ test-api-postgres: ## Tests de l'API sur PostgreSQL réel (METREO_TEST_DATABASE_
 			PYTHONPATH=src ../../$(PY) -m pytest -q; \
 	fi
 
+# Base sur laquelle migrations et seed agissent. Vide, elles retombent sur la
+# configuration de l'application (.env, environnement) — ce qui est le défaut
+# voulu pour un développeur, mais jamais pour release-gate, qui doit nommer
+# explicitement sa base jetable.
+METREO_DATABASE_URL ?=
+ifneq ($(METREO_DATABASE_URL),)
+DB_ENV := METREO_DATABASE_URL="$(METREO_DATABASE_URL)"
+else
+DB_ENV :=
+endif
+
+# La base de l'aller-retour des migrations. Par défaut un fichier de travail
+# dédié, et non la base configurée de l'application : `downgrade base` détruit
+# tout ce qu'il touche, et le défaut d'une commande destructrice ne doit pas
+# être « la base sur laquelle vous travaillez ».
+MIGRATION_DATABASE_URL ?= \
+	$(if $(METREO_DATABASE_URL),$(METREO_DATABASE_URL),sqlite+pysqlite:///$(CURDIR)/var/migrations-test.sqlite3)
+
 .PHONY: migrations
-migrations: ## Aller-retour complet des migrations : head, base, head
-	cd apps/api && PYTHONPATH=src ../../$(ALEMBIC) -c alembic.ini upgrade head
-	cd apps/api && PYTHONPATH=src ../../$(ALEMBIC) -c alembic.ini downgrade base
-	cd apps/api && PYTHONPATH=src ../../$(ALEMBIC) -c alembic.ini upgrade head
+migrations: ## Aller-retour DESTRUCTEUR des migrations : head, base, head
+	@# `downgrade base` supprime toutes les tables applicatives et les données
+	@# avec. Ce n'est pas une procédure de retour arrière, c'est un test. La
+	@# base visée doit donc se déclarer jetable par son nom.
+	@$(PY) scripts/check_disposable_database.py \
+		"$(MIGRATION_DATABASE_URL)" --label "make migrations"
+	cd apps/api && METREO_DATABASE_URL="$(MIGRATION_DATABASE_URL)" PYTHONPATH=src \
+		../../$(ALEMBIC) -c alembic.ini upgrade head
+	cd apps/api && METREO_DATABASE_URL="$(MIGRATION_DATABASE_URL)" PYTHONPATH=src \
+		../../$(ALEMBIC) -c alembic.ini downgrade base
+	cd apps/api && METREO_DATABASE_URL="$(MIGRATION_DATABASE_URL)" PYTHONPATH=src \
+		../../$(ALEMBIC) -c alembic.ini upgrade head
 
 .PHONY: seed
 seed: ## Charger le jeu de démonstration (entièrement fictif)
-	cd apps/api && PYTHONPATH=src ../../$(PY) -m metreo_api.seed
+	cd apps/api && $(DB_ENV) PYTHONPATH=src ../../$(PY) -m metreo_api.seed
 
 .PHONY: clean-install
 clean-install: ## Prouver qu'une installation depuis les seuls manifestes démarre
@@ -192,20 +222,21 @@ release-gate: ## La porte stricte : rien d'ignoré, PostgreSQL jetable obligatoi
 		echo "  make release-gate METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo_gate" >&2; \
 		exit 1; \
 	fi
-	@# La suite crée et détruit des schémas dans cette base. Un nom qui ne
-	@# porte pas la marque du jetable est refusé, pour qu'une URL de
-	@# production collée par erreur ne puisse pas être utilisée ici.
-	@case "$(METREO_TEST_DATABASE_URL)" in \
-		*test*|*gate*|*ci*|*tmp*|*scratch*) : ;; \
-		*) echo "release-gate : refusé — la base doit être jetable." >&2; \
-		   echo "  Son nom doit contenir test, gate, ci, tmp ou scratch." >&2; \
-		   echo "  Cette cible crée et détruit des schémas : elle ne doit jamais" >&2; \
-		   echo "  pointer vers une base portant des données réelles." >&2; \
-		   exit 1 ;; \
-	esac
+	@# La suite crée et détruit des schémas dans cette base, et `migrations` y
+	@# lance `downgrade base`. Le contrôle porte sur le NOM DE LA BASE seul :
+	@# le chercher dans l'URL entière acceptait une base de production dont
+	@# l'hôte, l'utilisateur ou le mot de passe contenait « ci » ou « test ».
+	@$(PY) scripts/check_disposable_database.py \
+		"$(METREO_TEST_DATABASE_URL)" --label "make release-gate"
 	@$(MAKE) --no-print-directory verify METREO_TEST_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
-	@$(MAKE) --no-print-directory migrations
-	@$(MAKE) --no-print-directory seed
+	@# Migrations et seed lisent METREO_DATABASE_URL, pas METREO_TEST_DATABASE_URL :
+	@# sans cette transmission elles agissaient sur la base configurée dans
+	@# l'environnement du développeur, et `downgrade base` la vidait — alors
+	@# même que la base jetable, elle, n'était jamais touchée.
+	@$(MAKE) --no-print-directory migrations \
+		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+	@$(MAKE) --no-print-directory seed \
+		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@$(MAKE) --no-print-directory e2e
 	@echo
 	@echo "release-gate : tout est passé, rien n'a été ignoré."

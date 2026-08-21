@@ -31,9 +31,11 @@ whose children are being numbered, or the version whose status is being
 changed. ``Organization`` comes last because ``audit.record`` locks it to
 allocate the audit sequence, and auditing happens *after* the act it records.
 
-No path takes two business rows, which is why they are listed here as
-alternatives rather than as a sequence: numbering locks only the parent,
-status changes lock only the version.
+When a caller takes two business rows it takes them in the order of
+``LOCK_ORDER``. Only one does today: committing an import locks the
+``ImportBatch`` it consumes, then the ``PriceBookVersion`` it writes into.
+Numbering locks only the parent; a status change locks only the row whose
+status changes.
 
 The rule for anything added later: **never lock ``Organization`` before a
 business row.** Doing so inverts the order against every existing request and
@@ -57,16 +59,26 @@ from .tenant import get_owned, owned_query
 
 ModelT = TypeVar("ModelT", bound=Base)
 
-#: Business rows this module may lock. They are mutually exclusive within one
-#: request — no path takes two of them — and all are acquired *before*
-#: ``Organization``, which ``audit.record`` locks last. Kept as data so a
-#: future caller is checked against it rather than trusting a comment.
-LOCKABLE: tuple[str, ...] = (
+#: Ordered acquisition sequence. A caller that takes two of these must take
+#: them in this order, and ``Organization`` — locked last by ``audit.record``
+#: — comes after all of them.
+#:
+#: Only one caller takes two today: committing an import locks the
+#: ``ImportBatch`` it consumes, then the ``PriceBookVersion`` it writes into.
+#: The order is checked, not merely written down, by
+#: ``apps/api/tests/test_lock_order.py``.
+LOCK_ORDER: tuple[str, ...] = (
+    "ImportBatch",
+    "BoqItem",
     "PriceBook",
     "PriceBookVersion",
     "Estimate",
     "EstimateVersion",
 )
+
+#: Kept as an alias so callers read as intent rather than as sequence when they
+#: only take one.
+LOCKABLE: frozenset[str] = frozenset(LOCK_ORDER)
 
 
 def supports_row_locks(session: Session) -> bool:
@@ -90,8 +102,9 @@ def lock_owned(
     """
     assert model.__name__ in LOCKABLE, (
         f"{model.__name__} n'est pas dans la liste des lignes verrouillables ; "
-        "l'ajouter à LOCKABLE après avoir vérifié qu'il ne crée pas de cycle "
-        "avec l'ordre documenté — jamais Organization avant une ligne métier."
+        "l'ajouter à LOCK_ORDER, à sa place dans la séquence, après avoir "
+        "vérifié qu'il ne crée pas de cycle — et jamais Organization avant une "
+        "ligne métier."
     )
     if not supports_row_locks(session):
         return get_owned(session, model, organization_id, object_id, label=label)
@@ -99,7 +112,13 @@ def lock_owned(
     instance = session.scalars(
         owned_query(model, organization_id)
         .where(model.id == object_id)  # type: ignore[attr-defined]
-        .with_for_update()
+        # `FOR NO KEY UPDATE`, pas `FOR UPDATE` : le second s'oppose au
+        # `FOR KEY SHARE` que PostgreSQL prend sur cette ligne dès qu'une
+        # autre en référence la clé, ce qui transforme une lecture-écriture
+        # ordinaire en interblocage. Le premier s'oppose à lui-même — deux
+        # décideurs restent donc sérialisés — sans gêner les insertions qui
+        # ne font que pointer vers la ligne.
+        .with_for_update(key_share=True)
     ).one_or_none()
     if instance is None:
         # Deliberately routed through get_owned so the 404 payload is built in

@@ -23,6 +23,7 @@ neutralisant le verrou (voir `docs/PHASE1_VERIFICATION.md`).
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -192,6 +193,7 @@ class TestNeighbouringRaces:
                 return "already_published"
             locked.status = "published"
             session.commit()
+            commits["publish"] = time.monotonic()
             return "published"
 
         def write(session: Session, barrier: threading.Barrier) -> str:
@@ -218,10 +220,14 @@ class TestNeighbouringRaces:
                 )
             )
             session.commit()
+            commits["write"] = time.monotonic()
             return "written"
 
         barrier = threading.Barrier(2)
         results: dict[str, Any] = {}
+        # Instant de validation de chaque fil : c'est l'ordre réel des
+        # transactions, seul témoin de ce que le verrou a produit.
+        commits: dict[str, float] = {}
 
         def run(name: str, work: Callable[[Session, threading.Barrier], Any]) -> None:
             engine = create_engine(database_url)
@@ -245,12 +251,23 @@ class TestNeighbouringRaces:
         assert not any(thread.is_alive() for thread in threads)
         assert not any(isinstance(value, BaseException) for value in results.values()), results
 
-        # Le résultat doit être séquentiel et explicite, dans un sens ou l'autre.
+        # L'ensemble des issues acceptées ne suffit pas à faire un test : il
+        # contenait l'interleaving que le verrou est censé interdire, si bien
+        # que l'assertion ne pouvait pas échouer. Ce qui compte n'est pas
+        # QUI a gagné, mais que l'écriture, si elle a eu lieu, ait précédé la
+        # publication. On le vérifie sur l'ordre des validations, pas sur
+        # l'ensemble des résultats possibles.
         outcome = (results["publish"], results["write"])
         assert outcome in {
             ("published", "version_published"),  # la publication a gagné
             ("published", "written"),  # l'écriture a gagné, puis publication
         }, outcome
+        if results["write"] == "written":
+            assert commits["write"] < commits["publish"], (
+                "le prix a été validé APRÈS la publication : la version publiée "
+                f"a été modifiée (écriture à {commits['write']}, "
+                f"publication à {commits['publish']})"
+            )
 
         engine = create_engine(database_url)
         with Session(engine) as session:
@@ -339,3 +356,98 @@ class TestNeighbouringRaces:
             )
         engine.dispose()
         assert events == 1, f"{events} événements de gel pour une seule version"
+
+
+class TestApprovedQuantityLock:
+    """Modifier la quantité d'un poste approuvé exige la permission d'approuver.
+
+    `update_item` lisait `item.status` pour décider si la dérogation était
+    exigée, puis écrivait sans avoir retenu la ligne. Une approbation
+    concurrente s'intercalait : le poste passait à « approuvé » entre la
+    lecture et l'écriture, et la quantité était modifiée sans dérogation, sans
+    motif, sans `BOQ_APPROVE` et sans l'événement d'audit
+    `boq_item.approved_quantity_overridden`. Le journal affirmait alors
+    l'approbation d'une quantité qui n'était plus celle du poste.
+    """
+
+    def test_an_approval_cannot_slip_between_the_read_and_the_write(
+        self, seeded: dict[str, str], database_url: str
+    ) -> None:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+
+        from metreo_api.models import BoqItem
+        from metreo_api.services.locking import lock_owned
+
+        engine = create_engine(database_url)
+        with Session(engine) as session:
+            item = session.scalars(select(BoqItem).limit(1)).one()
+            item.status = "verified"
+            item.quantity = "0.0000000000"
+            session.commit()
+            item_id, organization_id = item.id, item.organization_id
+        engine.dispose()
+
+        barrier = threading.Barrier(2)
+        commits: dict[str, float] = {}
+
+        def write_quantity(session: Session, _barrier: threading.Barrier) -> str:
+            barrier.wait(timeout=20)
+            locked = lock_owned(session, BoqItem, organization_id, item_id, label="Poste")
+            if locked.status == "approved":
+                session.rollback()
+                return "approved_quantity_locked"
+            locked.quantity = "999.0000000000"
+            session.commit()
+            commits["write"] = time.monotonic()
+            return "written"
+
+        def approve(session: Session, _barrier: threading.Barrier) -> str:
+            barrier.wait(timeout=20)
+            locked = lock_owned(session, BoqItem, organization_id, item_id, label="Poste")
+            locked.status = "approved"
+            session.commit()
+            commits["approve"] = time.monotonic()
+            return "approved"
+
+        results: dict[str, Any] = {}
+
+        def run(name: str, work: Callable[[Session, threading.Barrier], Any]) -> None:
+            engine = create_engine(database_url)
+            try:
+                with Session(engine) as session:
+                    results[name] = work(session, barrier)
+            except BaseException as exc:
+                results[name] = exc
+            finally:
+                engine.dispose()
+
+        threads = [
+            threading.Thread(target=run, args=("write", write_quantity)),
+            threading.Thread(target=run, args=("approve", approve)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert not any(isinstance(value, BaseException) for value in results.values()), results
+
+        engine = create_engine(database_url)
+        with Session(engine) as session:
+            final = session.get(BoqItem, item_id)
+            assert final is not None
+            status_final = final.status
+        engine.dispose()
+        assert status_final == "approved", status_final
+
+        # L'état final ne dit rien à lui seul : « approuvé, quantité 999 » est
+        # légitime si la quantité a été écrite AVANT l'approbation. Ce qui est
+        # interdit, c'est l'écriture qui se glisse APRÈS. Seul l'ordre des
+        # validations en témoigne — c'est la leçon du test voisin, où un
+        # ensemble d'issues acceptées rendait l'assertion incapable d'échouer.
+        if results["write"] == "written":
+            assert commits["write"] < commits["approve"], (
+                "la quantité a été validée APRÈS l'approbation, sans dérogation "
+                f"ni motif (écriture à {commits['write']}, "
+                f"approbation à {commits['approve']})"
+            )

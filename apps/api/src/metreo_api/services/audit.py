@@ -199,13 +199,31 @@ def record(
     # `Organization` — qui existe toujours — qui porte le verrou. Elle sérialise
     # l'allocation par tenant sans retenir les autres.
     #
+    # Le mode de verrou compte, et `FOR UPDATE` était le mauvais. Toute
+    # insertion d'une ligne portant `organization_id` fait vérifier la clé
+    # étrangère, et PostgreSQL prend pour cela un `FOR KEY SHARE` sur cette
+    # même ligne — un verrou faible, que deux transactions obtiennent
+    # ensemble. Chacune demandait ensuite `FOR UPDATE`, incompatible avec le
+    # `FOR KEY SHARE` de l'autre : montée de verrou croisée, cycle, et
+    # PostgreSQL en tue une avec « deadlock detected ». Deux écritures sans
+    # aucun rapport dans la même organisation suffisaient, et la route
+    # concernée rendait un HTTP 500.
+    #
+    # `FOR NO KEY UPDATE` s'oppose à lui-même — donc les allocateurs de
+    # séquence restent sérialisés — mais pas au `FOR KEY SHARE` des clés
+    # étrangères. C'est exactement la distinction pour laquelle ce mode
+    # existe : la table de compatibilité de PostgreSQL dit que `FOR KEY
+    # SHARE` ne s'oppose qu'à `FOR UPDATE`.
+    #
     # SQLite n'a pas de `SELECT ... FOR UPDATE` mais sérialise déjà ses
     # écritures ; la contrainte d'unicité reste le dernier rempart des deux
     # côtés.
     on_postgres = session.bind is not None and session.bind.dialect.name != "sqlite"
     if on_postgres:
         session.execute(
-            select(Organization.id).where(Organization.id == organization_id).with_for_update()
+            select(Organization.id)
+            .where(Organization.id == organization_id)
+            .with_for_update(key_share=True)
         )
 
     last = session.scalars(

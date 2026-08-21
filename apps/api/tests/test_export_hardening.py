@@ -283,6 +283,31 @@ class TestFilenameEdgeCases:
         # Décodable sans erreur : c'est ce que la coupe sur frontière garantit.
         assert unquote(encoded).endswith(".csv")
 
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            pytest.param("Ⅷ" * 200, id="chiffres-romains"),
+            pytest.param("™" * 200, id="marque-déposée"),
+            pytest.param("ﬄ" * 200, id="ligature"),
+            pytest.param("½" * 200, id="fraction"),
+            pytest.param("\u00a0" * 200, id="espace-insécable"),
+        ],
+    )
+    def test_normalisation_cannot_widen_the_name_past_the_bound(self, reference: str) -> None:
+        """NFKD peut RENDRE PLUS de caractères qu'il n'en reçoit.
+
+        « Ⅷ » occupe trois octets et se décompose en « VIII » : borner avant de
+        normaliser ne borne donc pas le résultat. La liste blanche non plus —
+        NFKD réintroduit des espaces et des lettres que le premier filtrage
+        avait écartés.
+        """
+        header = content_disposition(reference, "csv")
+        ascii_name = header.split('"')[1]
+        stem = ascii_name.removesuffix(".csv")
+        assert len(stem) <= exports.MAX_FILENAME_BYTES, len(stem)
+        assert all(c.isalnum() or c in "-_." for c in stem), stem
+        assert len(header) <= exports.MAX_DISPOSITION_LENGTH, len(header)
+
     def test_a_reference_that_is_only_multibyte_still_yields_an_ascii_name(self) -> None:
         """`filename=` doit rester utilisable même sans un seul signe ASCII."""
         header = content_disposition("鉄" * 20, "csv")

@@ -120,15 +120,30 @@ jobs:
         # et ce job resterait vert sans avoir vérifié une seule course. Le
         # contrôle porte donc sur le fait qu'ils ont tourné, pas seulement
         # qu'ils n'ont pas échoué.
+        #
+        # `shell: bash` ajoute `-o pipefail` au défaut `bash -e {0}` de GitHub
+        # Actions. Sans lui, le code de sortie d'un pipeline est celui de sa
+        # DERNIÈRE commande : la première version écrivait « pytest | tee » et
+        # ne voyait donc jamais un échec de pytest, seulement un skip.
+        shell: bash
         env:
           METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
         run: |
-          pytest tests/test_version_concurrency.py -q --no-header | tee /tmp/concurrence.txt
+          set -o pipefail
+          pytest tests/test_version_concurrency.py tests/test_write_contention.py \
+            -q --no-header | tee /tmp/concurrence.txt
+          # `grep '[0-9]+ passed'` acceptait « 2 failed, 3 passed » : le résumé
+          # d'un échec partiel contient le mot. On exige donc un résumé SANS
+          # échec ni ignoré, en plus du code de sortie.
+          if grep -qE '[0-9]+ (failed|error)' /tmp/concurrence.txt; then
+            echo "Des tests de concurrence ont échoué." >&2
+            exit 1
+          fi
           if grep -qE '[0-9]+ skipped|no tests ran' /tmp/concurrence.txt; then
             echo "Les tests de concurrence ont été ignorés sur le job PostgreSQL." >&2
             exit 1
           fi
-          grep -qE '[0-9]+ passed' /tmp/concurrence.txt
+          grep -qE '^[0-9]+ passed' /tmp/concurrence.txt
 
   web:
     name: Web

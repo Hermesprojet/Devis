@@ -97,8 +97,19 @@ make release-gate METREO_TEST_DATABASE_URL=postgresql+psycopg://…/metreo_gate
 ```
 
 `release-gate` refuse de démarrer sans base PostgreSQL, refuse une base dont
-le nom ne la désigne pas comme jetable — elle y crée et détruit des schémas —
-puis enchaîne `verify`, `migrations`, `seed` et `e2e`.
+**le nom** ne la désigne pas comme jetable, puis enchaîne `verify`,
+`migrations`, `seed` et `e2e` — en transmettant cette base à chacun.
+
+Deux précisions qui ont manqué et coûtaient cher. Le contrôle porte sur le nom
+de la base **seul** : le chercher dans l'URL entière acceptait une base de
+production dont l'hôte contient « ci », dont l'utilisateur s'appelle `tester`
+ou dont le mot de passe contient « tmp ». Et `migrations` et `seed` lisent
+`METREO_DATABASE_URL`, pas `METREO_TEST_DATABASE_URL` : sans transmission
+explicite, `release-gate` validait une URL jetable irréprochable puis lançait
+`alembic downgrade base` sur la base configurée du développeur, la vidant,
+sans jamais toucher la base jetable. `make migrations` vise désormais par
+défaut un fichier de travail dédié, et refuse toute base qui ne se déclare pas
+jetable.
 
 Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 
@@ -106,7 +117,7 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | --- | --- | --- | --- |
 | Format et lint Python | `make lint` | `All checks passed!` | < 1 s |
 | Types — domaine | `mypy packages/domain/src/metreo_domain` | 7 fichiers, aucun problème | ~1 s |
-| Types — API | `mypy apps/api/src/metreo_api` | 28 fichiers, aucun problème | ~2 s |
+| Types — API | `mypy apps/api/src/metreo_api` | 30 fichiers, aucun problème | ~2 s |
 | Types — scripts | `mypy scripts` | 3 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
 | Tests API sur SQLite | `make test-api` | **359 passed, 7 ignorés** | ~101 s |
@@ -126,13 +137,16 @@ Les tests API tournent **réellement** sur PostgreSQL lorsque
 Sans cette variable, la suite retombe sur SQLite et `make test-api-postgres`
 l'annonce explicitement plutôt que de passer en silence.
 
-Conséquence sur la lecture du tableau : la variable passée à `make verify`
-vaut pour ses deux étapes API, qui ont donc toutes deux tourné sur
-PostgreSQL — **326 passed** chacune. Le chiffre SQLite vient d'une exécution
-séparée du même clone, sans la variable ; les sept tests ignorés y sont les
-tests propres à PostgreSQL — précision décimale, contraintes serveur et, depuis
-le bloquant J, les quatre tests de concurrence. Ils refusent de faire semblant
-plutôt que de passer sur un moteur qui sérialise ses écritures.
+`make test-api` retire délibérément `METREO_TEST_DATABASE_URL` de son
+environnement. Sans cela, la variable passée à `make verify` valait aussi pour
+lui : les deux étapes API tournaient sur PostgreSQL, le chemin SQLite n'était
+jamais vérifié, et la même suite était jouée deux fois sur le même moteur.
+
+Les tests ignorés sur SQLite sont ceux qui refusent de faire semblant sur un
+moteur qui sérialise ses écritures — relevés par `pytest -rs`, non supposés :
+deux dans `test_audit_concurrency.py`, cinq dans `test_version_concurrency.py`,
+cinq dans `test_write_contention.py`, et un dans `test_audit_migration.py` dont
+le comportement est déjà couvert ailleurs sur SQLite.
 
 ```bash
 make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
@@ -255,16 +269,36 @@ l'`IntegrityError` n'était interceptée dans aucune route : le service rendu
 remplacer les courses par des interblocages :
 
 ```text
-ligne métier → Organization
+ImportBatch → BoqItem → PriceBook → PriceBookVersion → Estimate → EstimateVersion → Organization
 ```
 
 L'organisation vient en **dernier**, parce que c'est `audit.record` qui la
 verrouille pour allouer la séquence d'audit, et qu'on enregistre après l'acte
-qu'on consigne. Aucun chemin ne prend deux lignes métier. La règle pour la
-suite : ne jamais verrouiller `Organization` avant une ligne métier — l'ordre
-serait inversé contre toutes les requêtes existantes, et la course
-deviendrait un interblocage, ce qui est pire puisqu'il échoue même sans
+qu'on consigne. Un seul appelant prend deux lignes métier — la validation d'un
+import verrouille le lot qu'elle consomme puis la version où elle écrit — et
+il suit cet ordre. La règle pour la suite : ne jamais verrouiller
+`Organization` avant une ligne métier, et prendre deux lignes métier dans
+l'ordre ci-dessus. L'inverser contre les requêtes existantes remplacerait la
+course par un interblocage, ce qui est pire puisqu'il échoue même sans
 contention nuisible.
+
+Le **mode** de verrou compte autant que l'ordre, et le premier choix était le
+mauvais. `audit.record` prenait un `FOR UPDATE` sur la ligne `organizations`.
+Or toute insertion d'une ligne portant `organization_id` fait vérifier la clé
+étrangère, et PostgreSQL prend pour cela un `FOR KEY SHARE` sur cette même
+ligne — un verrou faible, que deux transactions obtiennent ensemble. Chacune
+demandait ensuite le `FOR UPDATE`, incompatible avec le `FOR KEY SHARE` de
+l'autre : montée de verrou croisée, cycle, `40P01 deadlock detected`, HTTP 500.
+Deux écritures **sans aucun rapport** dans la même organisation suffisaient.
+
+Isolé au niveau SQL, le mécanisme est déterministe : trois essais sur trois
+s'interbloquent en `FOR UPDATE`, zéro sur trois en `FOR NO KEY UPDATE`. Ce
+dernier s'oppose à lui-même — les allocateurs de séquence restent donc
+sérialisés — mais pas au `FOR KEY SHARE` des clés étrangères. C'est
+exactement la distinction pour laquelle ce mode existe. Le mode est encadré
+des deux côtés par les tests : le remettre à `FOR UPDATE` fait tomber le test
+d'interblocage, l'affaiblir jusqu'à `FOR KEY SHARE` fait tomber ceux de la
+séquence.
 
 Cet ordre a d'abord été documenté **à l'envers**, avec une justification
 fausse à l'appui. Un commentaire ne se vérifie pas :

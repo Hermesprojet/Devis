@@ -56,12 +56,65 @@ class TestLockOrder:
             "la rendre verrouillable ici inviterait à inverser l'ordre."
         )
 
+    def test_two_locks_in_one_function_follow_the_documented_order(self) -> None:
+        """Un appelant qui prend deux lignes métier suit LOCK_ORDER.
+
+        Un seul le fait aujourd'hui — la validation d'un import verrouille le
+        lot puis la version. Inverser les deux appels créerait un cycle avec
+        tout futur appelant qui prendrait l'ordre inverse.
+        """
+        from metreo_api.services import locking
+
+        rank = {name: index for index, name in enumerate(locking.LOCK_ORDER)}
+        # Quel modèle chaque appel verrouille-t-il ?
+        locked_model = {
+            "estimating.lock_version": "EstimateVersion",
+            "pricebook_versions.lock_version": "PriceBookVersion",
+            "_version_open_for_writing": "PriceBookVersion",
+            "estimating.next_version_number": "Estimate",
+            "pricebook_versions.next_version_number": "PriceBook",
+            "_locked_item": "BoqItem",
+        }
+        checked = 0
+        for source in sorted(ROUTERS.glob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"))
+            for function in ast.walk(tree):
+                if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                taken = []
+                for node in ast.walk(function):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    callee = _callee(node)
+                    model = locked_model.get(callee)
+                    # lock_owned(session, Model, ...) — le modèle est le 2e argument.
+                    if (
+                        model is None
+                        and callee == "lock_owned"
+                        and len(node.args) >= 2
+                        and isinstance(node.args[1], ast.Name)
+                    ):
+                        model = node.args[1].id
+                    if model is not None:
+                        taken.append((node.lineno, model))
+                if len(taken) < 2:
+                    continue
+                checked += 1
+                taken.sort()
+                ranks = [rank[model] for _, model in taken if model in rank]
+                assert ranks == sorted(ranks), (
+                    f"{source.name}:{function.name} verrouille "
+                    f"{[model for _, model in taken]} — hors de l'ordre documenté "
+                    f"{list(locking.LOCK_ORDER)}"
+                )
+        assert checked >= 1, "aucune fonction ne prend deux verrous : le test ne prouve rien"
+
     def test_an_unlisted_model_is_refused(self) -> None:
         """Un modèle ajouté sans décision explicite ne passe pas en silence."""
         from metreo_api.models import Project
         from metreo_api.services import locking
 
-        with pytest.raises(AssertionError, match="LOCKABLE"):
+        with pytest.raises(AssertionError, match="LOCK_ORDER"):
             locking.lock_owned(object(), Project, "org", "id")  # type: ignore[arg-type]
 
     def test_audit_locks_the_organization_after_the_business_row(self) -> None:
