@@ -652,6 +652,9 @@ class AuditEvent(Base):
     #: constante Python seule ne permettrait pas de revérifier durablement des
     #: événements créés sous plusieurs versions : la vérification lirait le code
     #: d'aujourd'hui pour juger un scellé d'hier.
-    hash_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: Renseigné explicitement par `audit.record()`. Pas de valeur par défaut :
+    #: un défaut silencieux à 1 marquerait un événement scellé en v2 comme v1,
+    #: et le rendrait invérifiable.
+    hash_schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_hash: Mapped[str | None] = mapped_column(String(64))
     hash: Mapped[str] = mapped_column(String(64), nullable=False)

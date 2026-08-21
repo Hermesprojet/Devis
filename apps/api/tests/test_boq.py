@@ -148,10 +148,14 @@ def test_a_justified_override_is_accepted_downgraded_and_journalled(seeded_clien
         for e in seeded_client.get(
             f"/api/v1/audit/events?object_id={item['id']}", headers=headers
         ).json()["items"]
-        if e["action"] == "boq_item.updated"
+        # La dérogation porte son propre nom d'action : c'est ce qu'un
+        # auditeur cherche, et « modifié » l'aurait noyée.
+        if e["action"] == "boq_item.approved_quantity_overridden"
     )
     assert event["payload"]["override_reason"] == "Relevé contradictoire du 3 mars"
     assert event["payload"]["before"]["quantity"] == "10"
+    assert event["payload"]["unit"] == item["unit_code"]
+    assert event["payload"]["status_after"] == "verified"
 
 
 def test_changing_a_non_quantity_field_of_an_approved_item_is_allowed(seeded_client, headers, boq):

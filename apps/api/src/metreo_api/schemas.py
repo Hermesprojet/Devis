@@ -23,6 +23,8 @@ from pydantic import (
 from metreo_domain import bounds
 from metreo_domain.money import canonical_text
 
+from .services.price_contract import MAX_LEAD_TIME_DAYS, sql_length
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
@@ -316,20 +318,37 @@ def _bounded_opt(bound: bounds.Bound) -> Any:
 
 
 class PriceItemCreate(BaseModel):
-    code: str = Field(min_length=1, max_length=60)
-    label: str = Field(min_length=1, max_length=255)
+    """Saisie manuelle d'un prix.
+
+    Les longueurs viennent des colonnes via `sql_length()` : les écrire à la
+    main ici produisait déjà une divergence — `family` acceptait 120 caractères
+    pour une colonne de 60. Le contrôle métier complet (unité connue, devise,
+    énumérations, plage de dates) est appliqué par `validate_price_row`, le
+    même contrat que l'import, dans le handler.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=sql_length("code"))
+    label: str = Field(min_length=1, max_length=sql_length("label"))
     unit_code: str = Field(min_length=1, max_length=12)
     unit_price: Decimal = _bounded(bounds.UNIT_PRICE)
-    family: str | None = None
+    family: str | None = Field(default=None, max_length=sql_length("family"))
     resource_kind: Literal[
         "material", "labor", "equipment", "transport", "disposal", "subcontract", "other"
     ] = "material"
     currency: str = Field(default="EUR", min_length=3, max_length=3)
-    supplier_name: str | None = None
-    region_code: str | None = None
+    supplier_name: str | None = Field(default=None, max_length=sql_length("supplier_name"))
+    region_code: str | None = Field(default=None, max_length=sql_length("region_code"))
     valid_from: date | None = None
     valid_to: date | None = None
-    source: str | None = None
+    source: str | None = Field(default=None, max_length=sql_length("source"))
+    indexation: str | None = Field(default=None, max_length=sql_length("indexation"))
+    min_quantity: Decimal | None = _bounded_opt(bounds.QUANTITY)
+    lead_time_days: int | None = Field(default=None, ge=0, le=MAX_LEAD_TIME_DAYS)
+    status: Literal["active", "draft", "archived", "superseded"] = "active"
+    confidence: Literal["declared", "quoted", "contracted", "estimated"] = "declared"
+    conditions: str | None = None
     notes: str | None = None
 
 

@@ -234,3 +234,109 @@ class TestCommitRevalidates:
         body = committed.json()
         assert body["created"] == 0
         assert body["rejected_at_commit"] == 1
+
+
+class TestTheContractIsShared:
+    """Le contrat unique s'applique aux trois chemins d'écriture.
+
+    Avant, chacun appliquait ses propres règles : la saisie manuelle ignorait
+    les longueurs SQL, la revalidation du commit ignorait l'unité, la devise,
+    le type de ressource et la plage de dates.
+    """
+
+    @pytest.mark.parametrize(
+        "column,value",
+        [
+            ("family", "F" * 61),
+            ("supplier_name", "S" * 201),
+            ("region_code", "R" * 11),
+        ],
+    )
+    def test_manual_entry_refuses_a_value_longer_than_its_column(
+        self,
+        seeded_client: TestClient,
+        headers: dict[str, str],
+        version: str,
+        column: str,
+        value: str,
+    ) -> None:
+        response = seeded_client.post(
+            f"/api/v1/price-books/versions/{version}/items",
+            headers=headers,
+            json={
+                "code": "M1",
+                "label": "Saisie manuelle",
+                "unit_code": "m3",
+                "unit_price": "10",
+                column: value,
+            },
+        )
+        assert response.status_code == 422, response.text
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("unit_code", "NOT_A_UNIT"),
+            ("currency", "EURO"),
+            ("resource_kind", "arbitrary"),
+            ("min_quantity", "NaN"),
+            ("status", "arbitrary"),
+            ("confidence", "arbitrary"),
+        ],
+    )
+    def test_the_commit_revalidation_catches_every_category(self, field: str, value: str) -> None:
+        """Chaque catégorie que la revalidation laissait passer."""
+        from metreo_api.services.price_import import validate_normalized
+
+        row = {
+            "code": "A",
+            "label": "Ligne",
+            "unit_code": "m3",
+            "unit_price": "10",
+            "currency": "EUR",
+            "resource_kind": "material",
+            field: value,
+        }
+        errors = validate_normalized(row)
+        assert errors, f"{field}={value} accepté par la revalidation"
+        assert any(e.column == field for e in errors), [e.to_dict() for e in errors]
+
+    def test_the_commit_revalidation_catches_an_inverted_date_range(self) -> None:
+        from datetime import date
+
+        from metreo_api.services.price_import import validate_normalized
+
+        errors = validate_normalized(
+            {
+                "code": "A",
+                "label": "Ligne",
+                "unit_code": "m3",
+                "unit_price": "10",
+                "valid_from": date(2026, 12, 31),
+                "valid_to": date(2026, 1, 1),
+            }
+        )
+        assert any(e.column == "valid_to" for e in errors), [e.to_dict() for e in errors]
+
+    def test_an_empty_code_or_label_is_refused(self) -> None:
+        from metreo_api.services.price_import import validate_normalized
+
+        errors = validate_normalized(
+            {"code": "  ", "label": "", "unit_code": "m3", "unit_price": "1"}
+        )
+        columns = {e.column for e in errors}
+        assert {"code", "label"} <= columns, [e.to_dict() for e in errors]
+
+    def test_a_lead_time_beyond_ten_years_is_refused(self) -> None:
+        from metreo_api.services.price_import import validate_normalized
+
+        errors = validate_normalized(
+            {
+                "code": "A",
+                "label": "L",
+                "unit_code": "m3",
+                "unit_price": "1",
+                "lead_time_days": "99999",
+            }
+        )
+        assert any(e.column == "lead_time_days" for e in errors)

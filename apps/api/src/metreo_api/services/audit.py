@@ -23,22 +23,35 @@ def _canonical(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
-#: Version du schéma de hash. Elle entre dans la matière hachée : changer les
-#: champs couverts change la version, et une chaîne produite sous l'ancienne
-#: version ne peut pas être confondue avec une chaîne falsifiée sous la
-#: nouvelle. Toute évolution du schéma exige une reprise documentée des chaînes
-#: existantes — il n'y a pas de migration silencieuse d'un journal d'audit.
+#: Version sous laquelle les nouveaux événements sont scellés.
 HASH_SCHEMA_VERSION = 2
 
-#: Champs couverts par le hash. Tout champ dont la falsification doit être
-#: détectée figure ici, et `apps/api/tests/test_audit_integrity.py` refuse
-#: qu'une colonne d'AuditEvent en soit absente sans justification.
+#: Champs couverts par chaque version du schéma.
 #:
-#: La version 1 omettait `event_id`, `organization_id`, `actor_email` et
-#: `request_id` : l'adresse de l'acteur pouvait être réécrite en base sans que
-#: `verify_chain` s'en aperçoive, et un événement pouvait être déplacé d'une
-#: organisation à l'autre.
-HASHED_FIELDS = (
+#: La v1 était le schéma d'origine. Elle omettait `event_id`,
+#: `organization_id`, `actor_email` et `request_id` : l'adresse de l'acteur
+#: pouvait être réécrite en base sans que `verify_chain` s'en aperçoive, et un
+#: événement pouvait être déplacé d'une organisation à l'autre. La v2 les
+#: couvre et inscrit son propre numéro dans la matière hachée.
+#:
+#: **Les deux algorithmes restent implémentés.** Un journal d'audit se vérifie
+#: des années après avoir été écrit : supprimer une ancienne version
+#: reviendrait à déclarer falsifié tout ce qui a été scellé avec elle. Chaque
+#: événement porte sa version en base, et c'est elle qui décide de
+#: l'algorithme — jamais la version que le code utilise aujourd'hui.
+HASHED_FIELDS_V1 = (
+    "sequence",
+    "occurred_at",
+    "actor_user_id",
+    "action",
+    "object_type",
+    "object_id",
+    "summary",
+    "payload",
+    "previous_hash",
+)
+
+HASHED_FIELDS_V2 = (
     "schema_version",
     "event_id",
     "organization_id",
@@ -54,6 +67,35 @@ HASHED_FIELDS = (
     "payload",
     "previous_hash",
 )
+
+#: Champs couverts par la version en cours. `test_audit_integrity.py` refuse
+#: qu'une colonne d'AuditEvent en soit absente sans justification.
+HASHED_FIELDS = HASHED_FIELDS_V2
+
+
+class UnsupportedHashSchemaError(Exception):
+    """Version de schéma que ce code ne sait pas vérifier."""
+
+
+def _digest(fields: tuple[str, ...], values: dict[str, Any]) -> str:
+    missing = set(fields) - set(values)
+    if missing:
+        raise RuntimeError(f"Champs manquants pour le hash : {sorted(missing)}")
+    material = _canonical({field: values[field] for field in fields})
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _compute_v1(values: dict[str, Any]) -> str:
+    return _digest(HASHED_FIELDS_V1, values)
+
+
+def _compute_v2(values: dict[str, Any]) -> str:
+    return _digest(HASHED_FIELDS_V2, values)
+
+
+#: Registre des algorithmes. Ajouter une version, c'est ajouter une entrée ici
+#: et une migration qui classe les événements existants — jamais remplacer.
+HASH_SCHEMAS: dict[int, Any] = {1: _compute_v1, 2: _compute_v2}
 
 
 def compute_hash(
@@ -71,9 +113,20 @@ def compute_hash(
     summary: str,
     payload: dict[str, Any],
     previous_hash: str | None,
+    schema_version: int = HASH_SCHEMA_VERSION,
 ) -> str:
+    """Scelle un événement selon la version demandée.
+
+    `schema_version` est explicite et sans valeur par défaut silencieuse au
+    moment de l'écriture : `record()` passe toujours la version en cours. Le
+    défaut n'existe que pour les appelants qui ne scellent pas mais
+    revérifient.
+    """
+    algorithm = HASH_SCHEMAS.get(schema_version)
+    if algorithm is None:
+        raise UnsupportedHashSchemaError(f"Schéma de hash inconnu : {schema_version}")
     values: dict[str, Any] = {
-        "schema_version": HASH_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "event_id": event_id,
         "organization_id": organization_id,
         "sequence": sequence,
@@ -88,16 +141,27 @@ def compute_hash(
         "payload": payload,
         "previous_hash": previous_hash or "",
     }
-    # HASHED_FIELDS n'est pas une liste décorative : c'est elle qui décide de
-    # la matière hachée. Un champ ajouté ici sans valeur, ou une valeur sans
-    # déclaration, casse immédiatement au lieu de produire une divergence
-    # silencieuse entre ce que le code hache et ce que la constante annonce.
-    if set(values) != set(HASHED_FIELDS):
-        raise RuntimeError(
-            f"HASHED_FIELDS et la matière hachée divergent : {set(values) ^ set(HASHED_FIELDS)}"
-        )
-    material = _canonical({field: values[field] for field in HASHED_FIELDS})
-    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return str(algorithm(values))
+
+
+def classify_schema_version(values: dict[str, Any], stored_hash: str) -> int | None:
+    """Retrouve la version sous laquelle un événement a été scellé.
+
+    Sert la migration : elle recalcule le hash avec chaque algorithme connu et
+    retient celui qui reproduit exactement le hash stocké. Aucun hash n'est
+    réécrit — on classe, on ne rescelle pas. Un événement qu'aucune version ne
+    reproduit est soit falsifié, soit issu d'un schéma inconnu : dans les deux
+    cas il faut le savoir, pas le deviner.
+    """
+    for version, algorithm in sorted(HASH_SCHEMAS.items(), reverse=True):
+        candidate = dict(values)
+        candidate["schema_version"] = version
+        try:
+            if algorithm(candidate) == stored_hash:
+                return version
+        except RuntimeError:  # pragma: no cover - champs absents pour ce schéma
+            continue
+    return None
 
 
 def record(
@@ -172,6 +236,7 @@ def record(
         previous_hash=last.hash if last else None,
         hash_schema_version=HASH_SCHEMA_VERSION,
         hash=compute_hash(
+            schema_version=HASH_SCHEMA_VERSION,
             event_id=event_id,
             organization_id=organization_id,
             sequence=sequence,
@@ -209,19 +274,21 @@ def verify_chain(session: Session, organization_id: str) -> dict[str, Any]:
                 "failed_at_sequence": event.sequence,
                 "reason": "sequence_gap",
             }
-        if event.hash_schema_version != HASH_SCHEMA_VERSION:
-            # Un événement scellé sous une autre version ne peut pas être jugé
-            # par le schéma d'aujourd'hui : le dire, plutôt que de le déclarer
-            # falsifié à tort.
+        if event.hash_schema_version not in HASH_SCHEMAS:
+            # Une version que ce code ne connaît pas ne peut pas être jugée :
+            # le dire, plutôt que de déclarer falsifié ce qu'on ne sait pas
+            # relire. Le cas se produit après un retour en arrière du code sur
+            # une base déjà migrée.
             return {
                 "valid": False,
                 "checked": len(events),
                 "failed_at_sequence": event.sequence,
-                "reason": "hash_schema_version_mismatch",
+                "reason": "unsupported_hash_schema_version",
                 "event_schema_version": event.hash_schema_version,
-                "code_schema_version": HASH_SCHEMA_VERSION,
+                "supported_versions": sorted(HASH_SCHEMAS),
             }
         expected = compute_hash(
+            schema_version=event.hash_schema_version,
             event_id=event.id,
             organization_id=event.organization_id,
             sequence=event.sequence,

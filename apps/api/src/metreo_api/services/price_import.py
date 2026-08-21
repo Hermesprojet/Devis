@@ -29,6 +29,7 @@ from metreo_domain.money import to_decimal
 from metreo_domain.units import get_unit
 
 from ..models import ImportBatch, ImportBatchRow, PriceItem
+from .price_contract import validate_price_row
 
 ImportStrategy = Literal["create", "replace", "ignore", "merge"]
 
@@ -546,43 +547,17 @@ def create_preview(
 
 
 def validate_normalized(data: dict[str, Any]) -> list[RowError]:
-    """Revalide une ligne de staging avant écriture.
+    """Revalide une ligne de staging avant écriture, par le contrat unique.
 
-    La prévisualisation et la confirmation sont deux requêtes séparées par un
-    temps arbitraire. Entre les deux, une contrainte a pu changer, une
-    migration a pu raccourcir une colonne, ou la ligne de staging a pu être
-    altérée. Accepter aveuglément ce qui a été jugé valide un jour donné
-    reviendrait à faire confiance à un contrôle qui n'existe plus.
+    Prévisualiser et confirmer sont deux requêtes séparées par un temps
+    arbitraire. Entre les deux, une contrainte a pu changer, une migration a pu
+    raccourcir une colonne, ou la ligne de staging a pu être altérée. Une
+    version antérieure ne revérifiait que les longueurs et le prix : l'unité,
+    la devise, le type de ressource, la plage de dates et la quantité minimale
+    passaient sans contrôle.
     """
-    errors: list[RowError] = []
-    for column in (
-        "code",
-        "label",
-        "family",
-        "supplier_name",
-        "region_code",
-        "source",
-        "indexation",
-    ):
-        _check_length(data.get(column), column, errors)
-    _check_choice(data.get("status"), "status", VALID_STATUS, errors)
-    _check_choice(data.get("confidence"), "confidence", VALID_CONFIDENCE, errors)
-
-    price = data.get("unit_price")
-    if price is not None:
-        try:
-            bounds.UNIT_PRICE.check(to_decimal(price), label="unit_price")
-        except (OutOfBoundsError, DomainError) as exc:
-            errors.append(RowError("unit_price", exc.code, exc.message))
-
-    lead_time = data.get("lead_time_days")
-    if lead_time is not None and (not isinstance(lead_time, int) or lead_time < 0):
-        errors.append(
-            RowError(
-                "lead_time_days", "invalid_lead_time", "Délai invalide au moment de l'écriture."
-            )
-        )
-    return errors
+    outcome = validate_price_row(data)
+    return [RowError(e.column, e.code, e.message) for e in outcome.errors]
 
 
 def commit_batch(

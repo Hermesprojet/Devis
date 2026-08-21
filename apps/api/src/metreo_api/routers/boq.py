@@ -293,7 +293,14 @@ def update_item(
     audit.record(
         session,
         organization_id=context.organization_id,
-        action="boq_item.updated",
+        # Une dérogation sur quantité approuvée porte son propre nom : la noyer
+        # dans « modifié » la rendrait introuvable dans le journal, alors que
+        # c'est précisément l'action qu'un auditeur cherchera.
+        action=(
+            "boq_item.approved_quantity_overridden"
+            if override and touches_quantity
+            else "boq_item.updated"
+        ),
         object_type="boq_item",
         object_id=item.id,
         summary=(
@@ -306,6 +313,8 @@ def update_item(
             "before": before,
             "after": {k: str(v) for k, v in changes.items()},
             "override_reason": reason,
+            "unit": item.unit_code,
+            "status_after": item.status,
         },
     )
     return item
@@ -315,7 +324,13 @@ def update_item(
 #: plutôt qu'ignorée : « rejeté » ne revient pas silencieusement à « proposé »,
 #: et « approuvé » ne se quitte que par une décision explicite.
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
-    "proposed": frozenset({"verified", "rejected"}),
+    # `proposed → approved` est explicitement autorisé. Le raccourci /approve
+    # faisait auparavant passer la ligne par « vérifié » en mémoire sans
+    # journaliser ce passage : le journal affirmait une vérification que
+    # personne n'avait faite. Puisque approuver exige déjà BOQ_APPROVE, le
+    # détenteur de ce droit peut approuver directement, et l'audit dit la
+    # vérité — from=proposed, to=approved.
+    "proposed": frozenset({"verified", "approved", "rejected"}),
     "verified": frozenset({"approved", "proposed", "rejected"}),
     "approved": frozenset({"verified", "rejected"}),
     "rejected": frozenset({"proposed"}),
@@ -402,18 +417,15 @@ def approve_item(
     context: TenantContext = Depends(require(Permission.BOQ_APPROVE)),
     session: Session = Depends(session_scope),
 ) -> BoqItem:
-    """Raccourci vers la transition « approuvé », gardé pour compatibilité.
+    """Raccourci vers la transition « approuvé ».
 
-    Passe par la même machine d'états : une ligne rejetée doit d'abord
-    revenir à « proposé », elle ne saute pas directement à « approuvé ».
+    Ne fabrique aucun état intermédiaire : la transition enregistrée est celle
+    qui a réellement eu lieu. Une ligne rejetée doit d'abord revenir à
+    « proposé », elle ne saute pas directement à « approuvé ».
     """
     item = get_owned(session, BoqItem, context.organization_id, item_id, label="Poste")
     if item.status == "approved":
         return item
-    if item.status == "proposed":
-        # Chemin courant : proposé → vérifié → approuvé, franchi d'un coup par
-        # celui qui détient déjà le droit d'approuver.
-        item.status = "verified"
     return transition_item(
         item_id,
         BoqItemTransition(status="approved"),
