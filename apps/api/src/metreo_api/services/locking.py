@@ -22,18 +22,23 @@ convention between well-behaved writers; a constraint is what the database
 enforces regardless.
 
 **Lock order.** Deadlocks replace races when two transactions take the same
-locks in opposite orders. Every caller here therefore acquires locks in the
-order below, outermost first, and never takes one it already holds a *later*
-one than:
+locks in opposite orders. The order every request actually follows is:
 
-    Organization  →  PriceBook  →  PriceBookVersion  →  Estimate  →  EstimateVersion
+    business row  →  Organization
 
-``audit.record`` locks ``Organization``, the outermost, and is always called
-*after* the business lock in this module — which is the one case where the
-order would be violated. It is not, because ``record`` takes its lock in the
-same transaction that already holds the later one, and a transaction never
-waits on itself; the ordering rule constrains what two *different*
-transactions may interleave, and both of them follow the same sequence.
+The business row is the one being decided — the ``PriceBook`` or ``Estimate``
+whose children are being numbered, or the version whose status is being
+changed. ``Organization`` comes last because ``audit.record`` locks it to
+allocate the audit sequence, and auditing happens *after* the act it records.
+
+No path takes two business rows, which is why they are listed here as
+alternatives rather than as a sequence: numbering locks only the parent,
+status changes lock only the version.
+
+The rule for anything added later: **never lock ``Organization`` before a
+business row.** Doing so inverts the order against every existing request and
+turns a race into a deadlock — which is worse, because a deadlock fails even
+when nothing was contended in a harmful way.
 
 SQLite gets no ``FOR UPDATE``: it does not implement it, and it serialises
 writers at the file level anyway. That is also why the concurrency tests skip
@@ -52,10 +57,11 @@ from .tenant import get_owned, owned_query
 
 ModelT = TypeVar("ModelT", bound=Base)
 
-#: Documented acquisition order; see the module docstring. Kept as data so a
-#: future caller can be checked against it rather than trusting a comment.
-LOCK_ORDER: tuple[str, ...] = (
-    "Organization",
+#: Business rows this module may lock. They are mutually exclusive within one
+#: request — no path takes two of them — and all are acquired *before*
+#: ``Organization``, which ``audit.record`` locks last. Kept as data so a
+#: future caller is checked against it rather than trusting a comment.
+LOCKABLE: tuple[str, ...] = (
     "PriceBook",
     "PriceBookVersion",
     "Estimate",
@@ -82,9 +88,10 @@ def lock_owned(
     filter is part of the locking query, so a caller cannot lock a row it is
     not allowed to see.
     """
-    assert model.__name__ in LOCK_ORDER, (
-        f"{model.__name__} n'a pas de place dans l'ordre de verrouillage documenté ; "
-        "l'ajouter à LOCK_ORDER après avoir vérifié qu'il ne crée pas de cycle."
+    assert model.__name__ in LOCKABLE, (
+        f"{model.__name__} n'est pas dans la liste des lignes verrouillables ; "
+        "l'ajouter à LOCKABLE après avoir vérifié qu'il ne crée pas de cycle "
+        "avec l'ordre documenté — jamais Organization avant une ligne métier."
     )
     if not supports_row_locks(session):
         return get_owned(session, model, organization_id, object_id, label=label)
