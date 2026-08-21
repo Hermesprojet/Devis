@@ -18,7 +18,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from metreo_domain.errors import DomainError
+from metreo_domain import bounds
+from metreo_domain.errors import DomainError, PricingConfigurationError
 from metreo_domain.estimate import (
     EstimateLineInput,
     EstimateResult,
@@ -168,14 +169,27 @@ def build_line_specs(
     then its linked library price, then nothing — and *nothing* stays nothing:
     the line is reported as unpriced rather than valued at zero.
     """
-    items = session.scalars(
-        select(BoqItem)
-        .where(
-            BoqItem.organization_id == estimate.organization_id,
-            BoqItem.boq_id == estimate.boq_id,
+    # `LIMIT n+1` plutôt qu'un `.all()` suivi d'un contrôle : charger vingt
+    # mille lignes pour ensuite annoncer qu'il y en a trop revient à payer le
+    # coût qu'on prétend éviter. Une ligne de plus que la limite suffit à
+    # savoir que la limite est dépassée.
+    items = list(
+        session.scalars(
+            select(BoqItem)
+            .where(
+                BoqItem.organization_id == estimate.organization_id,
+                BoqItem.boq_id == estimate.boq_id,
+            )
+            .order_by(BoqItem.sort_index.asc(), BoqItem.position.asc())
+            .limit(bounds.MAX_LINES_PER_ESTIMATE + 1)
+        ).all()
+    )
+    if len(items) > bounds.MAX_LINES_PER_ESTIMATE:
+        raise PricingConfigurationError(
+            f"Ce bordereau dépasse {bounds.MAX_LINES_PER_ESTIMATE} lignes, "
+            "maximum d'une estimation. Le découper en lots.",
+            maximum=bounds.MAX_LINES_PER_ESTIMATE,
         )
-        .order_by(BoqItem.sort_index.asc(), BoqItem.position.asc())
-    ).all()
 
     specs: list[dict[str, Any]] = []
     for item in items:

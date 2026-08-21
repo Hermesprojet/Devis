@@ -16,16 +16,11 @@ import hashlib
 import io
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
-from metreo_domain import bounds
-from metreo_domain.bounds import OutOfBoundsError
-from metreo_domain.errors import DomainError
-from metreo_domain.money import to_decimal
 
 from ..models import ImportBatch, ImportBatchRow, PriceItem
 from .price_contract import validate_price_row
@@ -66,14 +61,31 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 
 REQUIRED_COLUMNS: tuple[str, ...] = ("code", "label", "unit_code", "unit_price")
 
-VALID_RESOURCE_KINDS = {
-    "material",
-    "labor",
-    "equipment",
-    "transport",
-    "disposal",
-    "subcontract",
-    "other",
+#: Libellés français du type de ressource, traduits **avant** le contrat.
+#: C'est une conversion de syntaxe propre au CSV, comme « 31/12/2026 » : un
+#: fichier rédigé en français doit être compris, mais l'API, elle, attend la
+#: valeur canonique — son `Literal` refuserait « matériau ». Traduire ici garde
+#: les deux parcours d'accord sur ce qu'ils écrivent en base.
+RESOURCE_KIND_ALIASES = {
+    "materiau": "material",
+    "matériau": "material",
+    "materiaux": "material",
+    "matériaux": "material",
+    "main_doeuvre": "labor",
+    "main-d'oeuvre": "labor",
+    "main d'oeuvre": "labor",
+    "mo": "labor",
+    "engin": "equipment",
+    "engins": "equipment",
+    "materiel": "equipment",
+    "matériel": "equipment",
+    "transport": "transport",
+    "evacuation": "disposal",
+    "évacuation": "disposal",
+    "traitement": "disposal",
+    "sous_traitance": "subcontract",
+    "sous-traitance": "subcontract",
+    "divers": "other",
 }
 
 
@@ -143,109 +155,28 @@ class ParsedRow:
         return not self.errors
 
 
-def _parse_decimal(
-    value: str,
-    column: str,
-    errors: list[RowError],
-    *,
-    bound: bounds.Bound | None = None,
-) -> Decimal | None:
-    """Convertit et **borne**, comme le fait la saisie manuelle.
+#: Formats de date qu'un fichier belge ou français utilise couramment. La
+#: conversion de syntaxe appartient au CSV ; la validation métier — plage,
+#: cohérence — reste au contrat partagé.
+LOCAL_DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d")
 
-    L'import contournait les bornes des schémas Pydantic : un prix de 1e20 ou
-    un `Infinity` entraient sans un mot. `DomainError` est rattrapée en plus
-    des erreurs arithmétiques parce que `to_decimal` refuse désormais les
-    valeurs non finies — sans cela, un `Infinity` dans une cellule ferait
-    échouer tout le fichier au lieu de la seule ligne fautive.
+
+def coerce_local_date(value: str) -> str:
+    """Traduit une date locale en ISO, ou rend la valeur telle quelle.
+
+    Ne juge rien : une chaîne qu'aucun format ne reconnaît est transmise sans
+    modification, et c'est le contrat qui la refusera avec un message. Deux
+    validateurs pour une même règle finiraient par diverger.
     """
-    if value is None or not str(value).strip():
-        return None
-    try:
-        parsed = to_decimal(str(value))
-    except DomainError as exc:
-        errors.append(RowError(column, exc.code, f"« {value} » : {exc.message}"))
-        return None
-    except (InvalidOperation, ArithmeticError, ValueError, TypeError):
-        errors.append(
-            RowError(column, "invalid_number", f"« {value} » n'est pas un nombre valide.")
-        )
-        return None
-    if bound is not None:
-        try:
-            bound.check(parsed, label=column)
-        except OutOfBoundsError as exc:
-            errors.append(RowError(column, exc.code, exc.message))
-            return None
-    return parsed
-
-
-#: Valeurs acceptées pour les colonnes énumérées de `PriceItem`.
-VALID_STATUS = frozenset({"active", "draft", "archived", "superseded"})
-VALID_CONFIDENCE = frozenset({"declared", "quoted", "contracted", "estimated"})
-
-
-def sql_length(column: str) -> int:
-    """Longueur maximale **lue sur la colonne**, jamais recopiée à la main.
-
-    La première version de ce contrôle portait des constantes écrites de
-    mémoire : `family` était vérifié à 120 pour une colonne `String(60)`, et
-    `region_code` à 20 pour un `String(10)`. Une ligne passait donc la
-    prévisualisation puis échouait à l'écriture. Lire la longueur sur le modèle
-    supprime la classe entière de ce défaut : une migration qui change la
-    colonne change le contrôle.
-    """
-    sql_column = PriceItem.__table__.columns[column]
-    length = getattr(sql_column.type, "length", None)
-    if length is None:  # pragma: no cover - colonne Text, sans limite
-        raise KeyError(f"La colonne {column} ne porte pas de longueur.")
-    return int(length)
-
-
-def _check_length(value: str | None, column: str, errors: list[RowError]) -> None:
-    """Une valeur trop longue échoue autrement à l'écriture — erreur SQL sur
-    PostgreSQL, écriture acceptée telle quelle sur SQLite — qui n'applique
-    pas la longueur déclarée d'un VARCHAR. Les deux sont pires qu'un
-    refus de ligne."""
-    maximum = sql_length(column)
-    if value and len(value) > maximum:
-        errors.append(
-            RowError(
-                column,
-                "too_long",
-                f"« {value[:20]}… » fait {len(value)} caractères, maximum {maximum}.",
-            )
-        )
-
-
-def _check_choice(
-    value: str | None, column: str, allowed: frozenset[str], errors: list[RowError]
-) -> None:
-    """Une énumération non contrôlée écrit n'importe quelle chaîne en base."""
-    if value and value not in allowed:
-        errors.append(
-            RowError(
-                column,
-                f"invalid_{column}",
-                f"« {value} » n'est pas une valeur acceptée. Attendu : "
-                + ", ".join(sorted(allowed))
-                + ".",
-            )
-        )
-
-
-def _parse_date(value: str, column: str, errors: list[RowError]) -> date | None:
     text = (value or "").strip()
     if not text:
-        return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+        return text
+    for fmt in LOCAL_DATE_FORMATS:
         try:
-            return datetime.strptime(text, fmt).date()
+            return datetime.strptime(text, fmt).date().isoformat()
         except ValueError:
             continue
-    errors.append(
-        RowError(column, "invalid_date", f"« {text} » n'est pas une date (AAAA-MM-JJ attendu).")
-    )
-    return None
+    return text
 
 
 def _serialise_for_staging(normalized: dict[str, Any]) -> dict[str, Any]:
@@ -322,6 +253,13 @@ def parse_csv(
         # propre au CSV : décodage, séparateur, correspondance des colonnes,
         # doublons DANS LE FICHIER — que le contrat ne peut pas voir, n'ayant
         # qu'une ligne sous les yeux.
+        for column in ("valid_from", "valid_to"):
+            if values.get(column):
+                values[column] = coerce_local_date(values[column])
+        if values.get("resource_kind"):
+            key = values["resource_kind"].strip().lower()
+            values["resource_kind"] = RESOURCE_KIND_ALIASES.get(key, key)
+
         outcome = validate_price_row(values, default_currency=default_currency)
         errors = [RowError(e.column, e.code, e.message) for e in outcome.errors]
 

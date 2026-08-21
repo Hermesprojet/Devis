@@ -7,6 +7,9 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from metreo_domain.errors import UnknownUnitError
+from metreo_domain.units import get_unit
+
 from ..config import Settings, get_settings
 from ..db import session_scope
 from ..models import (
@@ -475,9 +478,14 @@ def create_composite(
     )
     _refuse_if_published(version)
 
+    # `validate_spec` canonicalise les unités sur place. Les spécifications
+    # sont donc conservées et serviront à écrire les lignes : valider une copie
+    # jetable puis écrire l'objet d'origine perdait la canonicalisation, et
+    # « tonne » atteignait la base au lieu de « t ».
+    specs: list[dict[str, object]] = [c.model_dump() for c in payload.components]
     problems: list[dict[str, object]] = []
-    for index, component in enumerate(payload.components):
-        for message in validate_spec(component.model_dump()):
+    for index, spec in enumerate(specs):
+        for message in validate_spec(spec):
             problems.append({"index": index, "message": message})
     if problems:
         raise HTTPException(
@@ -489,12 +497,20 @@ def create_composite(
             },
         )
 
+    try:
+        composite_unit = get_unit(payload.unit_code).code
+    except UnknownUnitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "unknown_unit", "message": exc.message},
+        ) from exc
+
     composite = CompositePriceRow(
         organization_id=context.organization_id,
         price_book_version_id=version_id,
         code=payload.code,
         label=payload.label,
-        unit_code=payload.unit_code,
+        unit_code=composite_unit,
         notes=payload.notes,
     )
     session.add(composite)
@@ -510,8 +526,7 @@ def create_composite(
             },
         ) from exc
 
-    for index, component in enumerate(payload.components):
-        data = component.model_dump()
+    for index, data in enumerate(specs):
         session.add(
             CompositeComponentRow(
                 organization_id=context.organization_id,

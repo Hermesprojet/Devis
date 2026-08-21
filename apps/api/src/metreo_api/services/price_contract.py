@@ -29,31 +29,6 @@ from metreo_domain.units import get_unit
 
 from ..models import PriceItem
 
-#: Libellés français acceptés pour le type de ressource. La normalisation
-#: relève du contrat, comme les alias d'unité : un fichier rédigé en français
-#: doit être compris de la même façon quel que soit le chemin d'entrée.
-RESOURCE_KIND_ALIASES = {
-    "materiau": "material",
-    "matériau": "material",
-    "materiaux": "material",
-    "matériaux": "material",
-    "main_doeuvre": "labor",
-    "main-d'oeuvre": "labor",
-    "main d'oeuvre": "labor",
-    "mo": "labor",
-    "engin": "equipment",
-    "engins": "equipment",
-    "materiel": "equipment",
-    "matériel": "equipment",
-    "transport": "transport",
-    "evacuation": "disposal",
-    "évacuation": "disposal",
-    "traitement": "disposal",
-    "sous_traitance": "subcontract",
-    "sous-traitance": "subcontract",
-    "divers": "other",
-}
-
 #: Valeurs acceptées pour les colonnes énumérées.
 VALID_RESOURCE_KINDS = frozenset(
     {"material", "labor", "equipment", "transport", "disposal", "subcontract", "other"}
@@ -314,8 +289,12 @@ def validate_price_row(data: dict[str, Any], *, default_currency: str = "EUR") -
     unit_code = _check_unit(data.get("unit_code"), outcome)
     currency = _check_currency(data.get("currency"), default_currency, outcome)
 
+    # Pas de traduction ici. Les alias localisés (« matériau », « main
+    # d'œuvre ») relèvent de la SYNTAXE d'un fichier CSV, au même titre que
+    # « 31/12/2026 » : le parseur les traduit avant d'appeler ce contrat. Les
+    # accepter ici aussi ferait diverger les parcours — l'API refuserait par
+    # son Literal ce que le contrat aurait accepté.
     resource_kind = (str(data.get("resource_kind") or "material")).strip().lower()
-    resource_kind = RESOURCE_KIND_ALIASES.get(resource_kind, resource_kind)
     _check_choice(resource_kind, "resource_kind", VALID_RESOURCE_KINDS, outcome)
     status = (str(data.get("status")).strip() if data.get("status") else None) or "active"
     _check_choice(status, "status", VALID_STATUS, outcome)

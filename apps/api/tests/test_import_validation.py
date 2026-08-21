@@ -142,7 +142,7 @@ class TestLengthsComeFromTheModel:
 
     def test_the_declared_limits_match_the_sql_columns(self) -> None:
         from metreo_api.models import PriceItem
-        from metreo_api.services.price_import import sql_length
+        from metreo_api.services.price_contract import sql_length
 
         for column in (
             "code",

@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from .conftest import login
 
@@ -338,3 +339,171 @@ class TestMarkupPolicyIsValidatedBeforeWriting:
         )
         after = seeded_client.get("/api/v1/organization/settings", headers=headers).json()
         assert after == before, "un refus a laissé des valeurs modifiées"
+
+
+class TestRotationWithDensity:
+    """Bloquant F : la rotation m³ → tonnes avait été refusée par régression."""
+
+    def test_a_rotation_with_a_sourced_density_is_accepted_and_canonicalised(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        response = _composite(
+            seeded_client,
+            headers,
+            version,
+            [
+                {
+                    "component_type": "rotation",
+                    "label": "Évacuation par camion 14 t",
+                    "resource_kind": "transport",
+                    "payload_value": "14",
+                    # Alias d'unité : doit être canonicalisé à l'écriture.
+                    "payload_unit_code": "tonne",
+                    "cost_per_rotation": "85",
+                    "distance_km": "18",
+                    "rate_per_km": "1.20",
+                    "density_value": "1800",
+                    "density_source": "Rapport géotechnique GT-2026-018, p. 12",
+                }
+            ],
+        )
+        assert response.status_code == 201, response.text
+
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import CompositeComponentRow
+
+        session = get_session_factory()()
+        try:
+            row = session.scalars(
+                select(CompositeComponentRow).where(
+                    CompositeComponentRow.composite_price_id == response.json()["id"]
+                )
+            ).one()
+            assert row.payload_unit_code == "t", "l'alias d'unité n'a pas été canonicalisé"
+            assert row.density_value is not None
+            assert "GT-2026-018" in (row.density_source or "")
+        finally:
+            session.close()
+
+    def test_a_density_without_a_source_is_refused(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        response = _composite(
+            seeded_client,
+            headers,
+            version,
+            [
+                {
+                    "component_type": "rotation",
+                    "label": "Camion",
+                    "payload_value": "14",
+                    "payload_unit_code": "t",
+                    "cost_per_rotation": "85",
+                    "density_value": "1800",
+                }
+            ],
+        )
+        assert response.status_code == 422, response.text
+
+    def test_a_source_without_a_density_is_refused(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        response = _composite(
+            seeded_client,
+            headers,
+            version,
+            [
+                {
+                    "component_type": "rotation",
+                    "label": "Camion",
+                    "payload_value": "14",
+                    "payload_unit_code": "t",
+                    "cost_per_rotation": "85",
+                    "density_source": "Rapport sans chiffre",
+                }
+            ],
+        )
+        assert response.status_code == 422, response.text
+
+
+class TestCardinalityAtTheApiBoundary:
+    """Bloquant G : le moteur refusait, l'écriture acceptait."""
+
+    def test_the_component_limit_is_accepted(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        from metreo_domain import bounds
+
+        components = [
+            {"component_type": "lump_sum", "label": f"C{i}", "lump_sum_amount": "1"}
+            for i in range(bounds.MAX_COMPONENTS_PER_LINE)
+        ]
+        assert _composite(seeded_client, headers, version, components).status_code == 201
+
+    def test_one_component_past_the_limit_is_refused_and_writes_nothing(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import CompositeComponentRow, CompositePriceRow
+        from metreo_domain import bounds
+
+        components = [
+            {"component_type": "lump_sum", "label": f"C{i}", "lump_sum_amount": "1"}
+            for i in range(bounds.MAX_COMPONENTS_PER_LINE + 1)
+        ]
+        response = _composite(seeded_client, headers, version, components)
+        assert response.status_code == 422, response.text
+
+        session = get_session_factory()()
+        try:
+            # Restreint à cette version : le jeu de démonstration porte ses
+            # propres sous-détails, qui n'ont rien à voir avec ce refus.
+            written = session.scalars(
+                select(CompositePriceRow).where(CompositePriceRow.price_book_version_id == version)
+            ).all()
+            assert written == [], "un sous-détail refusé a laissé une trace"
+            assert (
+                session.scalars(
+                    select(CompositeComponentRow).where(
+                        CompositeComponentRow.composite_price_id.in_(
+                            [row.id for row in written] or [""]
+                        )
+                    )
+                ).all()
+                == []
+            )
+        finally:
+            session.close()
+
+
+class TestSinglePriceSourceIsEnforcedBySql:
+    """Bloquant H : la règle n'existait que dans la route."""
+
+    def test_a_direct_orm_write_with_both_sources_is_refused(
+        self, seeded_client: TestClient, headers: dict[str, str], boq: dict
+    ) -> None:
+        from sqlalchemy.exc import IntegrityError
+
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import BillOfQuantities, BoqItem
+
+        session = get_session_factory()()
+        try:
+            organization_id = session.get(BillOfQuantities, boq["id"]).organization_id
+            item = BoqItem(
+                organization_id=organization_id,
+                boq_id=boq["id"],
+                position="9.9",
+                designation="Deux sources par écriture directe",
+                unit_code="m3",
+                quantity=1,
+                price_item_id="11111111-1111-1111-1111-111111111111",
+                composite_price_id="22222222-2222-2222-2222-222222222222",
+            )
+            session.add(item)
+            with pytest.raises(IntegrityError) as excinfo:
+                session.flush()
+            assert "single_price_source" in str(excinfo.value)
+        finally:
+            session.rollback()
+            session.close()

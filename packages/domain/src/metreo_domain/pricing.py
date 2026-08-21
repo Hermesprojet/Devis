@@ -24,7 +24,7 @@ from decimal import Decimal, localcontext
 from enum import Enum
 from typing import Any, Protocol
 
-from .bounds import MAX_COMPONENTS_PER_LINE, check_total
+from .bounds import MAX_COMPONENTS_PER_LINE, RATE, check_total
 from .errors import InvalidRateError, PricingConfigurationError
 from .money import WORKING_PRECISION, Money, RoundingPolicy, canonical_text, money_sum, to_decimal
 from .units import Density, Quantity, convert, get_unit
@@ -239,6 +239,35 @@ class RotationComponent:
     distance_km: Decimal | None = None
     rate_per_km: Money | None = None
 
+    def __post_init__(self) -> None:
+        """La distance et le tarif kilométrique sont indissociables.
+
+        Poser l'un sans l'autre ne produisait aucune erreur : le moteur
+        calculait les rotations et ignorait le kilométrage, en silence. Un
+        transport de 20 km facturé comme un transport de 0 km, sans que rien
+        ne le signale — ni dans le montant, ni dans la formule.
+
+        Le contrôle vit ici, et non seulement dans le schéma HTTP : un
+        instantané, un script ou un appel direct au moteur contourneraient
+        Pydantic.
+        """
+        has_distance = self.distance_km is not None
+        has_rate = self.rate_per_km is not None
+        if has_distance != has_rate:
+            missing = "rate_per_km" if has_distance else "distance_km"
+            raise PricingConfigurationError(
+                f"Transport « {self.label} » : « {missing} » manque. La distance "
+                "et le tarif kilométrique vont ensemble ; l'un sans l'autre ne "
+                "produit aucun coût et serait ignoré sans un mot.",
+                component=self.label,
+                missing=missing,
+            )
+        if self.distance_km is not None and self.distance_km < 0:
+            raise PricingConfigurationError(
+                f"Transport « {self.label} » : distance négative.",
+                component=self.label,
+            )
+
     def compute(self, boq_quantity: Quantity, currency: str) -> ComponentResult:
         density_source: str | None = None
         if boq_quantity.unit.dimension is self.payload.unit.dimension:
@@ -347,13 +376,41 @@ class MarkupPolicy:
     margin_method: MarginMethod = MarginMethod.ON_COST
 
     def __post_init__(self) -> None:
+        # Les bornes vivent ici, et pas seulement dans les schémas HTTP : un
+        # instantané gelé, un script ou un appel direct au moteur fournissent
+        # des taux sans jamais passer par Pydantic. Un taux négatif produirait
+        # un prix de vente inférieur au coût sans que rien ne le signale.
         for name in (
             "site_overheads_rate",
             "general_overheads_rate",
             "contingency_rate",
             "margin_rate",
         ):
-            object.__setattr__(self, name, to_decimal(getattr(self, name)))
+            value = to_decimal(getattr(self, name))
+            RATE.check(value, label=name)
+            object.__setattr__(self, name, value)
+
+        # Les énumérations sont converties, pas supposées : une base ou une
+        # méthode inconnue venue d'un instantané doit être refusée ici plutôt
+        # que de traverser le calcul et d'y produire un comportement par défaut
+        # que personne n'a choisi.
+        for name, enum_type in (
+            ("site_overheads_base", OverheadBase),
+            ("general_overheads_base", OverheadBase),
+            ("contingency_base", OverheadBase),
+            ("margin_method", MarginMethod),
+        ):
+            raw = getattr(self, name)
+            try:
+                object.__setattr__(self, name, enum_type(raw))
+            except ValueError as exc:
+                raise PricingConfigurationError(
+                    f"{name} : « {raw} » n'est pas une valeur connue. "
+                    "Attendu : " + ", ".join(sorted(e.value for e in enum_type)) + ".",
+                    field=name,
+                    value=str(raw),
+                ) from exc
+
         if self.margin_method is MarginMethod.ON_PRICE and self.margin_rate >= 1:
             raise PricingConfigurationError(
                 "une marge sur prix de vente doit être strictement inférieure à 100 %",

@@ -493,19 +493,31 @@ class OutputRateComponentIn(_ComponentBase):
 
 
 class RotationComponentIn(_ComponentBase):
-    """Transport compté en rotations, ou au kilomètre."""
+    """Transport compté en rotations, éventuellement majoré au kilomètre."""
 
     component_type: Literal["rotation"]
     #: Diviseur de la quantité : strictement positif.
     payload_value: Decimal = Field(gt=Decimal(0), le=bounds.COEFFICIENT.maximum)
     payload_unit_code: str = Field(min_length=1, max_length=12)
-    cost_per_rotation: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
+    #: Obligatoire. Le moteur, `REQUIRED_FIELDS` et les données existantes le
+    #: supposent tous présents ; le rendre facultatif avait créé deux contrats
+    #: contradictoires, dont l'un produisait un `TypeError` à la
+    #: reconstruction d'un instantané.
+    cost_per_rotation: Decimal = _bounded(bounds.UNIT_PRICE)
     round_up: bool = True
     distance_km: Decimal | None = _bounded_opt(bounds.DISTANCE_KM)
     rate_per_km: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
+    #: Le cas central du terrassement : le bordereau est en m³, le camion est
+    #: chargé en tonnes. Sans masse volumique sourcée, la conversion est
+    #: impossible — et les avoir omis ici refusait purement et simplement le
+    #: transport de terres, que le jeu de démonstration utilise.
+    density_value: Decimal | None = Field(
+        default=None, gt=bounds.DENSITY.minimum, le=bounds.DENSITY.maximum
+    )
+    density_source: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
-    def _distance_and_rate_go_together(self) -> RotationComponentIn:
+    def _coupled_fields_go_together(self) -> RotationComponentIn:
         has_distance = self.distance_km is not None
         has_rate = self.rate_per_km is not None
         if has_distance != has_rate:
@@ -516,11 +528,14 @@ class RotationComponentIn(_ComponentBase):
                 f"« {missing} » manque. La distance et le tarif kilométrique "
                 "vont ensemble : l'un sans l'autre ne produit aucun coût."
             )
-        if not has_distance and self.cost_per_rotation is None:
+        if self.density_value is not None and not (self.density_source or "").strip():
             raise ValueError(
-                "Un transport doit porter soit un coût par rotation, soit une "
-                "distance et un tarif kilométrique."
+                "Une masse volumique doit indiquer sa source (rapport de sol, "
+                "fiche fournisseur, essai). Sans elle, la conversion n'est pas "
+                "justifiable."
             )
+        if self.density_source and self.density_value is None:
+            raise ValueError("Une source de masse volumique sans valeur n'a pas d'effet.")
         return self
 
 
@@ -544,7 +559,9 @@ class CompositePriceCreate(BaseModel):
     label: str = Field(min_length=1, max_length=255)
     unit_code: str = Field(min_length=1, max_length=12)
     notes: str | None = None
-    components: list[ComponentSpecIn] = Field(min_length=1)
+    components: list[ComponentSpecIn] = Field(
+        min_length=1, max_length=bounds.MAX_COMPONENTS_PER_LINE
+    )
 
 
 class CompositePriceOut(ApiModel):

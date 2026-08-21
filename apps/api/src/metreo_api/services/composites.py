@@ -11,7 +11,8 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from metreo_domain.errors import DomainError, UnknownUnitError
+from metreo_domain import bounds
+from metreo_domain.errors import DomainError, PricingConfigurationError, UnknownUnitError
 from metreo_domain.money import Money, canonical_text, to_decimal
 from metreo_domain.pricing import (
     Component,
@@ -108,7 +109,11 @@ def validate_spec(spec: dict[str, Any]) -> list[str]:
         code = spec.get(unit_field)
         if code:
             try:
-                get_unit(code)
+                # Canonicalisée sur place : « tonne » et « m³ » doivent
+                # atteindre la base sous leur forme canonique, sans quoi deux
+                # composants identiques s'y retrouvent sous deux orthographes
+                # et aucune requête ne les rapproche.
+                spec[unit_field] = get_unit(code).code
             except UnknownUnitError:
                 problems.append(f"unité inconnue: {code}")
 
@@ -133,7 +138,23 @@ def _density(spec: dict[str, Any]) -> Density | None:
 
 
 def component_from_spec(spec: dict[str, Any], currency: str) -> Component:
-    """Build an engine component from a spec. Assumes :func:`validate_spec` passed."""
+    """Construit un composant du moteur depuis une spécification.
+
+    **Ne suppose plus que `validate_spec` a été appelée.** Un instantané gelé,
+    une ligne historique ou un appel direct peuvent apporter une spécification
+    incomplète : sans ce contrôle, `to_decimal(None)` levait un `TypeError` —
+    une erreur de programmation, donc un HTTP 500, là où la donnée est
+    simplement invalide et mérite une erreur métier lisible.
+    """
+    problems = validate_spec(spec)
+    if problems:
+        raise PricingConfigurationError(
+            "Spécification de composant inexploitable : " + " ; ".join(problems),
+            component=spec.get("label"),
+            component_type=spec.get("component_type"),
+            problems=problems,
+        )
+
     component_type = spec["component_type"]
     label = spec["label"]
     kind = ResourceKind(spec.get("resource_kind") or "other")
@@ -179,4 +200,21 @@ def component_from_spec(spec: dict[str, Any], currency: str) -> Component:
 
 
 def components_from_specs(specs: list[dict[str, Any]], currency: str) -> tuple[Component, ...]:
+    """Construit les composants d'un sous-détail, après contrôle de cardinalité.
+
+    Contrôlé ici et pas seulement dans le schéma HTTP : la route n'est pas le
+    seul chemin vers cette fonction, et un instantané gelé peut porter plus de
+    composants que la limite en vigueur aujourd'hui.
+    """
+    if len(specs) > bounds.MAX_COMPONENTS_PER_LINE:
+        raise PricingConfigurationError(
+            f"{len(specs)} composants pour un sous-détail, maximum "
+            f"{bounds.MAX_COMPONENTS_PER_LINE}.",
+            count=len(specs),
+            maximum=bounds.MAX_COMPONENTS_PER_LINE,
+        )
+    if not specs:
+        raise PricingConfigurationError(
+            "Un sous-détail sans composant ne calcule rien : il n'a pas de sens."
+        )
     return tuple(component_from_spec(spec, currency) for spec in specs)

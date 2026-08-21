@@ -522,6 +522,10 @@ class BillOfQuantities(TimestampMixin, Base):
 class BoqItem(TimestampMixin, Base):
     __tablename__ = "boq_items"
     __table_args__ = (
+        CheckConstraint(
+            "price_item_id IS NULL OR composite_price_id IS NULL",
+            name="ck_boq_item_single_price_source",
+        ),
         UniqueConstraint("boq_id", "position", name="uq_boqitem_boq_position"),
         CheckConstraint(
             "kind IN ('section','item','option','variant','provisional')",
