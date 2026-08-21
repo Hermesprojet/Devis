@@ -82,7 +82,9 @@ def sql_length(column: str) -> int:
 
     Une version antérieure portait des constantes écrites de mémoire :
     `family` vérifié à 120 pour un `String(60)`, `region_code` à 20 pour un
-    `String(10)`. Une ligne passait la validation puis échouait à l'écriture.
+    `String(10)`. Une ligne passait la validation puis échouait à l'écriture sur
+    PostgreSQL — SQLite, lui, l'acceptait telle quelle, n'appliquant pas la
+    longueur déclarée : les deux moteurs divergeaient en silence.
     """
     sql_column = PriceItem.__table__.columns[column]
     length = getattr(sql_column.type, "length", None)

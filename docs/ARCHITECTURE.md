@@ -143,7 +143,7 @@ d'acceptation n° 2, et c'est testé.
 | ORM | SQLAlchemy 2.0 typé + Alembic | Migrations obligatoires ; `render_as_batch` pour rester compatible SQLite. |
 | Base | PostgreSQL 16 (+PostGIS) | Recherche plein texte native pour la phase 2, géométries pour la phase 3, `pgvector` seulement si un cas RAG le justifie. |
 | Web | Next.js 15, App Router, TypeScript strict | Rendu rapide de grilles denses, i18n prête, aucune dépendance UI lourde. |
-| Files | Redis | Prévu pour la phase 2 ; démarré par Compose mais non utilisé aujourd'hui. |
+| File d'attente et cache | Redis | Files de traitement de la phase 2 et cache technique — **pas** un stockage de fichiers, qui relèvera d'un `ObjectStore` compatible S3 (ADR 0003). Démarré par Compose, non utilisé aujourd'hui. |
 
 Aucune bibliothèque de composants, aucun client d'état global, aucun ORM côté
 web : le MVP n'en a pas besoin et chaque dépendance est une surface à maintenir.

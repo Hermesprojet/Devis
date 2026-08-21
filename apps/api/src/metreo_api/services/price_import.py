@@ -203,7 +203,8 @@ def sql_length(column: str) -> int:
 
 def _check_length(value: str | None, column: str, errors: list[RowError]) -> None:
     """Une valeur trop longue échoue autrement à l'écriture — erreur SQL sur
-    PostgreSQL, troncature silencieuse sur SQLite. Les deux sont pires qu'un
+    PostgreSQL, écriture acceptée telle quelle sur SQLite — qui n'applique
+    pas la longueur déclarée d'un VARCHAR. Les deux sont pires qu'un
     refus de ligne."""
     maximum = sql_length(column)
     if value and len(value) > maximum:

@@ -19,7 +19,7 @@
 | Dernier commit contrôlé depuis un clone propre | `26684e8` |
 | Procédure | `make install` puis `make verify` puis `make e2e`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
-| Tête Alembic | `d88792b38c2d` |
+| Tête Alembic | voir `alembic heads` — trois révisions à ce jour, la dernière ajoutant les contraintes CHECK sur les prix |
 
 ## Commit contrôlé depuis un clone propre
 
@@ -75,9 +75,9 @@ commande et s'arrête au premier échec.
 | Format et lint Python | `make lint` | `All checks passed!` | < 1 s |
 | Types — domaine | `mypy packages/domain/src/metreo_domain` | 6 fichiers, aucun problème | ~1 s |
 | Types — API | `mypy apps/api/src/metreo_api` | 27 fichiers, aucun problème | ~2 s |
-| Tests du domaine | `make test-domain` | **105 passed** | 0,1 s |
-| Tests API sur SQLite | `make test-api` | **130 passed** | ~45 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **130 passed** | ~47 s |
+| Tests du domaine | `make test-domain` | **121 passed** | < 1 s |
+| Tests API sur SQLite | `make test-api` | **288 passed, 3 ignorés** | ~110 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **291 passed** | ~120 s |
 | Migrations aller-retour | `make migrations` | `upgrade head` → `downgrade base` → `upgrade head` | ~3 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 33 chemins, 47 schémas | ~25 s |
@@ -204,7 +204,7 @@ annulant les exécutions obsolètes d'une même référence :
 | Skills du dépôt | frontmatter, chemins cités, absence de données volatiles |
 | Installation depuis les manifestes | un environnement vierge démarre sans paquet implicite |
 | Images Docker | construction, UID effectif non nul, point de santé |
-| Vulnérabilités des dépendances | rapport `pip-audit` et `npm audit` consigné |
+| Vulnérabilités des dépendances | `pip-audit` et `npm audit`, **bloquants** en haute et critique |
 | Aucun secret commité | pas de `.env` versionné, pas de motif de secret |
 
 ## Scénarios d'acceptation couverts

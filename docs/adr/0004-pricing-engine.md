@@ -19,8 +19,18 @@ littéral décimal saisi plutôt que l'artefact binaire. Les décimales françai
 (`1 234,56`) sont acceptées à l'entrée.
 
 En base, le type `Amount` donne un `NUMERIC(28,10)` sur PostgreSQL et une chaîne
-exacte sur SQLite : SQLite n'a pas de type décimal et convertirait en flottant.
-Aucune arithmétique monétaire ne se fait en SQL, donc rien n'est perdu.
+sur SQLite, qui n'a pas de type décimal et convertirait sinon en flottant.
+
+Sur les **deux** moteurs, la valeur est quantifiée à `AMOUNT_SCALE` décimales —
+dix — à l'écriture. Dire que SQLite conserve un montant « exact et non
+arrondi » serait faux : il conserve exactement ce que PostgreSQL conserverait,
+ce qui est le but. Sans cette quantification explicite, SQLite garderait des
+chiffres que son homologue laisse tomber, et une même estimation gelée
+produirait deux empreintes différentes selon la base.
+
+Aucune arithmétique monétaire ne se fait en SQL : les valeurs non arrondies du
+calcul vivent dans l'instantané JSON, et les colonnes portent la valeur
+quantifiée.
 
 ### 2. Stockage non arrondi, arrondi explicite et unique
 

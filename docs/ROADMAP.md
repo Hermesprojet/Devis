@@ -134,9 +134,7 @@ calcul** — seulement un pack versionné et des traductions.
 | Sujet | Impact | Quand |
 | --- | --- | --- |
 | Pas de RLS PostgreSQL | L'isolation repose sur la couche service (testée) sans filet de sécurité base | Phase 5 |
-| Numérotation d'audit par `MAX(sequence)+1` | Deux écritures concurrentes dans la même organisation peuvent entrer en conflit ; la contrainte d'unicité rejette la seconde plutôt que de corrompre la chaîne | Phase 5 (séquence par organisation ou verrou consultatif) |
 | `apps/worker` vide | Les opérations longues n'existent pas encore ; le répertoire est réservé | Phase 2 |
-| Aucun test end-to-end automatisé du web | Le parcours a été vérifié au navigateur mais n'est pas dans la CI | Phase 2 (Playwright) |
 | Import XLSX absent | Seul le CSV est pris en charge | Phase 2 |
 | Sous-détails non éditables depuis l'interface | Création par API uniquement | Phase 1 bis |
 | Analyse de sensibilité non exposée par l'API | Implémentée et testée dans le domaine | Phase 1 bis |

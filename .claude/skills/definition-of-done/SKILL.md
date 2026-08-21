@@ -1,6 +1,6 @@
 ---
 name: definition-of-done
-description: À utiliser à la FIN d'une tranche de travail Metreo, quand il faut dire si elle est finie — avant d'écrire « terminé », « livré », « prêt », « ça marche » ou « phase N close », avant de committer ou de demander une revue, pour lancer la bonne série de vérifications (pytest du domaine et de l'API, ruff format, ruff check, mypy, alembic upgrade/downgrade, seed, npm run typecheck et build), pour lire les cinq jobs de CI, pour rédiger le compte rendu de fin d'itération (fonctionnalités réellement opérationnelles, fichiers créés ou modifiés, commandes de démarrage, résultats des tests, décisions et hypothèses, limites connues, prochaine tranche), pour trancher si un écran statique, un mock ou une fonction sans test métier peut être annoncé comme disponible, pour marquer des données de démonstration is_demo_data, pour vérifier que README.md, docs/ROADMAP.md et .env.example disent encore la vérité, ou pour décider ce qui ne doit jamais être commité. Décrit la PREUVE attendue, pas la règle métier prouvée.
+description: À utiliser à la FIN d'une tranche de travail Metreo, quand il faut dire si elle est finie — avant d'écrire « terminé », « livré », « prêt », « ça marche » ou « phase N close », avant de committer ou de demander une revue, pour lancer la bonne série de vérifications (pytest du domaine et de l'API, ruff format, ruff check, mypy, alembic upgrade/downgrade, seed, npm run typecheck et build), pour lire les jobs de CI, pour rédiger le compte rendu de fin d'itération (fonctionnalités réellement opérationnelles, fichiers créés ou modifiés, commandes de démarrage, résultats des tests, décisions et hypothèses, limites connues, prochaine tranche), pour trancher si un écran statique, un mock ou une fonction sans test métier peut être annoncé comme disponible, pour marquer des données de démonstration is_demo_data, pour vérifier que README.md, docs/ROADMAP.md et .env.example disent encore la vérité, ou pour décider ce qui ne doit jamais être commité. Décrit la PREUVE attendue, pas la règle métier prouvée.
 ---
 
 # Metreo — critères de « terminé » (phase 1, en vigueur)
@@ -88,7 +88,8 @@ Règles d'usage :
 
 ## 5. La CI décide, pas le poste local
 
-`.github/workflows/ci.yml` — cinq jobs, tous bloquants :
+`.github/workflows/ci.yml` — tous bloquants. Pour la liste à jour :
+`python -c "import yaml;[print(j['name']) for j in yaml.safe_load(open('.github/workflows/ci.yml'))['jobs'].values()]"`
 
 | Job | Ce qu'il ajoute par rapport au local |
 | --- | --- |

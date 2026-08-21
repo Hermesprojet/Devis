@@ -68,9 +68,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next: Callable[[Request], Awaitable]):
         # La colonne d'audit stocke 64 caractères. Un en-tête plus long serait
-        # tronqué à l'écriture — sur PostgreSQL par une erreur, sur SQLite en
-        # silence — et l'identifiant journalisé ne correspondrait plus à celui
-        # renvoyé au client. Un en-tête hors format est remplacé, pas coupé.
+        # refusé à l'écriture par PostgreSQL, et accepté tel quel par SQLite,
+        # qui n'applique pas la longueur déclarée d'un VARCHAR. L'identifiant
+        # journalisé ne correspondrait plus à celui renvoyé au client. Un
+        # en-tête hors format est donc remplacé, jamais coupé.
         supplied = request.headers.get("X-Request-Id")
         request_id = supplied if supplied and len(supplied) <= 64 else uuid.uuid4().hex
         token = request_id_var.set(request_id)
