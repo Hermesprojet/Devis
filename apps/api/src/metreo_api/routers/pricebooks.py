@@ -37,7 +37,7 @@ from ..schemas import (
 )
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
-from ..services import audit, price_import
+from ..services import audit, price_import, pricebook_versions
 from ..services.composites import spec_from_row, validate_spec
 from ..services.price_contract import as_http_detail, validate_price_row
 from ..services.tenant import get_owned, owned_query
@@ -136,16 +136,17 @@ def create_version(
     context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
     session: Session = Depends(session_scope),
 ) -> PriceBookVersion:
-    get_owned(session, PriceBook, context.organization_id, price_book_id, label="Bibliothèque")
-    numbers = session.scalars(
-        select(PriceBookVersion.version_number).where(
-            PriceBookVersion.price_book_id == price_book_id
-        )
-    ).all()
     version = PriceBookVersion(
         organization_id=context.organization_id,
         price_book_id=price_book_id,
-        version_number=(max(numbers) if numbers else 0) + 1,
+        # Verrouille la bibliothèque avant de compter : deux créations
+        # simultanées choisissaient le même numéro et la seconde heurtait
+        # uq_pbv_book_number, ce qui remontait en 500.
+        version_number=pricebook_versions.next_version_number(
+            session,
+            organization_id=context.organization_id,
+            price_book_id=price_book_id,
+        ),
         label=label,
         status="draft",
         created_by=context.user.id,
@@ -175,8 +176,10 @@ def publish_version(
     context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
     session: Session = Depends(session_scope),
 ) -> PriceBookVersion:
-    version = get_owned(
-        session, PriceBookVersion, context.organization_id, version_id, label="Version"
+    # Verrouillée puis relue : une publication concurrente doit attendre, puis
+    # constater l'état final plutôt que publier deux fois.
+    version = pricebook_versions.lock_version(
+        session, organization_id=context.organization_id, version_id=version_id
     )
     if version.status == "published":
         raise HTTPException(
@@ -252,10 +255,7 @@ def create_item(
     context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
     session: Session = Depends(session_scope),
 ) -> PriceItem:
-    version = get_owned(
-        session, PriceBookVersion, context.organization_id, version_id, label="Version"
-    )
-    _refuse_if_published(version)
+    _version_open_for_writing(session, context, version_id)
 
     # Même contrat que l'import : une règle ajoutée s'applique aux deux, et la
     # prévisualisation ne peut plus annoncer valide ce que la saisie refuse.
@@ -310,6 +310,24 @@ def _refuse_if_published(version: PriceBookVersion) -> None:
         )
 
 
+def _version_open_for_writing(
+    session: Session, context: TenantContext, version_id: str
+) -> PriceBookVersion:
+    """Lock the version, then read its status — in that order.
+
+    Reading the status and *then* writing leaves room for a publication to
+    land in between: the price would be added to a version the product
+    presents as frozen. Holding the row makes the two operations sequential —
+    whichever arrives second waits, then sees the final state and answers
+    `409 version_published` instead of writing.
+    """
+    version = pricebook_versions.lock_version(
+        session, organization_id=context.organization_id, version_id=version_id
+    )
+    _refuse_if_published(version)
+    return version
+
+
 @router.post(
     "/versions/{version_id}/imports/preview",
     response_model=ImportPreviewOut,
@@ -323,6 +341,10 @@ async def preview_import(
     session: Session = Depends(session_scope),
     settings: Settings = Depends(get_settings),
 ) -> ImportPreviewOut:
+    # Lecture simple, sans verrou : la suite `await file.read()` peut durer, et
+    # tenir une ligne verrouillée pendant la lecture d'un fichier bloquerait
+    # toute publication. La prévisualisation n'écrit aucun prix ; c'est le
+    # commit qui verrouille et refuse, et c'est lui qui fait foi.
     version = get_owned(
         session, PriceBookVersion, context.organization_id, version_id, label="Version"
     )
@@ -412,14 +434,7 @@ def commit_import(
                 "message": f"Cet import est déjà « {batch.status} ».",
             },
         )
-    version = get_owned(
-        session,
-        PriceBookVersion,
-        context.organization_id,
-        batch.price_book_version_id,
-        label="Version",
-    )
-    _refuse_if_published(version)
+    _version_open_for_writing(session, context, batch.price_book_version_id)
 
     outcome = price_import.commit_batch(session, batch, strategy=payload.strategy)
     audit.record(
@@ -473,10 +488,7 @@ def create_composite(
     context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
     session: Session = Depends(session_scope),
 ) -> CompositePriceOut:
-    version = get_owned(
-        session, PriceBookVersion, context.organization_id, version_id, label="Version"
-    )
-    _refuse_if_published(version)
+    _version_open_for_writing(session, context, version_id)
 
     # `validate_spec` canonicalise les unités sur place. Les spécifications
     # sont donc conservées et serviront à écrire les lignes : valider une copie

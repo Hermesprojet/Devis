@@ -44,11 +44,27 @@ def _load(session: Session, context: TenantContext, estimate_id: str) -> Estimat
 
 
 def _version(
-    session: Session, context: TenantContext, estimate: Estimate, version_id: str
+    session: Session,
+    context: TenantContext,
+    estimate: Estimate,
+    version_id: str,
+    *,
+    lock: bool = False,
 ) -> EstimateVersion:
-    version = get_owned(
-        session, EstimateVersion, context.organization_id, version_id, label="Version"
-    )
+    """Load a version of this estimate, optionally holding it for the write.
+
+    ``lock=True`` is for the routes that read the status, decide, then write —
+    the freeze. Without it two callers both read ``draft``, both freeze, and
+    two audit events are written for one irreversible act.
+    """
+    if lock:
+        version = estimating.lock_version(
+            session, organization_id=context.organization_id, version_id=version_id
+        )
+    else:
+        version = get_owned(
+            session, EstimateVersion, context.organization_id, version_id, label="Version"
+        )
     if version.estimate_id != estimate.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -230,7 +246,10 @@ def create_version(
     version = EstimateVersion(
         organization_id=context.organization_id,
         estimate_id=estimate.id,
-        version_number=estimating.next_version_number(session, estimate.id),
+        # Verrouille l'estimation avant de compter : voir services/locking.py.
+        version_number=estimating.next_version_number(
+            session, estimate.id, organization_id=context.organization_id
+        ),
         label=payload.label,
         status="draft",
         price_book_version_id=price_book_version_id,
@@ -334,7 +353,7 @@ def freeze(
             },
         )
     estimate = _load(session, context, estimate_id)
-    version = _version(session, context, estimate, version_id)
+    version = _version(session, context, estimate, version_id, lock=True)
     try:
         frozen, result = estimating.freeze_version(
             session,

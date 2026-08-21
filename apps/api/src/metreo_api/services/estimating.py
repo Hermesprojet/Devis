@@ -42,6 +42,7 @@ from ..models import (
     utcnow,
 )
 from .composites import components_from_specs, specs_from_composite
+from .locking import lock_owned
 
 SNAPSHOT_SCHEMA = "metreo.estimate.snapshot/1"
 
@@ -496,11 +497,29 @@ def freeze_version(
     return version, result
 
 
-def next_version_number(session: Session, estimate_id: str) -> int:
+def next_version_number(session: Session, estimate_id: str, *, organization_id: str) -> int:
+    """Next free version number for an estimate, allocated under a lock.
+
+    The parent :class:`~metreo_api.models.Estimate` is locked first: without
+    it two callers read the same maximum, both choose the same successor, and
+    the second one violates ``uq_estimateversion_number`` — correct data, but
+    an uncaught ``IntegrityError`` and a 500 for the caller.
+    """
+    lock_owned(session, Estimate, organization_id, estimate_id, label="Estimation")
     numbers = session.scalars(
         select(EstimateVersion.version_number).where(EstimateVersion.estimate_id == estimate_id)
     ).all()
     return (max(numbers) if numbers else 0) + 1
+
+
+def lock_version(session: Session, *, organization_id: str, version_id: str) -> EstimateVersion:
+    """Hold an estimate version so its status cannot change under our feet.
+
+    Freezing reads ``status``, decides, then writes. Two callers reading
+    ``draft`` at the same time would both freeze, producing two audit events
+    for one irreversible act.
+    """
+    return lock_owned(session, EstimateVersion, organization_id, version_id, label="Version")
 
 
 def totals_for_display(
