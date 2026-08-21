@@ -29,8 +29,8 @@ n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `87bcead` |
-| Procédure | `make install` puis `make verify` puis `make e2e`, depuis un clone vide |
+| Dernier commit contrôlé depuis un clone propre | `4fa98a2` |
+| Procédure | `make install` puis `make release-gate`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
 
@@ -38,10 +38,10 @@ n'atteste que le premier.
 
 | | |
 | --- | --- |
-| Commit | `87bcead1ebbddf63debf5913e3a0850df0fbc011` |
-| Abrégé | `87bcead` |
-| Fichiers versionnés | 146 |
-| Exécution CI correspondante | [push 32480318193](https://github.com/Hermesprojet/Devis/actions/runs/32480318193) et [pull_request 32480322864](https://github.com/Hermesprojet/Devis/actions/runs/32480322864) — 10/10 chacune |
+| Commit | `4fa98a2103cf3619eb408f4d50ee3dd5bf93da60` |
+| Abrégé | `4fa98a2` |
+| Fichiers versionnés | 150 |
+| Exécution CI correspondante | [push 32510880239](https://github.com/Hermesprojet/Devis/actions/runs/32510880239) et [pull_request 32510885338](https://github.com/Hermesprojet/Devis/actions/runs/32510885338) — 10/10 chacune |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -109,8 +109,8 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Types — API | `mypy apps/api/src/metreo_api` | 28 fichiers, aucun problème | ~2 s |
 | Types — scripts | `mypy scripts` | 3 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **323 passed, 3 ignorés** | ~115 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **326 passed** | ~150 s |
+| Tests API sur SQLite | `make test-api` | **356 passed, 7 ignorés** | ~106 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **363 passed** | ~140 s |
 | Migrations aller-retour | `make migrations` | `upgrade head` → `downgrade base` → `upgrade head` | ~3 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
@@ -119,7 +119,7 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Composition Docker | `make compose-config` | `docker compose : valide` | ~1 s |
 | Types du front | `make web-typecheck` | `tsc --noEmit` sans erreur | ~2 s |
 | Build de production | `make web-build` | 9 routes compilées | ~3 s |
-| Parcours navigateur | `make e2e` | **15 passed** | ~62 s |
+| Parcours navigateur | `make e2e` | **15 passed** | ~49 s |
 
 Les tests API tournent **réellement** sur PostgreSQL lorsque
 `METREO_TEST_DATABASE_URL` est défini : chaque test obtient son propre schéma.
@@ -129,8 +129,10 @@ l'annonce explicitement plutôt que de passer en silence.
 Conséquence sur la lecture du tableau : la variable passée à `make verify`
 vaut pour ses deux étapes API, qui ont donc toutes deux tourné sur
 PostgreSQL — **326 passed** chacune. Le chiffre SQLite vient d'une exécution
-séparée du même clone, sans la variable ; les trois tests ignorés y sont les
-tests propres à PostgreSQL, qui refusent de faire semblant.
+séparée du même clone, sans la variable ; les sept tests ignorés y sont les
+tests propres à PostgreSQL — précision décimale, contraintes serveur et, depuis
+le bloquant J, les quatre tests de concurrence. Ils refusent de faire semblant
+plutôt que de passer sur un moteur qui sérialise ses écritures.
 
 ```bash
 make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
@@ -225,6 +227,70 @@ Vérifiée dans le code avant de trancher, et non supposée : App Router, mais
 middleware, ni `next/image` ; `output: 'standalone'`. `postcss` ne traite que
 la feuille de style du dépôt, à la construction. L'exposition était donc
 faible — pas nulle — et elle est close plutôt que documentée.
+
+## Concurrence
+
+Trois séquences lisaient un état puis écrivaient une décision prise à partir
+de cette lecture. Rien ne retenait une seconde transaction entre les deux.
+
+La course a été **reproduite avant correction**, sur PostgreSQL réel, avec
+l'algorithme d'origine — lire tous les numéros, prendre le maximum, ajouter
+un — deux fils synchronisés par une barrière, cinq tours :
+
+```text
+tour 1 : COURSE REPRODUITE — UniqueViolation sur uq_pbv_book_number
+tour 2 : COURSE REPRODUITE — UniqueViolation sur uq_pbv_book_number
+tour 3 : numéros [4, 5]
+tour 4 : numéros [6, 7]
+tour 5 : numéros [8, 9]
+```
+
+Deux tours sur cinq. C'est bien le propre d'une course : elle ne se manifeste
+pas à chaque fois, et une exécution qui passe ne prouve rien. Les données
+restaient justes — la contrainte d'unicité fait son travail — mais
+l'`IntegrityError` n'était interceptée dans aucune route : le service rendu
+était un HTTP 500 pour une demande légitime.
+
+`services/locking.py` porte le geste et l'ordre d'acquisition, pour ne pas
+remplacer les courses par des interblocages :
+
+```text
+Organization → PriceBook → PriceBookVersion → Estimate → EstimateVersion
+```
+
+| Séquence | Ligne verrouillée |
+| --- | --- |
+| Numéro de version de bibliothèque | la `PriceBook` parente |
+| Numéro de version d'estimation | l'`Estimate` parente |
+| Publication d'une version, écriture d'un prix | la `PriceBookVersion` elle-même |
+| Gel d'une version | l'`EstimateVersion` elle-même |
+
+Le filtre par tenant fait partie de la requête de verrouillage : on ne peut
+pas verrouiller une ligne qu'on n'a pas le droit de voir. Les contraintes
+d'unicité restent le dernier rempart — un verrou est une convention entre
+écrivains bien élevés, une contrainte est ce que la base impose.
+
+Falsification, verrou neutralisé puis rétabli :
+
+```text
+verrou neutralisé : 3 failed / 2 failed / 3 failed / 3 failed   (4 exécutions)
+verrou rétabli    : 4 passed / 4 passed / 4 passed
+```
+
+Les tests s'ignorent hors PostgreSQL. SQLite sérialise ses écritures : ils y
+passeraient sans rien prouver, ce qui est pire qu'une absence de test.
+
+Deux courses voisines sont couvertes au même endroit. Publication contre
+écriture d'un prix : le résultat est séquentiel dans un sens ou dans l'autre,
+la version finit publiée, et un prix n'apparaît jamais après la publication.
+Deux gels simultanés de la même version : un seul réussit, le second reçoit
+`409 already_frozen`, et **un seul** événement `estimate_version.frozen` est
+écrit.
+
+La prévisualisation d'import garde délibérément une lecture sans verrou : elle
+enchaîne sur `await file.read()`, et tenir une ligne verrouillée pendant la
+lecture d'un fichier bloquerait toute publication. Elle n'écrit aucun prix ;
+c'est le commit qui verrouille, refuse, et fait foi.
 
 ## Retour arrière
 
@@ -388,6 +454,9 @@ ici, qui redeviendrait faux au commit suivant.
 ```bash
 git checkout <le commit contrôlé, en tête de ce document>
 make install
-make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
-make e2e
+make release-gate METREO_TEST_DATABASE_URL=postgresql+psycopg://…/metreo_gate
 ```
+
+`release-gate` enchaîne `verify`, les migrations, le seed et les parcours
+navigateur, et refuse de démarrer sans base jetable. Le chiffre SQLite du
+tableau vient d'un `make test-api` séparé, sans la variable.
