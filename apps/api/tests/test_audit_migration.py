@@ -8,10 +8,11 @@ chaîne produite la veille devenait invalide après migration.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from .conftest import running_on_postgresql
@@ -31,50 +32,62 @@ def _insert_event(
     """Écrit un événement scellé sous `version`, sans passer par `record()`.
 
     Le but est de fabriquer une chaîne historique réelle, telle qu'un ancien
-    code l'aurait produite, et non telle que le code d'aujourd'hui l'écrirait.
+    code l'aurait produite. Le scellé est calculé à partir de la valeur
+    **relue** de la base, et non de celle envoyée : PostgreSQL et SQLite ne
+    rendent pas un horodatage sous la même forme, et sceller la chaîne envoyée
+    rendrait le test vert sur un moteur et rouge sur l'autre — sans que le code
+    y soit pour quoi que ce soit.
     """
     event_id = f"evt-{version}-{sequence:04d}"
-    values = {
-        "event_id": event_id,
-        "organization_id": organization_id,
-        "sequence": sequence,
-        "occurred_at": "2026-08-20T12:00:00+00:00",
-        "actor_user_id": None,
-        "actor_email": "historique@dubois.demo",
-        "request_id": None,
-        "action": "test.historique",
-        "object_type": "test",
-        "object_id": None,
-        "summary": f"Événement historique {sequence}",
-        "payload": {},
-        "previous_hash": previous_hash or "",
-    }
-    digest = _seal(values, version)
     connection.execute(
         text(
             "INSERT INTO audit_events (id, organization_id, sequence, occurred_at, "
-            "actor_user_id, actor_email, request_id, action, object_type, object_id, "
-            "summary, payload, previous_hash, hash, hash_schema_version) VALUES "
-            "(:id, :org, :seq, :at, :uid, :email, :rid, :action, :otype, :oid, "
+            "actor_email, action, object_type, summary, payload, previous_hash, hash, "
+            "hash_schema_version) VALUES (:id, :org, :seq, :at, :email, :action, :otype, "
             ":summary, :payload, :prev, :hash, :ver)"
         ),
         {
             "id": event_id,
             "org": organization_id,
             "seq": sequence,
-            "at": values["occurred_at"],
-            "uid": None,
-            "email": values["actor_email"],
-            "rid": None,
-            "action": values["action"],
-            "otype": values["object_type"],
-            "oid": None,
-            "summary": values["summary"],
-            "payload": json.dumps(values["payload"]),
+            "at": datetime(2026, 8, 20, 12, 0, 0),
+            "email": "historique@dubois.demo",
+            "action": "test.historique",
+            "otype": "test",
+            "summary": f"Événement historique {sequence}",
+            "payload": json.dumps({}),
             "prev": previous_hash,
-            "hash": digest,
+            "hash": "à-remplacer",
             "ver": version,
         },
+    )
+    stored_at = connection.execute(
+        text("SELECT occurred_at FROM audit_events WHERE id = :id"), {"id": event_id}
+    ).scalar_one()
+    if isinstance(stored_at, str):
+        stored_at = datetime.fromisoformat(stored_at.replace(" ", "T"))
+
+    digest = _seal(
+        {
+            "event_id": event_id,
+            "organization_id": organization_id,
+            "sequence": sequence,
+            "occurred_at": stored_at.isoformat(),
+            "actor_user_id": None,
+            "actor_email": "historique@dubois.demo",
+            "request_id": None,
+            "action": "test.historique",
+            "object_type": "test",
+            "object_id": None,
+            "summary": f"Événement historique {sequence}",
+            "payload": {},
+            "previous_hash": previous_hash or "",
+        },
+        version,
+    )
+    connection.execute(
+        text("UPDATE audit_events SET hash = :h WHERE id = :id"),
+        {"h": digest, "id": event_id},
     )
     return digest
 
@@ -259,13 +272,12 @@ class TestTheMigrationItself:
 
     @staticmethod
     def _populate_before_migration(database_url: str, version: int) -> None:
-        from metreo_api.services.audit import HASH_SCHEMAS
 
         engine = create_engine(database_url)
         with engine.begin() as connection:
-            columns = [
-                row[1] for row in connection.execute(text("PRAGMA table_info(organizations)"))
-            ]
+            # `inspect` plutôt qu'un PRAGMA : le même test doit tourner sur
+            # les deux moteurs, et PRAGMA n'existe que sur SQLite.
+            columns = [c["name"] for c in inspect(connection).get_columns("organizations")]
             wanted = {
                 "id": "org-mig",
                 "name": "Migration",
@@ -276,8 +288,8 @@ class TestTheMigrationItself:
                 "timezone": "Europe/Brussels",
                 "unit_system": "metric",
                 "is_demo_data": 0,
-                "created_at": "2026-08-20 12:00:00",
-                "updated_at": "2026-08-20 12:00:00",
+                "created_at": datetime(2026, 8, 20, 12, 0, 0),
+                "updated_at": datetime(2026, 8, 20, 12, 0, 0),
             }
             use = {k: v for k, v in wanted.items() if k in columns}
             connection.execute(
@@ -289,24 +301,7 @@ class TestTheMigrationItself:
             )
             previous = None
             for sequence in (1, 2):
-                values = {
-                    "schema_version": version,
-                    "event_id": f"m{sequence}",
-                    "organization_id": "org-mig",
-                    "sequence": sequence,
-                    # `utcnow()` est naïf : le scellé ne porte pas de décalage.
-                    "occurred_at": "2026-08-20T12:00:00",
-                    "actor_user_id": None,
-                    "actor_email": "avant@migration.test",
-                    "request_id": None,
-                    "action": "test.avant",
-                    "object_type": "t",
-                    "object_id": None,
-                    "summary": f"Avant migration {sequence}",
-                    "payload": {},
-                    "previous_hash": previous or "",
-                }
-                digest = str(HASH_SCHEMAS[version](values))
+                event_id = f"m{sequence}"
                 connection.execute(
                     text(
                         "INSERT INTO audit_events (id, organization_id, sequence, occurred_at, "
@@ -314,18 +309,47 @@ class TestTheMigrationItself:
                         "VALUES (:i,:o,:s,:t,:e,:a,:ot,:su,:p,:pr,:h)"
                     ),
                     {
-                        "i": f"m{sequence}",
+                        "i": event_id,
                         "o": "org-mig",
                         "s": sequence,
-                        "t": "2026-08-20 12:00:00",
-                        "e": values["actor_email"],
-                        "a": values["action"],
-                        "ot": values["object_type"],
-                        "su": values["summary"],
+                        "t": datetime(2026, 8, 20, 12, 0, 0),
+                        "e": "avant@migration.test",
+                        "a": "test.avant",
+                        "ot": "t",
+                        "su": f"Avant migration {sequence}",
                         "p": json.dumps({}),
                         "pr": previous,
-                        "h": digest,
+                        "h": "à-remplacer",
                     },
+                )
+                # Sceller à partir de la valeur relue : les deux moteurs ne
+                # rendent pas un horodatage sous la même forme.
+                stored_at = connection.execute(
+                    text("SELECT occurred_at FROM audit_events WHERE id = :i"), {"i": event_id}
+                ).scalar_one()
+                if isinstance(stored_at, str):
+                    stored_at = datetime.fromisoformat(stored_at.replace(" ", "T"))
+                digest = _seal(
+                    {
+                        "event_id": event_id,
+                        "organization_id": "org-mig",
+                        "sequence": sequence,
+                        "occurred_at": stored_at.isoformat(),
+                        "actor_user_id": None,
+                        "actor_email": "avant@migration.test",
+                        "request_id": None,
+                        "action": "test.avant",
+                        "object_type": "t",
+                        "object_id": None,
+                        "summary": f"Avant migration {sequence}",
+                        "payload": {},
+                        "previous_hash": previous or "",
+                    },
+                    version,
+                )
+                connection.execute(
+                    text("UPDATE audit_events SET hash = :h WHERE id = :i"),
+                    {"h": digest, "i": event_id},
                 )
                 previous = digest
         engine.dispose()
