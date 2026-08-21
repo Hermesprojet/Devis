@@ -14,7 +14,8 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from .bounds import check_total
+from .bounds import MAX_LINES_PER_ESTIMATE, check_total
+from .errors import PricingConfigurationError
 from .money import DEFAULT_ROUNDING, Money, RoundingPolicy, canonical_text, money_sum
 from .pricing import (
     Component,
@@ -153,6 +154,14 @@ def compute_estimate(
     Section rows carry no price. Options and variants are priced but kept out of
     the base total; their sum is exposed separately as ``options_total_ht``.
     """
+    # Avant la boucle : la limite doit couper avant le coût, pas après.
+    if len(lines) > MAX_LINES_PER_ESTIMATE:
+        raise PricingConfigurationError(
+            f"{len(lines)} lignes dans une estimation, maximum {MAX_LINES_PER_ESTIMATE}.",
+            count=len(lines),
+            maximum=MAX_LINES_PER_ESTIMATE,
+        )
+
     results: list[EstimateLineResult] = []
     missing: list[str] = []
 

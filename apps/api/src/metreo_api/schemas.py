@@ -16,8 +16,10 @@ from pydantic import (
     ConfigDict,
     EmailStr,
     Field,
+    StringConstraints,
     computed_field,
     field_serializer,
+    model_validator,
 )
 
 from metreo_domain import bounds
@@ -177,18 +179,44 @@ class RegionProfileOut(ApiModel):
 # -- projects --------------------------------------------------------------
 
 
+def project_length(column: str) -> int:
+    """Longueur d'une colonne de `Project`, lue sur le modèle."""
+    from .models import Project
+
+    length = getattr(Project.__table__.columns[column].type, "length", None)
+    if length is None:  # pragma: no cover - colonne Text
+        raise KeyError(f"La colonne {column} ne porte pas de longueur.")
+    return int(length)
+
+
+#: Chaîne obligatoire qui refuse aussi les espaces seuls. `min_length=1`
+#: laissait passer « \u00a0 » ou « " " », qui produit un nom de projet vide à
+#: l'écran.
+NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class ProjectCreate(BaseModel):
-    reference: str = Field(min_length=1, max_length=60)
-    name: str = Field(min_length=1, max_length=255)
-    client_reference: str | None = Field(default=None, max_length=120)
+    """Création d'un projet.
+
+    Les longueurs sont lues sur les colonnes de `Project`, comme celles des
+    prix : les écrire à la main ici et là produit tôt ou tard deux vérités.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reference: NonBlank = Field(max_length=project_length("reference"))
+    name: NonBlank = Field(max_length=project_length("name"))
+    client_reference: str | None = Field(
+        default=None, max_length=project_length("client_reference")
+    )
     description: str | None = None
-    client_name: str | None = Field(default=None, max_length=200)
-    address: str | None = Field(default=None, max_length=255)
-    postal_code: str | None = Field(default=None, max_length=20)
-    city: str | None = Field(default=None, max_length=120)
+    client_name: str | None = Field(default=None, max_length=project_length("client_name"))
+    address: str | None = Field(default=None, max_length=project_length("address"))
+    postal_code: str | None = Field(default=None, max_length=project_length("postal_code"))
+    city: str | None = Field(default=None, max_length=project_length("city"))
     country_code: str = Field(default="BE", min_length=2, max_length=2)
-    region_code: str = Field(default="BE-WAL", max_length=10)
-    market_type: str | None = Field(default=None, max_length=60)
+    region_code: str = Field(default="BE-WAL", max_length=project_length("region_code"))
+    market_type: str | None = Field(default=None, max_length=project_length("market_type"))
     work_categories: list[str] = Field(default_factory=list)
     submission_deadline: datetime | None = None
     currency: str = Field(default="EUR", min_length=3, max_length=3)
@@ -196,15 +224,26 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(default=None, max_length=255)
-    client_reference: str | None = None
+    """Mise à jour d'un projet — mêmes limites que la création.
+
+    Elles n'y étaient pas : `PATCH` acceptait une adresse de dix mille
+    caractères là où `POST` la refusait à 255. La même donnée était donc valide
+    ou non selon le verbe employé.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: NonBlank | None = Field(default=None, max_length=project_length("name"))
+    client_reference: str | None = Field(
+        default=None, max_length=project_length("client_reference")
+    )
     description: str | None = None
-    client_name: str | None = None
-    address: str | None = None
-    postal_code: str | None = None
-    city: str | None = None
-    region_code: str | None = None
-    market_type: str | None = None
+    client_name: str | None = Field(default=None, max_length=project_length("client_name"))
+    address: str | None = Field(default=None, max_length=project_length("address"))
+    postal_code: str | None = Field(default=None, max_length=project_length("postal_code"))
+    city: str | None = Field(default=None, max_length=project_length("city"))
+    region_code: str | None = Field(default=None, max_length=project_length("region_code"))
+    market_type: str | None = Field(default=None, max_length=project_length("market_type"))
     work_categories: list[str] | None = None
     submission_deadline: datetime | None = None
     status: Literal["draft", "studying", "submitted", "won", "lost", "archived"] | None = None
@@ -397,29 +436,107 @@ class ImportCommitOut(BaseModel):
     details: list[dict[str, Any]]
 
 
-class ComponentSpecIn(BaseModel):
-    component_type: Literal["consumption", "output_rate", "rotation", "lump_sum"]
+class _ComponentBase(BaseModel):
+    """Ce que tout composant porte, quel que soit son type."""
+
+    # `extra="forbid"` est le cœur de ce découpage : un composant ne peut plus
+    # porter les champs d'un autre type. Le modèle unique précédent acceptait
+    # `output_rate` sur un forfait ou `distance_km` sur une consommation, et
+    # les ignorait en silence — l'utilisateur croyait avoir paramétré quelque
+    # chose qui n'entrait dans aucun calcul.
+    model_config = ConfigDict(extra="forbid")
+
     label: str = Field(min_length=1, max_length=255)
     resource_kind: Literal[
         "material", "labor", "equipment", "transport", "disposal", "subcontract", "other"
     ] = "other"
-    consumption: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
-    resource_unit_code: str | None = None
-    unit_price: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
+
+
+class ConsumptionComponentIn(_ComponentBase):
+    """Ressource consommée proportionnellement à la quantité du poste."""
+
+    component_type: Literal["consumption"]
+    consumption: Decimal = _bounded(bounds.COEFFICIENT)
+    resource_unit_code: str = Field(min_length=1, max_length=12)
+    unit_price: Decimal = _bounded(bounds.UNIT_PRICE)
     loss_ratio: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
     convert_boq_quantity: bool = False
-    density_value: Decimal | None = _bounded_opt(bounds.DENSITY)
-    density_source: str | None = None
-    output_rate: Decimal | None = _bounded_opt(bounds.OUTPUT_RATE)
-    hourly_rate: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
-    crew_size: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
-    payload_value: Decimal | None = _bounded_opt(bounds.COEFFICIENT)
-    payload_unit_code: str | None = None
+    density_value: Decimal | None = Field(
+        default=None, gt=bounds.DENSITY.minimum, le=bounds.DENSITY.maximum
+    )
+    #: Obligatoire dès qu'une masse volumique est fournie : une tonne facturée
+    #: sans source est une tonne indéfendable devant le client.
+    density_source: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def _density_needs_its_source(self) -> ConsumptionComponentIn:
+        if self.density_value is not None and not (self.density_source or "").strip():
+            raise ValueError(
+                "Une masse volumique doit indiquer sa source (rapport de sol, "
+                "fiche fournisseur, essai). Sans elle, la conversion n'est pas "
+                "justifiable."
+            )
+        if self.density_source and self.density_value is None:
+            raise ValueError("Une source de masse volumique sans valeur n'a pas d'effet.")
+        return self
+
+
+class OutputRateComponentIn(_ComponentBase):
+    """Ressource dont le coût dérive d'un rendement horaire."""
+
+    component_type: Literal["output_rate"]
+    #: Diviseur : strictement positif, sinon la ligne est incalculable.
+    output_rate: Decimal = Field(gt=bounds.OUTPUT_RATE.minimum, le=bounds.OUTPUT_RATE.maximum)
+    hourly_rate: Decimal = _bounded(bounds.UNIT_PRICE)
+    #: Un atelier de zéro personne ne produit rien : strictement positif.
+    crew_size: Decimal | None = Field(default=None, gt=Decimal(0), le=bounds.COEFFICIENT.maximum)
+
+
+class RotationComponentIn(_ComponentBase):
+    """Transport compté en rotations, ou au kilomètre."""
+
+    component_type: Literal["rotation"]
+    #: Diviseur de la quantité : strictement positif.
+    payload_value: Decimal = Field(gt=Decimal(0), le=bounds.COEFFICIENT.maximum)
+    payload_unit_code: str = Field(min_length=1, max_length=12)
     cost_per_rotation: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
     round_up: bool = True
     distance_km: Decimal | None = _bounded_opt(bounds.DISTANCE_KM)
     rate_per_km: Decimal | None = _bounded_opt(bounds.UNIT_PRICE)
-    lump_sum_amount: Decimal | None = _bounded_opt(bounds.TOTAL)
+
+    @model_validator(mode="after")
+    def _distance_and_rate_go_together(self) -> RotationComponentIn:
+        has_distance = self.distance_km is not None
+        has_rate = self.rate_per_km is not None
+        if has_distance != has_rate:
+            # Fournir l'un sans l'autre était silencieusement ignoré : le
+            # kilométrage n'entrait dans aucun calcul et personne ne le voyait.
+            missing = "rate_per_km" if has_distance else "distance_km"
+            raise ValueError(
+                f"« {missing} » manque. La distance et le tarif kilométrique "
+                "vont ensemble : l'un sans l'autre ne produit aucun coût."
+            )
+        if not has_distance and self.cost_per_rotation is None:
+            raise ValueError(
+                "Un transport doit porter soit un coût par rotation, soit une "
+                "distance et un tarif kilométrique."
+            )
+        return self
+
+
+class LumpSumComponentIn(_ComponentBase):
+    """Montant fixe, indépendant de la quantité du poste."""
+
+    component_type: Literal["lump_sum"]
+    lump_sum_amount: Decimal = _bounded(bounds.TOTAL)
+
+
+#: Union discriminée par `component_type`. Pydantic choisit le modèle exact et
+#: refuse tout champ étranger à ce type.
+ComponentSpecIn = Annotated[
+    ConsumptionComponentIn | OutputRateComponentIn | RotationComponentIn | LumpSumComponentIn,
+    Field(discriminator="component_type"),
+]
 
 
 class CompositePriceCreate(BaseModel):

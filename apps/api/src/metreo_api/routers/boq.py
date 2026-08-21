@@ -39,10 +39,38 @@ def _canonical_unit(unit_code: str) -> str:
         ) from exc
 
 
+def _refuse_two_price_sources(price_item_id: str | None, composite_price_id: str | None) -> None:
+    """Un poste tire son prix d'une seule source, ou d'aucune.
+
+    Porter les deux ne veut rien dire : le moteur devrait choisir, et son choix
+    serait arbitraire. Sur une mise à jour, la règle porte sur l'état FINAL du
+    poste — poser un sous-détail sur une ligne qui a déjà un prix de
+    bibliothèque produit exactement la situation interdite, même si la requête
+    ne mentionne qu'un seul des deux champs.
+    """
+    if price_item_id and composite_price_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "conflicting_price_sources",
+                "message": (
+                    "Un poste ne peut pas porter à la fois un prix de "
+                    "bibliothèque et un sous-détail. Retirer l'un des deux."
+                ),
+                "price_item_id": price_item_id,
+                "composite_price_id": composite_price_id,
+            },
+        )
+
+
 def _check_price_links(
     session: Session, organization_id: str, payload: BoqItemCreate | BoqItemUpdate
 ) -> None:
-    """A bill-of-quantities row may only point at prices of its own tenant."""
+    """A bill-of-quantities row may only point at prices of its own tenant.
+
+    Le contrôle d'appartenance rend 404 pour une ressource d'un autre tenant :
+    répondre 403 confirmerait l'existence de l'identifiant.
+    """
     price_item_id = getattr(payload, "price_item_id", None)
     if price_item_id:
         get_owned(session, PriceItem, organization_id, price_item_id, label="Prix")
@@ -137,6 +165,7 @@ def create_item(
     session: Session = Depends(session_scope),
 ) -> BoqItem:
     get_owned(session, BillOfQuantities, context.organization_id, boq_id, label="Bordereau")
+    _refuse_two_price_sources(payload.price_item_id, payload.composite_price_id)
     _check_price_links(session, context.organization_id, payload)
     data = payload.model_dump()
     data["unit_code"] = _canonical_unit(data["unit_code"])
@@ -188,6 +217,7 @@ def bulk_create_items(
     existing = session.scalars(select(BoqItem.sort_index).where(BoqItem.boq_id == boq_id)).all()
     next_index = (max(existing) + 10) if existing else 0
     for offset, entry in enumerate(payload.items):
+        _refuse_two_price_sources(entry.price_item_id, entry.composite_price_id)
         _check_price_links(session, context.organization_id, entry)
         data = entry.model_dump()
         data["unit_code"] = _canonical_unit(data["unit_code"])
@@ -279,6 +309,10 @@ def update_item(
             },
         )
 
+    _refuse_two_price_sources(
+        changes.get("price_item_id", item.price_item_id),
+        changes.get("composite_price_id", item.composite_price_id),
+    )
     _check_price_links(session, context.organization_id, payload)
     if changes.get("unit_code"):
         changes["unit_code"] = _canonical_unit(changes["unit_code"])

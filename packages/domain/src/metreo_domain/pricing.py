@@ -24,7 +24,7 @@ from decimal import Decimal, localcontext
 from enum import Enum
 from typing import Any, Protocol
 
-from .bounds import check_total
+from .bounds import MAX_COMPONENTS_PER_LINE, check_total
 from .errors import InvalidRateError, PricingConfigurationError
 from .money import WORKING_PRECISION, Money, RoundingPolicy, canonical_text, money_sum, to_decimal
 from .units import Density, Quantity, convert, get_unit
@@ -493,6 +493,17 @@ def compute_line_price(
     cost price -> contingency -> margin -> selling price HT -> taxes. Steps with
     a zero rate are still emitted so the reader sees that they were considered.
     """
+    # Vérifié AVANT toute matérialisation : un sous-détail de dix mille
+    # composants ne doit pas être calculé puis refusé, il doit être refusé.
+    if len(components) > MAX_COMPONENTS_PER_LINE:
+        raise PricingConfigurationError(
+            f"{len(components)} composants pour une seule ligne, maximum "
+            f"{MAX_COMPONENTS_PER_LINE}. Au-delà, ce n'est plus un sous-détail "
+            "mais un bordereau : il faut le découper.",
+            count=len(components),
+            maximum=MAX_COMPONENTS_PER_LINE,
+        )
+
     results = tuple(c.compute(quantity, currency) for c in components)
     direct_cost = money_sum([r.amount for r in results], currency)
 
