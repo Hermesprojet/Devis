@@ -47,21 +47,27 @@ phases), `docs/ROADMAP.md` (critères de fin, phase par phase, avec preuve).
 
 ## 4. Commandes à exécuter avant de déclarer terminé
 
-Vérifiées dans ce dépôt ; les valeurs attendues sont l'état actuel, pas un plancher théorique.
+Aucun compteur n'est écrit ici. Une valeur recopiée dans un skill est vraie le jour où on la
+tape et fausse la semaine suivante, et elle est *suivie* — un agent la lit avant de toucher au
+code. La commande est donnée ; sa sortie du jour se lit dans le terminal, jamais dans ce fichier.
+La référence chiffrée vit dans `docs/PHASE1_VERIFICATION.md`, rattachée à un commit précis.
+
+`scripts/check_skills.py` refuse ces valeurs, y compris à l'intérieur d'un bloc de commandes.
 
 ```bash
 source .venv/bin/activate                # l'outillage (pytest, ruff, mypy, alembic) y est installé
 
 # 1. Domaine — déterministe, aucune I/O
-python -m pytest packages/domain/tests -q                 # attendu : 61 passed
+python -m pytest packages/domain/tests -q
 
 # 2. API — base SQLite créée par les vraies migrations (apps/api/tests/conftest.py)
-(cd apps/api && python -m pytest -q)                      # attendu : 86 passed
+(cd apps/api && python -m pytest -q)
 
 # 3. Format, lint, typage (configuration : pyproject.toml à la racine)
-ruff format --check packages/domain apps/api/src apps/api/tests   # 45 files already formatted
-ruff check       packages/domain apps/api/src apps/api/tests      # All checks passed!
-mypy packages/domain/src/metreo_domain apps/api/src/metreo_api    # no issues found in 33 source files
+#    scripts/ en fait partie : il porte le contrôle d'installation propre et celui des skills.
+ruff format --check packages/domain apps/api/src apps/api/tests scripts
+ruff check       packages/domain apps/api/src apps/api/tests scripts
+mypy packages/domain/src/metreo_domain apps/api/src/metreo_api scripts
 
 # 4. Migrations : l'aller-retour complet, jamais seulement `upgrade head`
 mkdir -p var && export METREO_DATABASE_URL="sqlite+pysqlite:///$PWD/var/check.sqlite3"
@@ -91,12 +97,20 @@ Règles d'usage :
 `.github/workflows/ci.yml` — tous bloquants. Pour la liste à jour :
 `python -c "import yaml;[print(j['name']) for j in yaml.safe_load(open('.github/workflows/ci.yml'))['jobs'].values()]"`
 
+La porte de sortie, ce sont **tous** ces jobs, pas les seuls qui ressemblent au travail local.
+Une tranche n'est pas finie tant qu'ils ne sont pas verts sur le dernier SHA.
+
 | Job | Ce qu'il ajoute par rapport au local |
 | --- | --- |
 | `domain` | Installation propre du seul paquet `packages/domain` : une dépendance qui aurait fui vers le domaine casse ici |
-| `api-sqlite` | Format, lint, typage et la suite API sur une machine vierge, sans service |
+| `api-sqlite` | Format, lint, typage — `scripts/` compris — et la suite API sur une machine vierge, sans service |
 | `api-postgres` | PostgreSQL 16 + PostGIS : `upgrade head` → `downgrade base` → `upgrade head`, `seed`, puis **la suite complète** via `METREO_TEST_DATABASE_URL` — sans cette variable la conftest retombe sur SQLite et le job ne prouve rien |
 | `web` | `npm ci` (installation verrouillée), `npm run typecheck`, `npm run build` |
+| `e2e` | Les parcours Playwright contre l'API réelle, pas contre des données simulées |
+| `skills` | Frontmatter, chemins cités, compteurs figés, et le fait que le dossier de vérification nomme un commit qui existe |
+| `clean-install` | Un environnement vierge démarre depuis les seuls manifestes, **et sur les versions qu'ils exigent** — extras compris |
+| `containers` | Les deux images se construisent, ne tournent pas en root et déclarent un point de santé |
+| `audit` | `pip-audit` et `npm audit`, **bloquants** en haute et critique |
 | `secrets` | Refuse un `.env` versionné et les motifs `sk-…`, `AKIA…`, `BEGIN … PRIVATE KEY` |
 
 Une différence SQLite / PostgreSQL (type `Amount` de `apps/api/src/metreo_api/db.py`, contraintes,
