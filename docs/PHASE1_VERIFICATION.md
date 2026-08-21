@@ -29,7 +29,7 @@ n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `4fa98a2` |
+| Dernier commit contrôlé depuis un clone propre | `2bd069f` |
 | Procédure | `make install` puis `make release-gate`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
@@ -38,10 +38,10 @@ n'atteste que le premier.
 
 | | |
 | --- | --- |
-| Commit | `4fa98a2103cf3619eb408f4d50ee3dd5bf93da60` |
-| Abrégé | `4fa98a2` |
-| Fichiers versionnés | 150 |
-| Exécution CI correspondante | [push 32510880239](https://github.com/Hermesprojet/Devis/actions/runs/32510880239) et [pull_request 32510885338](https://github.com/Hermesprojet/Devis/actions/runs/32510885338) — 10/10 chacune |
+| Commit | `2bd069fdc2729b889d5266a47aca0f5ba45e0a5b` |
+| Abrégé | `2bd069f` |
+| Fichiers versionnés | 151 |
+| Exécution CI correspondante | [push 32513245504](https://github.com/Hermesprojet/Devis/actions/runs/32513245504) et [pull_request 32513250676](https://github.com/Hermesprojet/Devis/actions/runs/32513250676) — 10/10 chacune |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -109,8 +109,8 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Types — API | `mypy apps/api/src/metreo_api` | 28 fichiers, aucun problème | ~2 s |
 | Types — scripts | `mypy scripts` | 3 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **356 passed, 7 ignorés** | ~106 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **363 passed** | ~140 s |
+| Tests API sur SQLite | `make test-api` | **359 passed, 7 ignorés** | ~101 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **366 passed** | ~130 s |
 | Migrations aller-retour | `make migrations` | `upgrade head` → `downgrade base` → `upgrade head` | ~3 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
@@ -255,8 +255,23 @@ l'`IntegrityError` n'était interceptée dans aucune route : le service rendu
 remplacer les courses par des interblocages :
 
 ```text
-Organization → PriceBook → PriceBookVersion → Estimate → EstimateVersion
+ligne métier → Organization
 ```
+
+L'organisation vient en **dernier**, parce que c'est `audit.record` qui la
+verrouille pour allouer la séquence d'audit, et qu'on enregistre après l'acte
+qu'on consigne. Aucun chemin ne prend deux lignes métier. La règle pour la
+suite : ne jamais verrouiller `Organization` avant une ligne métier — l'ordre
+serait inversé contre toutes les requêtes existantes, et la course
+deviendrait un interblocage, ce qui est pire puisqu'il échoue même sans
+contention nuisible.
+
+Cet ordre a d'abord été documenté **à l'envers**, avec une justification
+fausse à l'appui. Un commentaire ne se vérifie pas :
+`apps/api/tests/test_lock_order.py` lit l'AST des routes et exige, dans chaque
+fonction qui prend un verrou métier, que ce verrou précède son appel à
+`audit.record`. L'inverser dans `publish_version` fait tomber le test, qui
+nomme la fonction fautive.
 
 | Séquence | Ligne verrouillée |
 | --- | --- |
@@ -279,6 +294,12 @@ verrou rétabli    : 4 passed / 4 passed / 4 passed
 
 Les tests s'ignorent hors PostgreSQL. SQLite sérialise ses écritures : ils y
 passeraient sans rien prouver, ce qui est pire qu'une absence de test.
+
+Mais rien ne distinguait, dans le job PostgreSQL, « quatre tests verts » de
+« quatre tests ignorés » : une variable mal orthographiée les aurait ignorés
+là aussi, en silence. Une étape de CI porte donc sur le fait qu'ils ont
+**tourné**, pas seulement qu'ils n'ont pas échoué — vérifiée dans les deux
+sens, elle lit `4 passed` avec la base et refuse sur `4 skipped` sans elle.
 
 Deux courses voisines sont couvertes au même endroit. Publication contre
 écriture d'un prix : le résultat est séquentiel dans un sens ou dans l'autre,
