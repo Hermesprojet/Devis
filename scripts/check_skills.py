@@ -53,6 +53,18 @@ VOLATILE: tuple[tuple[str, str], ...] = (
         "compteur de fichiers recopié (ruff, mypy)",
     ),
     (r"\b\d+\s+(?:jobs?|skills?|r[ée]visions?|revisions?)\b", "compteur figé"),
+    # L'autre sens de lecture. Les motifs ci-dessus lisent « 61 tests » ; un
+    # tableau, une légende ou une note écrit tout aussi bien « Tests : 61 » ou
+    # « | Tests | 61 | », et la valeur y vieillit exactement pareil.
+    (
+        r"\b(?:tests?|routes?|tables?|jobs?|skills?|fichiers?|files?)\s*[:=|]+\s*\d+",
+        "compteur figé (nom puis nombre)",
+    ),
+    (r"\b(?:ok|succ[èe]s|success)\s*\(\s*\d+\s*\)", "sortie d'outil recopiée"),
+    (
+        r"\b\d+\s+(?:r[ée]ussis|r[ée]ussites|[ée]chou[ée]s|[ée]checs|ignor[ée]s)\b",
+        "sortie de test recopiée",
+    ),
     (r"\b[0-9a-f]{12}\b", "identifiant de révision (Alembic ou commit)"),
 )
 

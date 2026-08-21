@@ -81,6 +81,13 @@ class TestVolatileCounters:
             pytest.param("Le schéma porte 19 tables.", id="tables"),
             pytest.param("Le workflow comporte 5 jobs.", id="jobs"),
             pytest.param("La tête Alembic est e2be18fcac1b.", id="révision"),
+            # L'autre sens de lecture : le nom puis le nombre.
+            pytest.param("Tests : 61", id="nom-puis-nombre"),
+            pytest.param("| Tests | 61 |", id="cellule-de-tableau"),
+            pytest.param("Routes = 52", id="avec-égal"),
+            pytest.param("La suite rend ok (61).", id="ok-parenthèses"),
+            pytest.param("Résultat : 61 réussis.", id="réussis"),
+            pytest.param("Il reste 3 ignorés.", id="ignorés"),
         ],
     )
     def test_a_frozen_figure_in_prose_is_refused(self, tmp_path: Path, line: str) -> None:
