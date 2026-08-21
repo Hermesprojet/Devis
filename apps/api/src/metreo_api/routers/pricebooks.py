@@ -36,6 +36,7 @@ from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import audit, price_import
 from ..services.composites import spec_from_row, validate_spec
+from ..services.price_contract import as_http_detail, validate_price_row
 from ..services.tenant import get_owned, owned_query
 
 router = APIRouter(prefix="/price-books", tags=["price-books"])
@@ -252,21 +253,20 @@ def create_item(
         session, PriceBookVersion, context.organization_id, version_id, label="Version"
     )
     _refuse_if_published(version)
-    from metreo_domain.errors import UnknownUnitError
-    from metreo_domain.units import get_unit
 
-    try:
-        unit_code = get_unit(payload.unit_code).code
-    except UnknownUnitError as exc:
+    # Même contrat que l'import : une règle ajoutée s'applique aux deux, et la
+    # prévisualisation ne peut plus annoncer valide ce que la saisie refuse.
+    outcome = validate_price_row(payload.model_dump())
+    if not outcome.is_valid:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "unknown_unit", "message": exc.message},
-        ) from exc
+            detail=as_http_detail(outcome.errors),
+        )
 
     item = PriceItem(
         organization_id=context.organization_id,
         price_book_version_id=version_id,
-        **{**payload.model_dump(), "unit_code": unit_code},
+        **outcome.normalized,
     )
     session.add(item)
     try:

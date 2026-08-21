@@ -29,6 +29,31 @@ from metreo_domain.units import get_unit
 
 from ..models import PriceItem
 
+#: Libellés français acceptés pour le type de ressource. La normalisation
+#: relève du contrat, comme les alias d'unité : un fichier rédigé en français
+#: doit être compris de la même façon quel que soit le chemin d'entrée.
+RESOURCE_KIND_ALIASES = {
+    "materiau": "material",
+    "matériau": "material",
+    "materiaux": "material",
+    "matériaux": "material",
+    "main_doeuvre": "labor",
+    "main-d'oeuvre": "labor",
+    "main d'oeuvre": "labor",
+    "mo": "labor",
+    "engin": "equipment",
+    "engins": "equipment",
+    "materiel": "equipment",
+    "matériel": "equipment",
+    "transport": "transport",
+    "evacuation": "disposal",
+    "évacuation": "disposal",
+    "traitement": "disposal",
+    "sous_traitance": "subcontract",
+    "sous-traitance": "subcontract",
+    "divers": "other",
+}
+
 #: Valeurs acceptées pour les colonnes énumérées.
 VALID_RESOURCE_KINDS = frozenset(
     {"material", "labor", "equipment", "transport", "disposal", "subcontract", "other"}
@@ -88,6 +113,14 @@ class ValidationOutcome:
     @property
     def is_valid(self) -> bool:
         return not self.errors
+
+
+def _clean(value: Any) -> str | None:
+    """Dépouille une valeur textuelle ; une chaîne vide devient `None`."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _check_required(value: Any, column: str, outcome: ValidationOutcome) -> str | None:
@@ -223,6 +256,31 @@ def _check_lead_time(value: Any, outcome: ValidationOutcome) -> int | None:
     return int(parsed)
 
 
+def _check_date(value: Any, column: str, outcome: ValidationOutcome) -> date | None:
+    """Normalise une date, quelle que soit son origine.
+
+    Pydantic rend un `date`. Le staging JSON rend une chaîne ISO — le passage
+    par la base a perdu le type. Une chaîne illisible doit produire une erreur
+    de champ ici, et non une `ValueError` plus loin dans `_to_columns()`, où
+    elle deviendrait un 500.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError:
+        outcome.errors.append(
+            FieldError(
+                column,
+                "invalid_date",
+                f"« {value} » n'est pas une date valide (format attendu : AAAA-MM-JJ).",
+            )
+        )
+        return None
+
+
 def _check_date_range(
     valid_from: date | None, valid_to: date | None, outcome: ValidationOutcome
 ) -> None:
@@ -255,6 +313,7 @@ def validate_price_row(data: dict[str, Any], *, default_currency: str = "EUR") -
     currency = _check_currency(data.get("currency"), default_currency, outcome)
 
     resource_kind = (str(data.get("resource_kind") or "material")).strip().lower()
+    resource_kind = RESOURCE_KIND_ALIASES.get(resource_kind, resource_kind)
     _check_choice(resource_kind, "resource_kind", VALID_RESOURCE_KINDS, outcome)
     status = (str(data.get("status")).strip() if data.get("status") else None) or "active"
     _check_choice(status, "status", VALID_STATUS, outcome)
@@ -272,7 +331,9 @@ def validate_price_row(data: dict[str, Any], *, default_currency: str = "EUR") -
         data.get("min_quantity"), "min_quantity", bounds.QUANTITY, outcome
     )
     lead_time_days = _check_lead_time(data.get("lead_time_days"), outcome)
-    _check_date_range(data.get("valid_from"), data.get("valid_to"), outcome)
+    valid_from = _check_date(data.get("valid_from"), "valid_from", outcome)
+    valid_to = _check_date(data.get("valid_to"), "valid_to", outcome)
+    _check_date_range(valid_from, valid_to, outcome)
 
     if not outcome.is_valid:
         return outcome
@@ -280,22 +341,36 @@ def validate_price_row(data: dict[str, Any], *, default_currency: str = "EUR") -
     outcome.normalized = {
         "code": code,
         "label": label,
-        "family": data.get("family"),
+        "family": _clean(data.get("family")),
         "resource_kind": resource_kind,
         "unit_code": unit_code,
         "unit_price": unit_price,
         "currency": currency,
-        "supplier_name": data.get("supplier_name"),
-        "region_code": data.get("region_code"),
-        "valid_from": data.get("valid_from"),
-        "valid_to": data.get("valid_to"),
+        "supplier_name": _clean(data.get("supplier_name")),
+        "region_code": _clean(data.get("region_code")),
+        "valid_from": valid_from,
+        "valid_to": valid_to,
         "min_quantity": min_quantity,
         "lead_time_days": lead_time_days,
-        "source": data.get("source"),
-        "conditions": data.get("conditions"),
-        "indexation": data.get("indexation"),
+        "source": _clean(data.get("source")),
+        "conditions": _clean(data.get("conditions")),
+        "indexation": _clean(data.get("indexation")),
         "status": status,
         "confidence": confidence,
-        "notes": data.get("notes"),
+        "notes": _clean(data.get("notes")),
     }
     return outcome
+
+
+def as_http_detail(errors: list[FieldError]) -> dict[str, Any]:
+    """Traduit des erreurs de contrat en corps d'erreur HTTP.
+
+    Un seul adaptateur, pour que la saisie manuelle et l'import rendent la
+    même forme : un code stable et la liste des champs fautifs. Le client peut
+    ainsi surligner les mêmes champs, quelle que soit l'origine de la donnée.
+    """
+    return {
+        "code": "invalid_price_row",
+        "message": "La ligne de prix comporte des valeurs refusées.",
+        "errors": [e.to_dict() for e in errors],
+    }

@@ -24,9 +24,8 @@ from sqlalchemy.orm import Session
 
 from metreo_domain import bounds
 from metreo_domain.bounds import OutOfBoundsError
-from metreo_domain.errors import DomainError, UnknownUnitError
+from metreo_domain.errors import DomainError
 from metreo_domain.money import to_decimal
-from metreo_domain.units import get_unit
 
 from ..models import ImportBatch, ImportBatchRow, PriceItem
 from .price_contract import validate_price_row
@@ -75,27 +74,6 @@ VALID_RESOURCE_KINDS = {
     "disposal",
     "subcontract",
     "other",
-}
-_RESOURCE_KIND_FR = {
-    "materiau": "material",
-    "matériau": "material",
-    "materiaux": "material",
-    "matériaux": "material",
-    "main_doeuvre": "labor",
-    "main-d'oeuvre": "labor",
-    "main d'oeuvre": "labor",
-    "mo": "labor",
-    "engin": "equipment",
-    "engins": "equipment",
-    "materiel": "equipment",
-    "matériel": "equipment",
-    "transport": "transport",
-    "evacuation": "disposal",
-    "évacuation": "disposal",
-    "traitement": "disposal",
-    "sous_traitance": "subcontract",
-    "sous-traitance": "subcontract",
-    "divers": "other",
 }
 
 
@@ -269,6 +247,23 @@ def _parse_date(value: str, column: str, errors: list[RowError]) -> date | None:
     return None
 
 
+def _serialise_for_staging(normalized: dict[str, Any]) -> dict[str, Any]:
+    """Rend la ligne normalisée stockable en JSON.
+
+    Les `Decimal` et les `date` ne survivent pas à un aller-retour JSON : ils
+    sont écrits en texte, et le contrat les relira à la confirmation.
+    """
+    serialised: dict[str, Any] = {}
+    for key, value in normalized.items():
+        if isinstance(value, Decimal):
+            serialised[key] = str(value)
+        elif isinstance(value, date):
+            serialised[key] = value.isoformat()
+        else:
+            serialised[key] = value
+    return serialised
+
+
 def parse_csv(
     payload: bytes,
     *,
@@ -322,113 +317,14 @@ def parse_csv(
         if not any(v for v in values.values()):
             continue  # blank line
 
-        code = values.get("code", "")
-        if not code:
-            errors.append(RowError("code", "required", "Le code est obligatoire."))
-        label = values.get("label", "")
-        if not label:
-            errors.append(RowError("label", "required", "Le libellé est obligatoire."))
+        # Toute règle métier vit dans le contrat partagé. Ce qui reste ici est
+        # propre au CSV : décodage, séparateur, correspondance des colonnes,
+        # doublons DANS LE FICHIER — que le contrat ne peut pas voir, n'ayant
+        # qu'une ligne sous les yeux.
+        outcome = validate_price_row(values, default_currency=default_currency)
+        errors = [RowError(e.column, e.code, e.message) for e in outcome.errors]
 
-        unit_code = values.get("unit_code", "")
-        canonical_unit = None
-        if not unit_code:
-            errors.append(RowError("unit_code", "required", "L'unité est obligatoire."))
-        else:
-            try:
-                canonical_unit = get_unit(unit_code).code
-            except UnknownUnitError:
-                errors.append(
-                    RowError(
-                        "unit_code",
-                        "unknown_unit",
-                        f"Unité « {unit_code} » inconnue. Unités acceptées: m, m2, m3, t, kg, h, pce, fft…",
-                    )
-                )
-
-        price = _parse_decimal(
-            values.get("unit_price", ""), "unit_price", errors, bound=bounds.UNIT_PRICE
-        )
-        if price is None and not any(e.column == "unit_price" for e in errors):
-            errors.append(RowError("unit_price", "required", "Le prix unitaire est obligatoire."))
-        elif price is not None and price < 0:
-            errors.append(
-                RowError(
-                    "unit_price", "negative_price", "Le prix unitaire ne peut pas être négatif."
-                )
-            )
-
-        currency = (values.get("currency") or default_currency).upper()
-        if len(currency) != 3 or not currency.isalpha():
-            errors.append(
-                RowError("currency", "invalid_currency", f"Devise « {currency} » invalide.")
-            )
-
-        resource_kind_raw = (values.get("resource_kind") or "material").strip().lower()
-        resource_kind = _RESOURCE_KIND_FR.get(resource_kind_raw, resource_kind_raw)
-        if resource_kind not in VALID_RESOURCE_KINDS:
-            errors.append(
-                RowError(
-                    "resource_kind",
-                    "invalid_resource_kind",
-                    f"Type de ressource « {resource_kind_raw} » inconnu.",
-                )
-            )
-            resource_kind = "material"
-
-        valid_from = _parse_date(values.get("valid_from", ""), "valid_from", errors)
-        valid_to = _parse_date(values.get("valid_to", ""), "valid_to", errors)
-        if valid_from and valid_to and valid_to < valid_from:
-            errors.append(
-                RowError("valid_to", "invalid_range", "La date de fin précède la date de début.")
-            )
-
-        min_quantity = _parse_decimal(
-            values.get("min_quantity", ""), "min_quantity", errors, bound=bounds.QUANTITY
-        )
-        lead_time_raw = values.get("lead_time_days", "")
-        lead_time: int | None = None
-        if lead_time_raw:
-            try:
-                as_decimal = Decimal(lead_time_raw.replace(",", "."))
-            except (InvalidOperation, ValueError):
-                errors.append(
-                    RowError(
-                        "lead_time_days", "invalid_number", f"Délai « {lead_time_raw} » invalide."
-                    )
-                )
-            else:
-                # Un délai est un nombre entier de jours. Tronquer 1,5 en 1
-                # produit une donnée fausse que personne ne verra jamais :
-                # mieux vaut refuser la ligne et laisser corriger.
-                if not as_decimal.is_finite() or as_decimal != as_decimal.to_integral_value():
-                    errors.append(
-                        RowError(
-                            "lead_time_days",
-                            "not_an_integer",
-                            f"Délai « {lead_time_raw} » : un nombre entier de jours est attendu.",
-                        )
-                    )
-                elif as_decimal < 0:
-                    errors.append(
-                        RowError("lead_time_days", "negative", "Un délai ne peut pas être négatif.")
-                    )
-                else:
-                    lead_time = int(as_decimal)
-
-        for column in (
-            "code",
-            "label",
-            "family",
-            "supplier_name",
-            "region_code",
-            "source",
-            "indexation",
-        ):
-            cell = code if column == "code" else values.get(column)
-            _check_length(cell, column, errors)
-        _check_choice(values.get("status"), "status", VALID_STATUS, errors)
-        _check_choice(values.get("confidence"), "confidence", VALID_CONFIDENCE, errors)
-
+        code = values.get("code", "").strip()
         duplicate_in_file = False
         if code:
             if code in seen_codes:
@@ -443,31 +339,11 @@ def parse_csv(
             else:
                 seen_codes[code] = line_number
 
-        normalized = (
-            {
-                "code": code,
-                "label": label,
-                "family": values.get("family") or None,
-                "resource_kind": resource_kind,
-                "unit_code": canonical_unit,
-                "unit_price": str(price) if price is not None else None,
-                "currency": currency,
-                "supplier_name": values.get("supplier_name") or None,
-                "region_code": values.get("region_code") or None,
-                "valid_from": valid_from.isoformat() if valid_from else None,
-                "valid_to": valid_to.isoformat() if valid_to else None,
-                "min_quantity": str(min_quantity) if min_quantity is not None else None,
-                "lead_time_days": lead_time,
-                "source": values.get("source") or None,
-                "conditions": values.get("conditions") or None,
-                "indexation": values.get("indexation") or None,
-                "status": values.get("status") or "active",
-                "confidence": values.get("confidence") or "declared",
-                "notes": values.get("notes") or None,
-            }
-            if not errors
-            else None
-        )
+        # La ligne de staging porte les valeurs NORMALISÉES, pas les cellules
+        # brutes : « m³ » y devient « m3 » et « eur » devient « EUR ». Stocker
+        # le brut obligerait la confirmation à renormaliser, et les deux
+        # normalisations finiraient par diverger.
+        normalized = _serialise_for_staging(outcome.normalized) if not errors else None
 
         rows.append(
             ParsedRow(
@@ -598,7 +474,8 @@ def commit_batch(
             continue
         data = dict(row.normalized)
 
-        late_errors = validate_normalized(data)
+        outcome = validate_price_row(data)
+        late_errors = [RowError(e.column, e.code, e.message) for e in outcome.errors]
         if late_errors:
             rejected_at_commit.append(
                 {
@@ -611,6 +488,10 @@ def commit_batch(
             details.append(rejected_at_commit[-1])
             continue
 
+        # Écrire ce que le CONTRAT a normalisé, pas le dictionnaire d'origine.
+        # Sans cela, « m³ », « eur » et les espaces de bordure atteignaient les
+        # colonnes tels quels, malgré une validation qui les avait corrigés.
+        data = outcome.normalized
         code = data["code"]
         current = existing.get(code)
 
@@ -661,27 +542,38 @@ def commit_batch(
 
 
 def _to_columns(data: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "code": data["code"],
-        "label": data["label"],
-        "family": data.get("family"),
-        "resource_kind": data.get("resource_kind") or "material",
-        "unit_code": data["unit_code"],
-        "unit_price": Decimal(data["unit_price"]),
-        "currency": data.get("currency") or "EUR",
-        "supplier_name": data.get("supplier_name"),
-        "region_code": data.get("region_code"),
-        "valid_from": date.fromisoformat(data["valid_from"]) if data.get("valid_from") else None,
-        "valid_to": date.fromisoformat(data["valid_to"]) if data.get("valid_to") else None,
-        "min_quantity": Decimal(data["min_quantity"]) if data.get("min_quantity") else None,
-        "lead_time_days": data.get("lead_time_days"),
-        "source": data.get("source"),
-        "conditions": data.get("conditions"),
-        "indexation": data.get("indexation"),
-        "status": data.get("status") or "active",
-        "confidence": data.get("confidence") or "declared",
-        "notes": data.get("notes"),
-    }
+    """Projette une ligne **déjà normalisée par le contrat** vers les colonnes.
+
+    Aucune conversion défensive ici, et surtout aucun `date.fromisoformat` :
+    une chaîne illisible lèverait une `ValueError` à l'écriture, donc un 500,
+    alors qu'elle doit produire une erreur de champ dans le contrat. Cette
+    fonction ne fait plus que renommer et recopier.
+    """
+    return {key: data[key] for key in _COLUMN_FIELDS}
+
+
+#: Champs portés par une ligne de prix normalisée, dans l'ordre des colonnes.
+_COLUMN_FIELDS = (
+    "code",
+    "label",
+    "family",
+    "resource_kind",
+    "unit_code",
+    "unit_price",
+    "currency",
+    "supplier_name",
+    "region_code",
+    "valid_from",
+    "valid_to",
+    "min_quantity",
+    "lead_time_days",
+    "source",
+    "conditions",
+    "indexation",
+    "status",
+    "confidence",
+    "notes",
+)
 
 
 def batch_report(batch: ImportBatch, meta: dict[str, Any] | None = None) -> dict[str, Any]:

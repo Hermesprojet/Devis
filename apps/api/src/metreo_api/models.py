@@ -291,6 +291,27 @@ class PriceBookVersion(TimestampMixin, Base):
 class PriceItem(TimestampMixin, Base):
     __tablename__ = "price_items"
     __table_args__ = (
+        CheckConstraint(
+            "resource_kind IN ('material','labor','equipment','transport',"
+            "'disposal','subcontract','other')",
+            name="ck_price_item_resource_kind",
+        ),
+        CheckConstraint(
+            "status IN ('active','draft','archived','superseded')",
+            name="ck_price_item_status",
+        ),
+        CheckConstraint(
+            "confidence IN ('declared','quoted','contracted','estimated')",
+            name="ck_price_item_confidence",
+        ),
+        CheckConstraint(
+            "valid_from IS NULL OR valid_to IS NULL OR valid_to >= valid_from",
+            name="ck_price_item_validity_range",
+        ),
+        CheckConstraint(
+            "lead_time_days IS NULL OR (lead_time_days >= 0 AND lead_time_days <= 3650)",
+            name="ck_price_item_lead_time",
+        ),
         UniqueConstraint("price_book_version_id", "code", name="uq_priceitem_version_code"),
         Index("ix_price_items_org_family", "organization_id", "family"),
     )

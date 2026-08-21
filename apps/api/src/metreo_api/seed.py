@@ -349,7 +349,12 @@ def _seed_price_book(session: Session, organization: Organization) -> PriceBookV
                 region_code=organization.region_code,
                 valid_from=date(2026, 1, 1),
                 source=DEMO_SOURCE,
-                confidence="demo",
+                # `confidence` dit d'où vient le prix — déclaré, coté,
+                # contractualisé, estimé. Le caractère fictif est porté par
+                # `is_demo_data`, et confondre les deux fabriquait une valeur
+                # « demo » qu'aucun contrat n'accepte : le jeu de démonstration
+                # écrivait ce que l'API aurait refusé.
+                confidence="declared",
                 is_demo_data=True,
             )
         )
