@@ -250,21 +250,25 @@ jobs:
       - name: Dépendances Python
         run: |
           python -m pip install --upgrade pip pip-audit
-          pip install ./packages/domain "./apps/api[dev,postgres]"
-          # Le rapport est consigné dans les journaux du job. Il ne fait pas
-          # échouer la construction aujourd'hui : les avis en cours exigent des
-          # montées de version majeures, tranchées séparément et testées — voir
-          # docs/PHASE1_VERIFICATION.md, section « Vulnérabilités connues ».
-          pip-audit --progress-spinner off || true
+          # Bloquant. Un rapport consigné mais non bloquant laisse une
+          # vulnérabilité critique passer avec une CI verte : la seule
+          # différence entre « surveillé » et « ignoré » est le code de sortie.
+          pip-audit -r constraints/api.txt --progress-spinner off
       - name: Dépendances JavaScript
         working-directory: apps/web
         run: |
           npm ci
-          npm audit || true
-      - name: Rappel
+          # `--audit-level=high` ne fait échouer que sur haute et critique : les
+          # avis modérés sont affichés sans bloquer une livraison.
+          npm audit --audit-level=high
+      - name: Exceptions en vigueur
         run: |
-          echo "::notice::Rapport consigné, non bloquant. La montée de Next.js"
-          echo "::notice::vers 16.3 est suivie dans docs/PHASE1_VERIFICATION.md."
+          # Aucune exception aujourd'hui. Si une correction devient impossible
+          # à court terme, l'exception se déclare ici avec son identifiant
+          # d'avis, sa justification, son responsable et sa date d'expiration —
+          # jamais par un `|| true` qui vaut pour toutes les vulnérabilités,
+          # y compris celles qui n'existent pas encore.
+          echo "Aucune exception de vulnérabilité en vigueur."
 
   secrets:
     name: Aucun secret commité

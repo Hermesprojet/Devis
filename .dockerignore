@@ -1,0 +1,49 @@
+# Ce qui n'a rien à faire dans un contexte de construction d'image : secrets,
+# environnements locaux, artefacts et historique. Les exclure réduit la taille
+# du contexte, accélère la construction, et surtout évite qu'un fichier local
+# se retrouve dans une couche.
+
+.git
+.github
+.gitignore
+
+# Environnements et dépendances : reconstruits dans l'image, jamais copiés.
+.venv
+venv
+node_modules
+**/node_modules
+.next
+**/.next
+*.egg-info
+__pycache__
+**/__pycache__
+.mypy_cache
+.ruff_cache
+.pytest_cache
+*.pyc
+
+# Secrets. .env.example est versionné et sans valeur, mais l'image n'en a pas
+# l'usage non plus.
+.env
+.env.*
+*.pem
+*.key
+
+# Bases locales et stockage.
+var
+storage
+*.sqlite3
+*.db
+
+# Résultats de tests et rapports.
+test-results
+playwright-report
+coverage
+htmlcov
+.coverage
+tsconfig.tsbuildinfo
+
+# Éditeurs et système.
+.idea
+.vscode
+.DS_Store
