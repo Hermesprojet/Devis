@@ -16,7 +16,7 @@
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `26684e8` |
+| Dernier commit contrôlé depuis un clone propre | `5193c74` |
 | Procédure | `make install` puis `make verify` puis `make e2e`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | voir `alembic heads` — trois révisions à ce jour, la dernière ajoutant les contraintes CHECK sur les prix |
@@ -25,10 +25,10 @@
 
 | | |
 | --- | --- |
-| Commit | `26684e8cfd09e1ba8e50af002785aa77308b7df0` |
-| Abrégé | `26684e8` |
-| Fichiers versionnés | 125 |
-| Exécution CI correspondante | [32424127796](https://github.com/Hermesprojet/Devis/actions/runs/32424127796) — 10 jobs verts |
+| Commit | `5193c743e948111bce4eed46be8ce954d6696e3e` |
+| Abrégé | `5193c74` |
+| Fichiers versionnés | 142 |
+| Exécution CI correspondante | [push 32472493603](https://github.com/Hermesprojet/Devis/actions/runs/32472493603) et [pull_request 32472496431](https://github.com/Hermesprojet/Devis/actions/runs/32472496431) — 10/10 chacune |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
