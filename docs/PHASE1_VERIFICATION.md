@@ -16,19 +16,19 @@
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `5193c74` |
+| Dernier commit contrôlé depuis un clone propre | `eb4c1be` |
 | Procédure | `make install` puis `make verify` puis `make e2e`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
-| Tête Alembic | voir `alembic heads` — trois révisions à ce jour, la dernière ajoutant les contraintes CHECK sur les prix |
+| Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
 
 ## Commit contrôlé depuis un clone propre
 
 | | |
 | --- | --- |
-| Commit | `5193c743e948111bce4eed46be8ce954d6696e3e` |
-| Abrégé | `5193c74` |
-| Fichiers versionnés | 142 |
-| Exécution CI correspondante | [push 32472493603](https://github.com/Hermesprojet/Devis/actions/runs/32472493603) et [pull_request 32472496431](https://github.com/Hermesprojet/Devis/actions/runs/32472496431) — 10/10 chacune |
+| Commit | `eb4c1beff136c77af928ed88302a7a27d3f04e90` |
+| Abrégé | `eb4c1be` |
+| Fichiers versionnés | 146 |
+| Exécution CI correspondante | [push 32479313612](https://github.com/Hermesprojet/Devis/actions/runs/32479313612) et [pull_request 32479317234](https://github.com/Hermesprojet/Devis/actions/runs/32479317234) — 10/10 chacune |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -73,25 +73,32 @@ commande et s'arrête au premier échec.
 | Étape | Commande | Résultat | Durée |
 | --- | --- | --- | --- |
 | Format et lint Python | `make lint` | `All checks passed!` | < 1 s |
-| Types — domaine | `mypy packages/domain/src/metreo_domain` | 6 fichiers, aucun problème | ~1 s |
-| Types — API | `mypy apps/api/src/metreo_api` | 27 fichiers, aucun problème | ~2 s |
-| Tests du domaine | `make test-domain` | **121 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **288 passed, 3 ignorés** | ~110 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **291 passed** | ~120 s |
+| Types — domaine | `mypy packages/domain/src/metreo_domain` | 7 fichiers, aucun problème | ~1 s |
+| Types — API | `mypy apps/api/src/metreo_api` | 28 fichiers, aucun problème | ~2 s |
+| Types — scripts | `mypy scripts` | 3 fichiers, aucun problème | < 1 s |
+| Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
+| Tests API sur SQLite | `make test-api` | **323 passed, 3 ignorés** | ~115 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **326 passed** | ~150 s |
 | Migrations aller-retour | `make migrations` | `upgrade head` → `downgrade base` → `upgrade head` | ~3 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
-| Installation depuis les manifestes | `make clean-install` | 33 chemins, 47 schémas | ~25 s |
+| Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
 | Contrôle des skills | `make skills` | `8 skills conformes.` | < 1 s |
 | Aucun secret commité | `make secrets` | `aucun secret évident` | < 1 s |
 | Composition Docker | `make compose-config` | `docker compose : valide` | ~1 s |
 | Types du front | `make web-typecheck` | `tsc --noEmit` sans erreur | ~2 s |
 | Build de production | `make web-build` | 9 routes compilées | ~3 s |
-| Parcours navigateur | `make e2e` | **15 passed** | ~52 s |
+| Parcours navigateur | `make e2e` | **15 passed** | ~66 s |
 
 Les tests API tournent **réellement** sur PostgreSQL lorsque
 `METREO_TEST_DATABASE_URL` est défini : chaque test obtient son propre schéma.
 Sans cette variable, la suite retombe sur SQLite et `make test-api-postgres`
 l'annonce explicitement plutôt que de passer en silence.
+
+Conséquence sur la lecture du tableau : la variable passée à `make verify`
+vaut pour ses deux étapes API, qui ont donc toutes deux tourné sur
+PostgreSQL — **326 passed** chacune. Le chiffre SQLite vient d'une exécution
+séparée du même clone, sans la variable ; les trois tests ignorés y sont les
+tests propres à PostgreSQL, qui refusent de faire semblant.
 
 ```bash
 make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
@@ -110,6 +117,40 @@ installaient une liste de paquets écrite à la main — contenant
 jeu de dépendances qui n'était pas celui du dépôt. Les deux sont corrigés, et
 la CI installe désormais `./apps/api` avec ses extras, si bien qu'un manque
 dans `pyproject.toml` casse la CI plutôt que le premier `git clone`.
+
+Le contrôle rejoué au commit ci-dessus en a trouvé un second : `make
+migrations` échouait sur un clone neuf. L'URL par défaut désigne
+`./var/metreo.sqlite3`, `var/` n'est pas versionné, et SQLite ne crée pas le
+répertoire — il signale « unable to open database file », un message qui ne
+nomme ni le chemin ni ce qui manque. L'application le crée désormais
+elle-même, à l'ouverture du moteur comme au démarrage d'Alembic.
+
+## Versions réellement installées
+
+Démarrer ne prouve rien sur les versions : une application démarre très bien
+sur une version antérieure à la borne qu'elle déclare, rien n'obligeant un
+import à traverser le code qui a besoin de cette borne. `make clean-install`
+ne s'arrête donc plus au démarrage.
+
+| Contrôle | Ce qu'il attrape |
+| --- | --- |
+| Chaque épingle du verrou est installée à la version épinglée | un verrou périmé, citant un paquet que plus rien n'installe |
+| Chaque distribution installée figure au verrou | une dépendance transitive non figée, qui flotte au gré des publications amont |
+| Chaque exigence des manifestes est satisfaite par la version posée | une borne déclarée mais non respectée |
+| Le parcours suit les extras | `pydantic[email]` doit mener à `email-validator` — c'est là que le défaut d'origine se logeait |
+
+Les deux modes d'échec du verrou ont été falsifiés sur une exécution réelle,
+et non seulement raisonnés : une épingle sans installation correspondante et
+une dépendance transitive retirée du verrou sont toutes deux refusées. Le
+parcours de clôture reçoit un résolveur plutôt que d'interroger
+l'environnement, ce qui le rend vérifiable sur un graphe construit —
+`apps/api/tests/test_dependency_closure.py` le met en défaut sur une version
+trop ancienne, une version au-delà du plafond, une exigence absente, un
+extra dont la dépendance manque, un extra de racine, un cycle et deux noms
+qui ne diffèrent que par leur normalisation.
+
+`packaging` n'est installé qu'après le relevé, pour ne pas fausser la clôture
+mesurée ; ce n'est pas une dépendance du produit.
 
 ## Vulnérabilités des dépendances
 
@@ -133,6 +174,11 @@ transitives de Next, relevées par des `overrides` ciblés dans
 
 Une migration majeure vers Next 16 reste une tranche à part, avec analyse des
 changements incompatibles — elle n'est plus imposée par la sécurité.
+
+**Déploiement bloqué jusqu'à 15.5.24.** Un correctif critique annoncé pour le
+26 août 2026 n'est pas encore publié : au jour de cette vérification, le tag
+npm `backport` pointe toujours 15.5.23 (`npm view next dist-tags`). Rien ne
+part en production avant que cette version soit installée et la CI rejouée.
 
 ### Exposition réellement mesurée
 
@@ -202,7 +248,7 @@ annulant les exécutions obsolètes d'une même référence :
 | Web | types et build de production |
 | Parcours web (Playwright) | les écrans fonctionnent contre l'API réelle |
 | Skills du dépôt | frontmatter, chemins cités, absence de données volatiles |
-| Installation depuis les manifestes | un environnement vierge démarre sans paquet implicite |
+| Installation depuis les manifestes | un environnement vierge démarre, et sur les versions que les manifestes exigent |
 | Images Docker | construction, UID effectif non nul, point de santé |
 | Vulnérabilités des dépendances | `pip-audit` et `npm audit`, **bloquants** en haute et critique |
 | Aucun secret commité | pas de `.env` versionné, pas de motif de secret |
@@ -226,7 +272,7 @@ annulant les exécutions obsolètes d'une même référence :
 
 | Garantie | Preuve |
 | --- | --- |
-| 401 / 403 / 404 distingués sur chaque route montée | `apps/api/tests/test_authorization_matrix.py` — 41 routes en 401, 29 en 403, 28 en 404 |
+| 401 / 403 / 404 distingués sur chaque route montée | `apps/api/tests/test_authorization_matrix.py` — 52 routes montées, 42 en 401, 30 en 403, 29 en 404 |
 | Une route ajoutée sans décision d'autorisation casse la suite | `test_every_mounted_route_is_classified` |
 | Identifiants imbriqués d'un autre tenant refusés | `test_a_child_of_another_tenant_is_not_reachable_through_an_own_parent` |
 | Décimaux identiques sur SQLite et PostgreSQL | `apps/api/tests/test_price_engine_guarantees.py` |
@@ -269,9 +315,11 @@ annulant les exécutions obsolètes d'une même référence :
 - **Colonnes décimales à 10 décimales.** `NUMERIC(28, 10)` ; un total non
   arrondi de 28 chiffres significatifs n'y tient pas. La précision complète vit
   dans l'instantané JSON de la version gelée, qui fait foi.
-- **`apps/worker/`, `packages/contracts/`, `packages/config/`, `scripts/`** ne
-  contiennent qu'un `README.md` décrivant leur rôle futur — sauf `scripts/`, qui
-  porte désormais `check_skills.py`.
+- **`apps/worker/`, `packages/contracts/`, `packages/config/`** ne contiennent
+  qu'un `README.md` décrivant leur rôle futur. `scripts/` porte désormais du
+  code — `check_skills.py`, `check_clean_install.py`,
+  `verify_dependency_closure.py` — et entre à ce titre dans `make lint`,
+  `make types` et le job API de la CI.
 - **Données de démonstration entièrement fictives**, marquées `is_demo_data`.
   Aucun prix n'est un prix de marché.
 

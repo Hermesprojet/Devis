@@ -51,12 +51,12 @@ lint: ## Format et lint Python, sans rien modifier
 	$(RUFF) format --check $(DOMAIN) apps/api/src apps/api/tests scripts
 	$(RUFF) check $(DOMAIN) apps/api/src apps/api/tests scripts
 
+# scripts/ est inclus : il porte désormais de la logique — le contrôle
+# d'installation propre et celui des skills — et non plus de simples README.
 .PHONY: types
 types: ## Vérification de types Python
 	$(MYPY) $(DOMAIN)/src/metreo_domain
 	$(MYPY) $(API_SRC)/metreo_api
-	# scripts/ porte désormais de la logique — le contrôle d'installation
-	# propre et celui des skills — et non plus de simples README.
 	$(MYPY) scripts
 
 .PHONY: test-domain
