@@ -397,3 +397,107 @@ class TestTheMigrationItself:
         engine.dispose()
         assert stored == [version, version], "la migration a mal classé les événements"
         assert _verify(database_url, "org-mig")["valid"] is True
+
+
+class TestARefusedMigrationChangesNothing:
+    """Bloquant E : l'ordre des opérations doit être sûr sur SQLite.
+
+    La migration ajoutait la colonne *avant* de classer. Sur SQLite, dont le
+    DDL n'est pas transactionnel, un refus laissait la colonne ajoutée et la
+    révision inchangée : la relance échouait sur « duplicate column name » et
+    exigeait une intervention manuelle.
+    """
+
+    @staticmethod
+    def _alembic(database_url: str, *args: str) -> Any:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        api_root = Path(__file__).resolve().parent.parent
+        return subprocess.run(
+            [sys.executable, "-m", "alembic", "-c", "alembic.ini", *args],
+            cwd=api_root,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "PYTHONPATH": str(api_root / "src"),
+                "METREO_DATABASE_URL": database_url,
+                "METREO_ENVIRONMENT": "development",
+                "METREO_AUTH_MODE": "dev",
+            },
+            capture_output=True,
+            text=True,
+        )
+
+    @staticmethod
+    def _state(database_url: str) -> dict[str, Any]:
+        engine = create_engine(database_url)
+        try:
+            with engine.begin() as connection:
+                return {
+                    "revision": connection.execute(
+                        text("SELECT version_num FROM alembic_version")
+                    ).scalar(),
+                    "columns": {c["name"] for c in inspect(connection).get_columns("audit_events")},
+                    "hash": connection.execute(
+                        text("SELECT hash FROM audit_events WHERE id = 'bad'")
+                    ).scalar(),
+                }
+        finally:
+            engine.dispose()
+
+    def test_an_unclassifiable_event_stops_the_migration_without_touching_anything(
+        self, app_env: None, database_url: str
+    ) -> None:
+        assert self._alembic(database_url, "upgrade", "d88792b38c2d").returncode == 0
+
+        engine = create_engine(database_url)
+        with engine.begin() as connection:
+            columns = [c["name"] for c in inspect(connection).get_columns("organizations")]
+            wanted = {
+                "id": "org-bad",
+                "name": "Inclassable",
+                "country_code": "BE",
+                "region_code": "BE-WAL",
+                "locale": "fr-BE",
+                "currency": "EUR",
+                "timezone": "Europe/Brussels",
+                "unit_system": "metric",
+                "is_demo_data": 0,
+                "created_at": datetime(2026, 8, 20, 12, 0, 0),
+                "updated_at": datetime(2026, 8, 20, 12, 0, 0),
+            }
+            use = {k: v for k, v in wanted.items() if k in columns}
+            connection.execute(
+                text(
+                    f"INSERT INTO organizations ({','.join(use)}) "
+                    f"VALUES ({','.join(':' + k for k in use)})"
+                ),
+                use,
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO audit_events (id, organization_id, sequence, occurred_at, "
+                    "action, object_type, summary, payload, hash) VALUES "
+                    "('bad','org-bad',1,:t,'a','t','s',:p,'hash-qu-aucune-version-ne-reproduit')"
+                ),
+                {"t": datetime(2026, 8, 20, 12, 0, 0), "p": json.dumps({})},
+            )
+        engine.dispose()
+
+        before = self._state(database_url)
+        first = self._alembic(database_url, "upgrade", "head")
+        assert first.returncode != 0, "la migration aurait dû refuser"
+        assert "aucune version de schéma ne reproduit" in first.stderr
+
+        after = self._state(database_url)
+        assert after["revision"] == before["revision"], "la révision a bougé"
+        assert "hash_schema_version" not in after["columns"], "la colonne a été ajoutée"
+        assert after["hash"] == before["hash"], "un hash a été réécrit"
+
+        # La relance doit échouer de la même façon, pas sur « duplicate column ».
+        second = self._alembic(database_url, "upgrade", "head")
+        assert second.returncode != 0
+        combined = second.stdout + second.stderr
+        assert "duplicate column" not in combined, combined[-500:]
+        assert "aucune version de schéma ne reproduit" in second.stderr
