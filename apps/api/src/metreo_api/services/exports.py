@@ -13,7 +13,7 @@ import unicodedata
 from collections.abc import Sequence
 from datetime import datetime
 from html import escape
-from typing import Any
+from typing import Any, Final
 
 from metreo_domain.estimate import EstimateResult
 from metreo_domain.money import RoundingPolicy
@@ -361,6 +361,34 @@ def quote_html(
     )
 
 
+#: Taille maximale du radical du nom de fichier, **en octets encodés**.
+#:
+#: Une borne comptée en caractères ne borne rien : 120 idéogrammes font 360
+#: octets, et `filename*` les pourcent-encode par-dessus, ce qui triple encore.
+#: Les systèmes de fichiers, eux, comptent des octets — la limite usuelle est
+#: 255 pour le nom complet, extension comprise.
+MAX_FILENAME_BYTES: Final[int] = 120
+
+#: Plafond vérifié de l'en-tête complet. Un `Content-Disposition` démesuré est
+#: rejeté par certains mandataires. La valeur découle de la précédente : au
+#: pire chaque octet du radical devient « %XX » dans `filename*`, soit
+#: 3 × 120 caractères, plus le radical ASCII, l'extension et l'ossature.
+MAX_DISPOSITION_LENGTH: Final[int] = 3 * MAX_FILENAME_BYTES + MAX_FILENAME_BYTES + 120
+
+
+def _truncate_utf8(value: str, max_bytes: int) -> str:
+    """Cut ``value`` to ``max_bytes`` of UTF-8 without splitting a character.
+
+    ``errors="ignore"`` drops the trailing partial sequence left by the slice:
+    that is exactly the boundary handling wanted, and it is why the cut is
+    made on the encoded form rather than on the string.
+    """
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
 def content_disposition(stem: str, extension: str) -> str:
     """En-tête `Content-Disposition` sûr, quel que soit le texte fourni.
 
@@ -376,13 +404,12 @@ def content_disposition(stem: str, extension: str) -> str:
     cleaned = "".join(
         character if character.isalnum() or character in "-_." else "-" for character in stem
     ).strip("-")
-    # Borné : certains systèmes de fichiers refusent au-delà de 255 octets, et
-    # un nom démesuré n'apporte rien. L'extension est ajoutée après, donc
-    # toujours présente.
-    cleaned = cleaned[:120]
+    cleaned = _truncate_utf8(cleaned, MAX_FILENAME_BYTES).strip("-")
     ascii_stem = (
         unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii") or "export"
     )
     ascii_name = f"{ascii_stem}.{extension}"
     utf8_name = quote(f"{cleaned or 'export'}.{extension}", safe="")
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
+    disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
+    assert len(disposition) <= MAX_DISPOSITION_LENGTH, len(disposition)
+    return disposition

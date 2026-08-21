@@ -18,6 +18,7 @@ from typing import ClassVar
 import pytest
 from fastapi.testclient import TestClient
 
+from metreo_api.services import exports
 from metreo_api.services.exports import content_disposition
 from metreo_domain import bounds
 
@@ -234,6 +235,12 @@ class TestFilenameEdgeCases:
             pytest.param('a"b', id="guillemet"),
             pytest.param("R" * 400, id="très-long"),
             pytest.param("", id="vide"),
+            # Multioctets : une borne comptée en caractères ne borne pas la
+            # taille encodée, et `filename*` est pourcent-encodé par-dessus.
+            pytest.param("é" * 400, id="accents"),
+            pytest.param("Ω" * 400, id="grec"),
+            pytest.param("鉄" * 400, id="idéogrammes"),
+            pytest.param("Réfection Ω-3 鉄骨 déblai", id="mélange-réaliste"),
         ],
     )
     def test_the_header_stays_well_formed(self, reference: str) -> None:
@@ -243,4 +250,42 @@ class TestFilenameEdgeCases:
         assert header.count('"') == 2
         assert "/" not in header.split('"')[1] and "\\" not in header.split('"')[1]
         assert header.split('"')[1].endswith(".csv")
-        assert len(header) < 400, len(header)
+        assert len(header) <= exports.MAX_DISPOSITION_LENGTH, len(header)
+
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            pytest.param("é" * 400, id="accents"),
+            pytest.param("鉄" * 400, id="idéogrammes"),
+            pytest.param("R" * 400, id="ascii"),
+        ],
+    )
+    def test_the_stem_is_bounded_in_bytes_not_in_characters(self, reference: str) -> None:
+        """La limite porte sur la taille encodée, pas sur le nombre de signes.
+
+        Un système de fichiers compte des octets. Borner 120 *caractères*
+        laisse passer 480 octets en idéogrammes, et l'en-tête gonflait d'autant
+        une fois `filename*` pourcent-encodé.
+        """
+        header = content_disposition(reference, "csv")
+        encoded = header.split("filename*=UTF-8''")[1]
+        from urllib.parse import unquote
+
+        stem = unquote(encoded).removesuffix(".csv")
+        assert len(stem.encode("utf-8")) <= exports.MAX_FILENAME_BYTES, stem
+
+    def test_a_truncation_never_cuts_a_character_in_half(self) -> None:
+        """Couper une séquence UTF-8 au milieu produirait un nom illisible."""
+        header = content_disposition("é" * 400, "csv")
+        from urllib.parse import unquote
+
+        encoded = header.split("filename*=UTF-8''")[1]
+        # Décodable sans erreur : c'est ce que la coupe sur frontière garantit.
+        assert unquote(encoded).endswith(".csv")
+
+    def test_a_reference_that_is_only_multibyte_still_yields_an_ascii_name(self) -> None:
+        """`filename=` doit rester utilisable même sans un seul signe ASCII."""
+        header = content_disposition("鉄" * 20, "csv")
+        ascii_name = header.split('"')[1]
+        assert ascii_name.isascii() and ascii_name.endswith(".csv")
+        assert len(ascii_name) > len(".csv")

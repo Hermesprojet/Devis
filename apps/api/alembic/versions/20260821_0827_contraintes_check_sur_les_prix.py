@@ -9,6 +9,13 @@ Elles sont volontairement grossières. Une contrainte SQL ne remplace pas une
 validation métier — elle ne sait pas dire *pourquoi* — mais elle rend
 impossible une écriture qu'aucun humain n'a voulue.
 
+Les lignes existantes sont **inspectées avant** la création des
+contraintes. Sans cela, une base déjà peuplée s'arrête sur une
+`IntegrityError` brute — rencontrée réellement sur une base de
+développement antérieure au correctif du jeu de démonstration — qui nomme
+la contrainte mais ni la ligne ni la valeur fautives. Corriger devient une
+enquête là où la migration connaît déjà la réponse.
+
 Revision ID: 105f11dede7e
 Revises: c6526f663ff3
 """
@@ -17,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "105f11dede7e"
@@ -53,6 +61,26 @@ CONSTRAINTS = (
 
 
 def upgrade() -> None:
+    connection = op.get_bind()
+    offending: list[str] = []
+    for name, condition in CONSTRAINTS:
+        rows = connection.execute(
+            sa.text(f"SELECT id FROM price_items WHERE NOT ({condition})")  # noqa: S608
+        ).scalars()
+        identifiers = [str(identifier) for identifier in rows]
+        if identifiers:
+            shown = ", ".join(identifiers[:10])
+            more = f" (et {len(identifiers) - 10} autres)" if len(identifiers) > 10 else ""
+            offending.append(f"{name} : {shown}{more}")
+    if offending:
+        raise RuntimeError(
+            "Des prix existants violent les contraintes que cette migration "
+            "installe :\n  " + "\n  ".join(offending) + "\n"
+            "Corriger ces lignes avant de rejouer la migration. Choisir une "
+            "valeur de remplacement engage un prix, donc un devis : le choix "
+            "revient à un humain, pas à une migration."
+        )
+
     # batch_alter_table : SQLite ne sait pas ajouter une contrainte à une table
     # existante, Alembic la recrée donc.
     with op.batch_alter_table("price_items", schema=None) as batch_op:

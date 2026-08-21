@@ -10,6 +10,19 @@
 > suivant : c'est pourquoi ils vivent ici, et ni dans les skills ni dans le
 > `README.md`.
 
+## Statut, en trois mots qui ne se remplacent pas
+
+> **Phase 1 fonctionnellement complète — candidate de validation.**
+> Déploiement et clôture de sécurité **bloqués** jusqu'à Next.js 15.5.24.
+> **Production non prête** : authentification réelle, sauvegardes, supervision
+> et packs juridiques validés restent absents.
+
+*Fonctionnellement complet* décrit ce qu'un utilisateur peut faire et ce que
+les tests prouvent. *Déployable* suppose en plus qu'aucun correctif de
+sécurité connu ne manque. *Prêt pour la production* suppose l'exploitation :
+sauvegardes vérifiées, supervision, authentification réelle. Ce document
+n'atteste que le premier.
+
 ## Ce qui fait foi
 
 | | |
@@ -61,14 +74,33 @@ make install
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -e packages/domain -e "apps/api[dev,postgres]"
+.venv/bin/pip install -c constraints/api.txt -e packages/domain -e "apps/api[dev,postgres]"
 cd apps/web && npm ci
 ```
 
+`-c constraints/api.txt` n'est pas facultatif : sans lui l'installation résout
+librement et n'est plus celle que la CI vérifie. Une « équivalence » qui omet
+le verrou n'en est pas une.
+
 ## Commandes de vérification et résultats
 
-Tout est rejouable par `make verify`. Chaque étape ci-dessous affiche sa
-commande et s'arrête au premier échec.
+`make verify` rejoue les étapes de lint, de typage, de tests, d'installation
+propre et de construction. Il ne lance **ni** les migrations, **ni** le seed,
+**ni** les parcours navigateur, et `make test-api-postgres` sort en succès
+quand `METREO_TEST_DATABASE_URL` manque — un silence qui ressemble à un
+succès.
+
+Pour la porte complète, sans rien d'ignoré :
+
+```bash
+make release-gate METREO_TEST_DATABASE_URL=postgresql+psycopg://…/metreo_gate
+```
+
+`release-gate` refuse de démarrer sans base PostgreSQL, refuse une base dont
+le nom ne la désigne pas comme jetable — elle y crée et détruit des schémas —
+puis enchaîne `verify`, `migrations`, `seed` et `e2e`.
+
+Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 
 | Étape | Commande | Résultat | Durée |
 | --- | --- | --- | --- |
@@ -156,7 +188,12 @@ mesurée ; ce n'est pas une dépendance du produit.
 
 `npm audit` et `pip-audit` sont exécutés à chaque construction par le job
 « Vulnérabilités des dépendances », et le rapport est consigné dans ses
-journaux. **Aucune vulnérabilité connue à ce jour.**
+journaux.
+
+**Les audits automatisés actuellement publiés sont verts.** Ce n'est pas la
+même chose qu'« aucune vulnérabilité connue » : un correctif critique annoncé
+pour le 26 août reste en attente, et un avis sous embargo n'apparaît dans
+aucun audit tant qu'il n'est pas publié. Le déploiement est bloqué jusque-là.
 
 L'état de départ était : une critique et deux hautes. Traitement :
 
@@ -188,6 +225,26 @@ Vérifiée dans le code avant de trancher, et non supposée : App Router, mais
 middleware, ni `next/image` ; `output: 'standalone'`. `postcss` ne traite que
 la feuille de style du dépôt, à la construction. L'exposition était donc
 faible — pas nulle — et elle est close plutôt que documentée.
+
+## Retour arrière
+
+`alembic downgrade base` **n'est pas une procédure de retour arrière**. Sur
+une base peuplée, elle supprime tout le schéma applicatif et les données avec.
+Elle n'apparaît ici que comme test destructif, sur une base jetable.
+
+Quatre choses distinctes, souvent confondues :
+
+| | Quand | Sur quoi |
+| --- | --- | --- |
+| Test `head → base → head` | en CI et dans `make release-gate` | une base **jetable** uniquement — il détruit tout |
+| Retour d'une révision précise | après une migration fautive, si son `downgrade` est réversible sans perte | `alembic downgrade <révision précédente>` |
+| Restauration depuis une sauvegarde | quand la migration n'est pas réversible sans perte | une sauvegarde **vérifiée**, restaurée d'abord ailleurs |
+| Retour arrière applicatif | quand le schéma peut rester en avance sur le code | redéployer la version précédente de l'application, schéma inchangé |
+
+Le troisième cas est le défaut à supposer, pas l'exception : une migration
+qui supprime une colonne ou change un type ne rend pas ce qu'elle a écarté.
+Aucune sauvegarde n'est aujourd'hui configurée — c'est l'un des points qui
+séparent « fonctionnellement complet » de « prêt pour la production ».
 
 ## Conteneurs
 

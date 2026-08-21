@@ -89,10 +89,11 @@ migrations: ## Aller-retour complet des migrations : head, base, head
 seed: ## Charger le jeu de démonstration (entièrement fictif)
 	cd apps/api && PYTHONPATH=src ../../$(PY) -m metreo_api.seed
 
-.PHONY: skills
+.PHONY: clean-install
 clean-install: ## Prouver qu'une installation depuis les seuls manifestes démarre
 	$(PY) scripts/check_clean_install.py --constraints constraints/api.txt
 
+.PHONY: lock
 lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	@tmp=$$(mktemp -d); \
 	$(PY) -m venv $$tmp/venv; \
@@ -112,6 +113,7 @@ lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	rm -rf $$tmp; \
 	echo "constraints/api.txt régénéré."
 
+.PHONY: skills
 skills: ## Contrôler les skills du dépôt
 	$(PY) scripts/check_skills.py
 
@@ -139,6 +141,24 @@ secrets: ## Refuser un .env versionné ou un motif de secret évident
 		echo "Motif de secret détecté." >&2; exit 1; fi
 	@echo "aucun secret évident"
 
+# -- développement --------------------------------------------------------
+
+DEV_DATABASE_URL ?= sqlite+pysqlite:///$(CURDIR)/var/dev.sqlite3
+DEV_API_PORT ?= 8000
+
+.PHONY: api-dev
+api-dev: ## Migrations, jeu de démonstration, puis l'API en rechargement
+	cd apps/api && METREO_DATABASE_URL="$(DEV_DATABASE_URL)" PYTHONPATH=src \
+		../../$(ALEMBIC) -c alembic.ini upgrade head
+	cd apps/api && METREO_DATABASE_URL="$(DEV_DATABASE_URL)" PYTHONPATH=src \
+		../../$(PY) -m metreo_api.seed
+	cd apps/api && METREO_DATABASE_URL="$(DEV_DATABASE_URL)" PYTHONPATH=src \
+		../../$(PY) -m uvicorn metreo_api.main:app --reload --port $(DEV_API_PORT)
+
+.PHONY: web-dev
+web-dev: ## Le front en rechargement, branché sur l'API locale
+	cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:$(DEV_API_PORT)/api/v1 npm run dev
+
 # -- la porte -------------------------------------------------------------
 
 .PHONY: verify
@@ -157,3 +177,35 @@ verify: ## Tout vérifier, dans l'ordre de la CI, sans rien masquer
 	@echo
 	@echo "verify : terminé. « make e2e » lance en plus les parcours navigateur,"
 	@echo "         qui construisent le front et démarrent les deux serveurs."
+
+
+.PHONY: release-gate
+release-gate: ## La porte stricte : rien d'ignoré, PostgreSQL jetable obligatoire
+	@# `verify` seul ne suffit pas à conclure : il ne lance ni les migrations,
+	@# ni le seed, ni les parcours navigateur, et `test-api-postgres` sort en
+	@# succès quand l'URL manque — un silence qui ressemble à un succès.
+	@# Cette cible refuse de démarrer sans base, et n'ignore rien.
+	@if [ -z "$(METREO_TEST_DATABASE_URL)" ]; then \
+		echo "release-gate : refusé — METREO_TEST_DATABASE_URL est obligatoire." >&2; \
+		echo "  SQLite ne prouve rien sur NUMERIC, les contraintes, le DDL" >&2; \
+		echo "  transactionnel ni les verrous de ligne. Exemple :" >&2; \
+		echo "  make release-gate METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo_gate" >&2; \
+		exit 1; \
+	fi
+	@# La suite crée et détruit des schémas dans cette base. Un nom qui ne
+	@# porte pas la marque du jetable est refusé, pour qu'une URL de
+	@# production collée par erreur ne puisse pas être utilisée ici.
+	@case "$(METREO_TEST_DATABASE_URL)" in \
+		*test*|*gate*|*ci*|*tmp*|*scratch*) : ;; \
+		*) echo "release-gate : refusé — la base doit être jetable." >&2; \
+		   echo "  Son nom doit contenir test, gate, ci, tmp ou scratch." >&2; \
+		   echo "  Cette cible crée et détruit des schémas : elle ne doit jamais" >&2; \
+		   echo "  pointer vers une base portant des données réelles." >&2; \
+		   exit 1 ;; \
+	esac
+	@$(MAKE) --no-print-directory verify METREO_TEST_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+	@$(MAKE) --no-print-directory migrations
+	@$(MAKE) --no-print-directory seed
+	@$(MAKE) --no-print-directory e2e
+	@echo
+	@echo "release-gate : tout est passé, rien n'a été ignoré."

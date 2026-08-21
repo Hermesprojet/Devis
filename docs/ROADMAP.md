@@ -6,7 +6,7 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 
 ---
 
-## Phase 0 — Cadrage et fondations · **Livrée**
+## Phase 0 — Cadrage et fondations · **Fonctionnellement complète**
 
 | Livrable | État |
 | --- | --- |
@@ -18,20 +18,31 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 
 ---
 
-## Phase 1 — Première tranche verticale utilisable · **Livrée**
+## Phase 1 — Première tranche verticale utilisable · **Fonctionnellement complète, candidate de validation**
+
+> **Phase 1 fonctionnellement complète — candidate de validation.**
+> Déploiement et clôture de sécurité **bloqués** jusqu'à Next.js 15.5.24.
+> **Production non prête** : authentification réelle, sauvegardes, supervision
+> et packs juridiques validés restent absents.
+>
+> Ces trois choses sont distinctes et ne se remplacent pas : *fonctionnellement
+> complet* décrit ce qu'un utilisateur peut faire et ce que les tests prouvent ;
+> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque ;
+> *prêt pour la production* suppose l'exploitation.
+
 
 | # | Exigence | État | Preuve |
 | --- | --- | --- | --- |
 | 1 | Organisation et utilisateur de développement | ✅ | `seed.py`, `/auth/dev-login` |
 | 2 | Profil Belgique/Wallonie par défaut, configurable | ✅ | `region_profiles`, 4 packs semés |
 | 3 | Création d'un projet | ✅ | `routers/projects.py` |
-| 4 | Import CSV avec prévisualisation et erreurs | ✅ | `test_price_import.py` (15 tests) |
-| 5 | Création manuelle d'un bordereau | ✅ | `test_boq.py` (12 tests) |
-| 6 | Calcul déterministe d'un sous-détail | ✅ | `test_pricing.py` (26 tests) |
+| 4 | Import CSV avec prévisualisation et erreurs | ✅ | `test_price_import.py` |
+| 5 | Création manuelle d'un bordereau | ✅ | `test_boq.py` |
+| 6 | Calcul déterministe d'un sous-détail | ✅ | `test_pricing.py` |
 | 7 | Version d'estimation gelable | ✅ | `test_estimating.py` |
 | 8 | Export CSV et aperçu de devis imprimable | ✅ | `test_estimating.py` |
-| 9 | Audit des actions principales | ✅ | `test_audit.py` (10 tests) |
-| 10 | Tests d'isolation entre deux organisations | ✅ | `test_tenant_isolation.py` (13 tests) |
+| 9 | Audit des actions principales | ✅ | `test_audit.py` |
+| 10 | Tests d'isolation entre deux organisations | ✅ | `test_tenant_isolation.py` |
 
 Fonctionne localement avec des fournisseurs factices et **aucune clé payante**.
 

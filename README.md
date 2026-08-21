@@ -19,10 +19,20 @@ n'est pas figé (voir `docs/ASSUMPTIONS.md`).
 
 ## État réel du produit
 
+> **Phase 1 fonctionnellement complète — candidate de validation.**
+> Déploiement et clôture de sécurité **bloqués** jusqu'à Next.js 15.5.24.
+> **Production non prête** : authentification réelle, sauvegardes, supervision
+> et packs juridiques validés restent absents.
+>
+> Ces trois choses sont distinctes et ne se remplacent pas : *fonctionnellement
+> complet* décrit ce qu'un utilisateur peut faire et ce que les tests prouvent ;
+> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque ;
+> *prêt pour la production* suppose l'exploitation.
+
 | Phase | Périmètre | État |
 | --- | --- | --- |
-| 0 | Cadrage, architecture, socle technique, CI | **Livré** |
-| 1 | Organisation, projet, bibliothèque de prix, bordereau, moteur de calcul, gel de version, exports, audit | **Livré** |
+| 0 | Cadrage, architecture, socle technique, CI | **Fonctionnellement complet** |
+| 1 | Organisation, projet, bibliothèque de prix, bordereau, moteur de calcul, gel de version, exports, audit | **Fonctionnellement complet — candidate de validation** |
 | 2 | Intelligence documentaire (OCR, extraction, citations, validation) | Non implémenté |
 | 3 | Métrés assistés, plans, IFC/DXF/DWG | Non implémenté |
 | 4 | Fournisseurs, demandes de prix, comparatifs | Non implémenté |
@@ -42,27 +52,38 @@ Prérequis : Python 3.11+, Node 22+. Docker est optionnel.
 ```bash
 git clone <ce dépôt> && cd Devis
 cp .env.example .env
-
-# --- API -----------------------------------------------------------------
-python -m venv .venv && source .venv/bin/activate
-pip install -e packages/domain
-pip install "fastapi>=0.115,<1.0" "uvicorn[standard]" "sqlalchemy>=2.0.30" alembic \
-            "pydantic[email]>=2.7" pydantic-settings python-multipart pyjwt
-
-mkdir -p var
-export METREO_DATABASE_URL="sqlite+pysqlite:///$PWD/var/dev.sqlite3"
-export PYTHONPATH="$PWD/apps/api/src"
-
-(cd apps/api && alembic -c alembic.ini upgrade head)   # migrations
-(cd apps/api && python -m metreo_api.seed)             # jeu de démonstration fictif
-python -m uvicorn metreo_api.main:app --reload --port 8000
+make install
 ```
 
+`make install` crée le venv et installe **depuis les manifestes**, sous le
+verrou du dépôt. Il n'existe pas de troisième liste de dépendances : les
+`pyproject.toml` et `apps/web/package-lock.json` font foi, et c'est ce que la
+CI installe. Sans `make`, exactement la même chose :
+
 ```bash
-# --- Web (dans un second terminal) ---------------------------------------
-cd apps/web
-npm install
-NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1 npm run dev
+python -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip
+pip install -c constraints/api.txt -e packages/domain -e "apps/api[dev,postgres]"
+(cd apps/web && npm ci)
+```
+
+Puis, dans deux terminaux :
+
+```bash
+make api-dev    # migrations, jeu de démonstration fictif, puis l'API sur :8000
+make web-dev    # le front sur :3000, branché sur l'API locale
+```
+
+Les deux commandes explicites, si l'on préfère les lancer à la main :
+
+```bash
+export METREO_DATABASE_URL="sqlite+pysqlite:///$PWD/var/dev.sqlite3"
+(cd apps/api && PYTHONPATH=src alembic -c alembic.ini upgrade head)
+(cd apps/api && PYTHONPATH=src python -m metreo_api.seed)
+(cd apps/api && PYTHONPATH=src python -m uvicorn metreo_api.main:app --reload --port 8000)
+
+# second terminal
+(cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1 npm run dev)
 ```
 
 Ouvrir <http://localhost:3000> et se connecter avec `admin@dubois.demo`
