@@ -165,3 +165,29 @@ une intégration externe tombe. C'est structurellement vrai ici : **rien dans le
 chemin de calcul n'appelle un service externe.** Le point de contrôle
 `/api/v1/health` expose `ai_enabled`, et un test d'acceptation parcourt tout le
 flux avec l'IA désactivée.
+
+## `NEXT_PUBLIC_API_URL` : une valeur de construction, pas d'exécution
+
+Next inscrit toute variable `NEXT_PUBLIC_*` **dans le JavaScript livré** au
+moment du build. La conséquence est contre-intuitive et vaut d'être écrite :
+définir `NEXT_PUBLIC_API_URL` sur un conteneur déjà construit n'a **aucun
+effet**, le code compilé porte encore l'ancienne valeur.
+
+Deux stratégies existaient. Nous retenons la première :
+
+1. **URL injectée au build**, par `ARG NEXT_PUBLIC_API_URL` dans
+   `infra/web.Dockerfile`. Une image est construite par environnement :
+
+   ```bash
+   docker build --build-arg NEXT_PUBLIC_API_URL=https://api.exemple.be/api/v1 \
+     -f infra/web.Dockerfile -t metreo-web:prod .
+   ```
+
+2. API et front sous la même origine, avec un `rewrite` Next servant de proxy.
+   Écartée pour l'instant : elle ferait transiter le jeton par le serveur Next,
+   qui n'a aucune raison de le voir, et le ferait apparaître dans ses journaux.
+   À reconsidérer si un déploiement impose une origine unique.
+
+Le `docker-compose.yml` passe donc la valeur sous `build.args` et non sous
+`environment`, qui laissait croire qu'un redémarrage suffisait à changer d'API.
+

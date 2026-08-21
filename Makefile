@@ -33,7 +33,11 @@ help: ## Afficher les cibles disponibles
 install: ## Créer l'environnement virtuel et installer les dépendances
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
-	$(PIP) install -e $(DOMAIN) -e "apps/api[dev,postgres]"
+	# Sous contrainte du verrou, comme l'image et la CI : sans cela, les tests
+	# valident un jeu de versions qui n'est pas celui livré en production.
+	# Les outils de développement n'y figurent pas — une contrainte ne force
+	# aucune installation, elle ne fait que borner ce qui l'est.
+	$(PIP) install -c constraints/api.txt -e $(DOMAIN) -e "apps/api[dev,postgres]"
 	cd apps/web && npm ci
 
 # -- vérifications élémentaires -------------------------------------------

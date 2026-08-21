@@ -47,3 +47,11 @@ tsconfig.tsbuildinfo
 .idea
 .vscode
 .DS_Store
+
+# Artefacts observés à l'usage.
+pytest-of-*
+pip-*
+dist
+build
+*.log
+logs

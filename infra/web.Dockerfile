@@ -14,6 +14,15 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY apps/web ./
+
+# L'URL de l'API est compilée dans le JavaScript : elle doit être connue ICI,
+# pas au démarrage du conteneur. La passer à l'exécution n'aurait aucun effet
+# — le code livré porterait toujours la valeur du build. Une image se
+# construit donc par environnement :
+#   docker build --build-arg NEXT_PUBLIC_API_URL=https://api.exemple.be/api/v1
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

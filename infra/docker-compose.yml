@@ -69,8 +69,12 @@ services:
     build:
       context: ..
       dockerfile: infra/web.Dockerfile
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      args:
+        # Au BUILD, pas à l'exécution : Next fige cette valeur dans le
+        # JavaScript livré. La déclarer sous `environment:` laissait croire
+        # qu'on pouvait changer l'URL de l'API en redémarrant le conteneur —
+        # elle n'avait en réalité aucun effet sur le code déjà compilé.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
     ports:
       - "3000:3000"
     depends_on:
