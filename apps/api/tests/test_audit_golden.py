@@ -167,3 +167,139 @@ def test_a_frozen_chain_verifies_after_migration(
     finally:
         engine.dispose()
     assert report["valid"] is True, report
+
+
+class TestTheMigrationConsumesFrozenHashes:
+    """La migration exécutée sur des empreintes figées, jamais recalculées.
+
+    `test_audit_migration.py` calcule ses hashs avec `HASH_SCHEMAS` — le code
+    même que la migration reproduit. Les deux pourraient dériver ensemble en
+    restant verts. Ici, les hashs viennent des constantes de ce fichier.
+    """
+
+    @staticmethod
+    def _alembic(database_url: str, *args: str) -> Any:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        api_root = Path(__file__).resolve().parent.parent
+        return subprocess.run(
+            [sys.executable, "-m", "alembic", "-c", "alembic.ini", *args],
+            cwd=api_root,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "PYTHONPATH": str(api_root / "src"),
+                "METREO_DATABASE_URL": database_url,
+                "METREO_ENVIRONMENT": "development",
+                "METREO_AUTH_MODE": "dev",
+            },
+            capture_output=True,
+            text=True,
+        )
+
+    @staticmethod
+    def _insert_without_the_column(connection: Any, event: dict[str, Any], digest: str) -> None:
+        """Insère comme le faisait le code d'avant la colonne."""
+        connection.execute(
+            text(
+                "INSERT INTO audit_events (id, organization_id, sequence, occurred_at, "
+                "actor_email, action, object_type, summary, payload, previous_hash, hash) "
+                "VALUES (:i,:o,:s,:t,:e,:a,:ot,:su,:p,:pr,:h)"
+            ),
+            {
+                "i": event["event_id"],
+                "o": event["organization_id"],
+                "s": event["sequence"],
+                "t": datetime.fromisoformat(event["occurred_at"]),
+                "e": event["actor_email"],
+                "a": event["action"],
+                "ot": event["object_type"],
+                "su": event["summary"],
+                "p": json.dumps(event["payload"]),
+                "pr": event["previous_hash"] or None,
+                "h": digest,
+            },
+        )
+
+    def test_frozen_hashes_survive_the_real_migration(
+        self, app_env: None, database_url: str
+    ) -> None:
+        from metreo_api.services import audit
+
+        assert self._alembic(database_url, "upgrade", "d88792b38c2d").returncode == 0
+
+        engine = create_engine(database_url)
+        with engine.begin() as connection:
+            _create_organization(connection)
+            # Premier maillon v1, second v2 : une base migrée en cours de route.
+            self._insert_without_the_column(connection, GOLDEN_EVENT, V1_HASH)
+            self._insert_without_the_column(
+                connection,
+                {
+                    **GOLDEN_EVENT,
+                    "event_id": "golden-2",
+                    "sequence": 2,
+                    "summary": "Événement de référence 2",
+                    "previous_hash": V1_HASH,
+                },
+                MIXED_SECOND_HASH,
+            )
+        engine.dispose()
+
+        result = self._alembic(database_url, "upgrade", "head")
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        engine = create_engine(database_url)
+        with engine.begin() as connection:
+            classified = [
+                row[0]
+                for row in connection.execute(
+                    text("SELECT hash_schema_version FROM audit_events ORDER BY sequence")
+                )
+            ]
+        try:
+            with Session(engine) as session:
+                report = audit.verify_chain(session, "org-golden")
+        finally:
+            engine.dispose()
+
+        assert classified == [1, 2], "la migration a mal classé des empreintes figées"
+        assert report["valid"] is True, report
+
+    def test_a_refused_migration_succeeds_once_the_data_is_restored(
+        self, app_env: None, database_url: str
+    ) -> None:
+        """Le pendant du test de refus : la relance doit finir par réussir."""
+        assert self._alembic(database_url, "upgrade", "d88792b38c2d").returncode == 0
+
+        engine = create_engine(database_url)
+        with engine.begin() as connection:
+            _create_organization(connection)
+            self._insert_without_the_column(connection, GOLDEN_EVENT, "hash-inclassable")
+        engine.dispose()
+
+        refused = self._alembic(database_url, "upgrade", "head")
+        assert refused.returncode != 0
+        assert "aucune version de schéma ne reproduit" in refused.stderr
+
+        # Restauration contrôlée : on remet l'empreinte figée légitime.
+        engine = create_engine(database_url)
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE audit_events SET hash = :h WHERE id = :i"),
+                {"h": V1_HASH, "i": GOLDEN_EVENT["event_id"]},
+            )
+        engine.dispose()
+
+        repaired = self._alembic(database_url, "upgrade", "head")
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+
+        engine = create_engine(database_url)
+        with engine.begin() as connection:
+            version = connection.execute(
+                text("SELECT hash_schema_version FROM audit_events WHERE id = :i"),
+                {"i": GOLDEN_EVENT["event_id"]},
+            ).scalar_one()
+        engine.dispose()
+        assert version == 1

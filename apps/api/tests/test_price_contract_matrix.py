@@ -284,3 +284,103 @@ class TestTheSqlConstraintsAreTheLastResort:
         finally:
             session.rollback()
             session.close()
+
+
+class TestTheRealConfirmationEndpoint:
+    """Les cas ci-dessus appellent le validateur ; ceux-ci passent par HTTP.
+
+    Un test unitaire du validateur ne prouve pas que la route l'appelle, ni
+    qu'un refus n'écrit rien. Ces deux-là altèrent une vraie ligne de staging
+    entre la prévisualisation et la confirmation, puis appellent l'endpoint.
+    """
+
+    @staticmethod
+    def _forge_staging(batch_id: str, **overrides: Any) -> None:
+        from sqlalchemy import update
+
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import ImportBatchRow
+
+        session = get_session_factory()()
+        try:
+            row = session.scalars(
+                select(ImportBatchRow).where(ImportBatchRow.batch_id == batch_id)
+            ).one()
+            forged = dict(row.normalized or {})
+            forged.update(overrides)
+            session.execute(
+                update(ImportBatchRow).where(ImportBatchRow.id == row.id).values(normalized=forged)
+            )
+            session.commit()
+        finally:
+            session.close()
+
+    def _preview(self, client: TestClient, headers: dict[str, str], version: str) -> dict:
+        return client.post(
+            f"/api/v1/price-books/versions/{version}/imports/preview",
+            headers=headers,
+            files={"file": ("prix.csv", _csv_line({}), "text/csv")},
+        ).json()
+
+    def test_an_unreadable_date_in_staging_is_refused_at_confirmation(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        report = self._preview(seeded_client, headers, version)
+        assert report["valid_count"] == 1
+        self._forge_staging(report["batch_id"], valid_from="pas-une-date")
+
+        committed = seeded_client.post(
+            f"/api/v1/price-books/imports/{report['batch_id']}/commit",
+            headers=headers,
+            json={"confirm": True},
+        )
+        # Jamais 500 : une date illisible est une donnée invalide, pas un bug.
+        assert committed.status_code == 200, committed.text
+        body = committed.json()
+        assert body["created"] == 0
+        assert body["rejected_at_commit"] == 1
+
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import PriceItem
+
+        session = get_session_factory()()
+        try:
+            written = session.scalars(
+                select(PriceItem).where(PriceItem.price_book_version_id == version)
+            ).all()
+            assert written == [], "une ligne refusée a été écrite"
+        finally:
+            session.close()
+
+    def test_a_staging_row_needing_normalisation_is_written_canonical(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        report = self._preview(seeded_client, headers, version)
+        self._forge_staging(
+            report["batch_id"],
+            code=" P3 ",
+            label=" Prix ",
+            unit_code="m³",
+            currency="eur",
+        )
+
+        committed = seeded_client.post(
+            f"/api/v1/price-books/imports/{report['batch_id']}/commit",
+            headers=headers,
+            json={"confirm": True},
+        )
+        assert committed.status_code == 200, committed.text
+        assert committed.json()["created"] == 1
+
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import PriceItem
+
+        session = get_session_factory()()
+        try:
+            stored = session.scalars(
+                select(PriceItem).where(PriceItem.price_book_version_id == version)
+            ).one()
+            assert (stored.code, stored.unit_code, stored.currency) == ("P3", "m3", "EUR")
+            assert stored.label == "Prix"
+        finally:
+            session.close()

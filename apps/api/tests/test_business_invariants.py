@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -506,4 +507,96 @@ class TestSinglePriceSourceIsEnforcedBySql:
             assert "single_price_source" in str(excinfo.value)
         finally:
             session.rollback()
+            session.close()
+
+
+class TestLumpSumAtZeroQuantityEndToEnd:
+    """§6.7 de bout en bout : création, gel, instantané, recalcul.
+
+    La règle est testée dans le domaine ; ce parcours prouve qu'elle survit à
+    la persistance et au gel — c'est là que se joue la valeur d'un devis
+    archivé.
+    """
+
+    def test_a_lump_sum_survives_the_freeze_and_the_recomputation(
+        self, seeded_client: TestClient, headers: dict[str, str], boq: dict, version: str
+    ) -> None:
+        composite = _composite(
+            seeded_client,
+            headers,
+            version,
+            [
+                {
+                    "component_type": "lump_sum",
+                    "label": "Installation de chantier",
+                    "lump_sum_amount": "1500",
+                }
+            ],
+        ).json()
+
+        seeded_client.post(
+            f"/api/v1/boqs/{boq['id']}/items",
+            headers=headers,
+            json={
+                "position": "0.1",
+                "designation": "Installation de chantier",
+                "unit_code": "fft",
+                # Quantité nulle : le forfait doit compter quand même.
+                "quantity": "0",
+                "composite_price_id": composite["id"],
+            },
+        )
+        estimate = seeded_client.post(
+            "/api/v1/estimates",
+            headers=headers,
+            json={
+                "project_id": boq["project_id"],
+                "boq_id": boq["id"],
+                "price_book_version_id": version,
+                "name": "Forfait à zéro",
+            },
+        ).json()
+        estimate_version = seeded_client.post(
+            f"/api/v1/estimates/{estimate['id']}/versions", headers=headers, json={"label": "v1"}
+        ).json()
+
+        before = seeded_client.get(
+            f"/api/v1/estimates/{estimate['id']}/versions/{estimate_version['id']}/computation",
+            headers=headers,
+        )
+        assert before.status_code == 200, before.text
+        total_before = before.json()["result"]["total_selling_price_ht"]
+        assert Decimal(total_before) > 0, "le forfait a disparu à quantité nulle"
+
+        frozen = seeded_client.post(
+            f"/api/v1/estimates/{estimate['id']}/versions/{estimate_version['id']}/freeze",
+            headers=headers,
+            json={"label": "gel", "confirm": True},
+        )
+        assert frozen.status_code == 200, frozen.text
+        digest = frozen.json()["snapshot_sha256"]
+        assert digest
+
+        after = seeded_client.get(
+            f"/api/v1/estimates/{estimate['id']}/versions/{estimate_version['id']}/computation",
+            headers=headers,
+        ).json()
+        assert after["from_snapshot"] is True
+        assert after["result"]["total_selling_price_ht"] == total_before
+
+        # Recalcul depuis l'instantané : même total, même empreinte.
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import EstimateVersion
+        from metreo_api.services import estimating
+
+        session = get_session_factory()()
+        try:
+            stored = session.get(EstimateVersion, estimate_version["id"])
+            assert stored is not None
+            recomputed = estimating.recompute_from_snapshot(stored.snapshot)
+            assert str(recomputed.total_selling_price_ht.amount) == str(
+                estimating.recompute_from_snapshot(stored.snapshot).total_selling_price_ht.amount
+            )
+            assert estimating.snapshot_digest(stored.snapshot) == digest
+        finally:
             session.close()
