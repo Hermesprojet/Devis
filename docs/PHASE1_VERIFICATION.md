@@ -16,7 +16,7 @@
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `eb4c1be` |
+| Dernier commit contrôlé depuis un clone propre | `87bcead` |
 | Procédure | `make install` puis `make verify` puis `make e2e`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
@@ -25,10 +25,10 @@
 
 | | |
 | --- | --- |
-| Commit | `eb4c1beff136c77af928ed88302a7a27d3f04e90` |
-| Abrégé | `eb4c1be` |
+| Commit | `87bcead1ebbddf63debf5913e3a0850df0fbc011` |
+| Abrégé | `87bcead` |
 | Fichiers versionnés | 146 |
-| Exécution CI correspondante | [push 32479313612](https://github.com/Hermesprojet/Devis/actions/runs/32479313612) et [pull_request 32479317234](https://github.com/Hermesprojet/Devis/actions/runs/32479317234) — 10/10 chacune |
+| Exécution CI correspondante | [push 32480318193](https://github.com/Hermesprojet/Devis/actions/runs/32480318193) et [pull_request 32480322864](https://github.com/Hermesprojet/Devis/actions/runs/32480322864) — 10/10 chacune |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -87,7 +87,7 @@ commande et s'arrête au premier échec.
 | Composition Docker | `make compose-config` | `docker compose : valide` | ~1 s |
 | Types du front | `make web-typecheck` | `tsc --noEmit` sans erreur | ~2 s |
 | Build de production | `make web-build` | 9 routes compilées | ~3 s |
-| Parcours navigateur | `make e2e` | **15 passed** | ~66 s |
+| Parcours navigateur | `make e2e` | **15 passed** | ~62 s |
 
 Les tests API tournent **réellement** sur PostgreSQL lorsque
 `METREO_TEST_DATABASE_URL` est défini : chaque test obtient son propre schéma.
