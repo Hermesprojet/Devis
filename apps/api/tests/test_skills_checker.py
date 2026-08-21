@@ -128,7 +128,7 @@ class TestVolatileCounters:
         moindre diagnostic : exactement l'angle mort que ce module existe
         pour fermer.
         """
-        body = "```bash\npytest -q\n\n## Suite\n\n```bash\n# attendu : 61 passed\n```"
+        body = "```bash\npytest -q\n"
         directory = write_skill(tmp_path, "faux-skill", body)
         problems = checker.lint_skill(directory)
         assert any("non refermé" in problem for problem in problems), problems
@@ -148,9 +148,45 @@ class TestVolatileCounters:
             problems
         )
 
+    def test_a_nested_fence_is_content_not_a_second_opening(self, tmp_path: Path) -> None:
+        """Montrer un bloc de code dans un skill est légitime, et se fait ainsi.
+
+        CommonMark ferme un bloc par un délimiteur du MÊME caractère et d'une
+        longueur au moins égale. Une fence plus courte à l'intérieur d'une plus
+        longue n'est donc pas une fence : c'est du contenu. Ignorer le
+        caractère et la longueur faisait lire ce contenu comme deux blocs
+        béants, et le refus qui s'ensuivait désarmait l'exemption des titres —
+        le vérificateur accusait alors un titre de prose d'être une sortie
+        d'outil. Faux dans les deux sens, sur un document correct.
+        """
+        body = "````markdown\n```bash\npytest -q\n```\n````\n\n## Les 19 tables du schéma\n"
+        directory = write_skill(tmp_path, "faux-skill", body)
+        assert checker.lint_skill(directory) == []
+
+    def test_a_different_delimiter_does_not_close_a_block(self, tmp_path: Path) -> None:
+        """Un `~~~` ne referme pas un bloc ouvert par des accents graves.
+
+        Le laisser fermer rouvrait l'angle mort « compte pair » : l'état
+        revenait à « hors bloc », et le compteur figé placé après redevenait
+        un titre Markdown sauté.
+        """
+        # Même longueur, caractère différent : c'est bien le CARACTÈRE qui doit
+        # trancher ici, sans quoi le contrôle de longueur masquerait celui-ci.
+        body = "```\n~~~\n# attendu : 61 passed\n```\n"
+        directory = write_skill(tmp_path, "faux-skill", body)
+        problems = checker.lint_skill(directory)
+        assert any("pytest recopiée" in problem for problem in problems), problems
+
+    def test_a_shorter_closing_delimiter_does_not_close(self, tmp_path: Path) -> None:
+        """Une fermeture doit être au moins aussi longue que l'ouverture."""
+        body = "````bash\n```\n# attendu : 61 passed\n````\n"
+        directory = write_skill(tmp_path, "faux-skill", body)
+        problems = checker.lint_skill(directory)
+        assert any("pytest recopiée" in problem for problem in problems), problems
+
     def test_a_counter_after_an_unclosed_block_is_still_seen(self, tmp_path: Path) -> None:
         """Parité fausse : on cesse de faire confiance à l'état, on lit tout."""
-        body = "```bash\npytest -q\n\n```bash\n# attendu : 61 passed\n```"
+        body = "```bash\npytest -q\n\n## Suite\n\n# attendu : 61 passed\n"
         directory = write_skill(tmp_path, "faux-skill", body)
         problems = checker.lint_skill(directory)
         assert any("pytest recopiée" in problem for problem in problems), problems

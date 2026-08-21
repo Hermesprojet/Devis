@@ -131,7 +131,42 @@ def _resolves(candidate: str) -> bool:
     return False
 
 
-_FENCE = re.compile(r"^\s*(?:```|~~~)")
+#: Un délimiteur de bloc : son caractère et sa longueur comptent tous deux,
+#: donc ils sont capturés. CommonMark ferme un bloc par un délimiteur du même
+#: caractère et d'une longueur au moins égale ; tout le reste est du contenu,
+#: y compris une fence plus courte — c'est ainsi qu'on montre un bloc de code
+#: à l'intérieur d'un autre.
+_FENCE = re.compile(r"^\s*(?P<delimiter>`{3,}|~{3,})(?P<info>.*)$")
+
+
+def _fenced_lines(lines: list[str]) -> tuple[set[int], int | None]:
+    """Which line numbers sit inside a fenced code block, and any block left open.
+
+    CommonMark closes a fence with a delimiter of the **same character** and of
+    **at least the same length**, carrying no info string. Everything else is
+    content — including a shorter fence, which is precisely how one shows a
+    code block inside another. Ignoring character and length made a valid
+    nested example read as two gaping blocks, and the refusal that followed
+    disarmed the heading exemption, so the checker went on to accuse an
+    ordinary heading of being copied tool output. Wrong in both directions, on
+    a correct document.
+    """
+    inside: set[int] = set()
+    opened_at: int | None = None
+    delimiter = ""
+    for number, line in enumerate(lines, start=1):
+        match = _FENCE.match(line)
+        if match and not delimiter:
+            delimiter, opened_at = match.group("delimiter"), number
+            continue
+        if match and delimiter:
+            candidate, info = match.group("delimiter"), match.group("info").strip()
+            if candidate[0] == delimiter[0] and len(candidate) >= len(delimiter) and not info:
+                delimiter, opened_at = "", None
+                continue
+        if delimiter:
+            inside.add(number)
+    return inside, opened_at
 
 
 def volatile_problems(body: str, skill: str) -> list[str]:
@@ -142,64 +177,32 @@ def volatile_problems(body: str, skill: str) -> list[str]:
     that is precisely where the stale counters lived: skipping it made the
     whole check ornamental.
 
-    The fence state is a parity bit, and parity is fragile: one missing
-    closing delimiter — an ordinary editing slip — inverts it for the rest of
-    the file, and every later ``#`` line becomes a "heading" again. That
-    reopens the exact blind spot this function exists to close, silently. An
-    unbalanced fence is therefore reported as a problem in its own right,
-    and the scan falls back to reading every line rather than trusting a
-    state it knows to be wrong.
+    A block left open is reported in its own right: the scan can no longer tell
+    a heading from a shell comment past that point, so it stops trusting the
+    distinction and reads every line rather than silently reopening the blind
+    spot.
 
-    Markdown also allows a code block indented by four spaces, with no fence
-    at all. Those lines are read too: a comment hidden there is just as
-    followed as one inside a fence.
+    Markdown also allows a code block indented by four spaces, with no fence at
+    all. Those lines are read too: a comment hidden there is just as followed
+    as one inside a fence.
     """
     problems: list[str] = []
     lines = body.splitlines()
+    inside, opened_at = _fenced_lines(lines)
 
-    # La parité seule ne suffit pas : deux ouvertures non refermées font un
-    # compte pair, et l'état resterait inversé sans que rien ne l'annonce. On
-    # distingue donc l'ouverture de la fermeture par sa chaîne d'information —
-    # CommonMark interdit d'en mettre une sur une fermeture, si bien qu'un
-    # « ```bash » rencontré alors qu'un bloc est déjà ouvert ne peut être
-    # qu'une ouverture de plus, donc un bloc laissé béant.
-    unbalanced = False
-    open_at = 0
-    state = False
-    for number, line in enumerate(lines, start=1):
-        match = _FENCE.match(line)
-        if not match:
-            continue
-        info = line.strip().lstrip("`~").strip()
-        if not state:
-            state, open_at = True, number
-        elif info:
-            unbalanced = True
-            problems.append(
-                f"{skill}:{open_at}: bloc de code non refermé — un nouveau bloc "
-                f"s'ouvre ligne {number} alors que celui-ci l'est encore."
-            )
-            open_at = number
-        else:
-            state = False
-    if state:
-        unbalanced = True
+    if opened_at is not None:
         problems.append(
-            f"{skill}:{open_at}: bloc de code non refermé — le suivi des blocs "
+            f"{skill}:{opened_at}: bloc de code non refermé — le suivi des blocs "
             "ne peut plus distinguer un titre Markdown d'un commentaire de shell, "
             "et les compteurs figés y redeviendraient invisibles. Refermer le bloc."
         )
 
-    in_fence = False
     for number, line in enumerate(lines, start=1):
-        if _FENCE.match(line):
-            in_fence = not in_fence
+        if _FENCE.match(line) and number not in inside:
             continue
-        # Un bloc indenté de quatre espaces est du code, sans délimiteur.
         indented_code = line.startswith(("    ", "\t")) and line.strip().startswith("#")
-        # Parité fausse : on ne saute plus rien, quitte à signaler un titre.
         heading = line.lstrip().startswith(("#", ">"))
-        if not unbalanced and not in_fence and heading and not indented_code:
+        if number not in inside and heading and not indented_code:
             continue
         for pattern, label in VOLATILE:
             if re.search(pattern, line, re.IGNORECASE):
