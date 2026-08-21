@@ -119,3 +119,61 @@ class TestLegitimateTransitions:
         )
         assert response.status_code == 200, response.text
         assert response.json()["quantity"] == "120"
+
+
+class TestApprovedQuantityOverride:
+    """Bloquant A : `override_approved` ne remplace pas une autorisation.
+
+    Le premier contournement passait par le champ `status`. Celui-ci passe par
+    `override_approved` : le porteur de BOQ_WRITE ne peut pas approuver, mais
+    il pouvait modifier une quantité approuvée en se déclarant lui-même
+    autorisé à déroger — et la ligne redescendait à « vérifié » au passage.
+    """
+
+    def test_a_writer_cannot_override_an_approved_quantity(
+        self,
+        seeded_client: TestClient,
+        admin: dict[str, str],
+        estimator: dict[str, str],
+        item: dict,
+    ) -> None:
+        seeded_client.post(f"/api/v1/boq-items/{item['id']}/approve", headers=admin)
+        response = seeded_client.patch(
+            f"/api/v1/boq-items/{item['id']}",
+            headers=estimator,
+            json={"quantity": "999", "override_approved": True, "override_reason": "Probe"},
+        )
+        assert response.status_code == 403, response.text
+
+        listed = seeded_client.get(f"/api/v1/boqs/{item['boq_id']}/items", headers=estimator).json()
+        stored = next(row for row in listed if row["id"] == item["id"])
+        assert stored["quantity"] == "100", "la quantité approuvée a été modifiée"
+        assert stored["status"] == "approved", "le statut approuvé a été perdu"
+
+    def test_an_approver_still_needs_a_reason(
+        self, seeded_client: TestClient, admin: dict[str, str], item: dict
+    ) -> None:
+        seeded_client.post(f"/api/v1/boq-items/{item['id']}/approve", headers=admin)
+        response = seeded_client.patch(
+            f"/api/v1/boq-items/{item['id']}",
+            headers=admin,
+            json={"quantity": "999", "override_approved": True},
+        )
+        assert response.status_code == 422
+
+    def test_an_approver_with_a_reason_may_override_and_it_is_audited(
+        self, seeded_client: TestClient, admin: dict[str, str], item: dict
+    ) -> None:
+        seeded_client.post(f"/api/v1/boq-items/{item['id']}/approve", headers=admin)
+        response = seeded_client.patch(
+            f"/api/v1/boq-items/{item['id']}",
+            headers=admin,
+            json={"quantity": "999", "override_approved": True, "override_reason": "Métré corrigé"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["quantity"] == "999"
+        assert response.json()["status"] == "verified"
+
+        events = seeded_client.get("/api/v1/audit/events", headers=admin).json()
+        rows = events["items"] if isinstance(events, dict) else events
+        assert any("dérogation" in (e.get("summary") or "").lower() for e in rows), rows[:3]

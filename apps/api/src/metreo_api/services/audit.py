@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..logging_config import request_id_var
-from ..models import AuditEvent, new_id, utcnow
+from ..models import AuditEvent, Organization, new_id, utcnow
 
 
 def _canonical(payload: dict[str, Any]) -> str:
@@ -72,24 +72,31 @@ def compute_hash(
     payload: dict[str, Any],
     previous_hash: str | None,
 ) -> str:
-    material = _canonical(
-        {
-            "schema_version": HASH_SCHEMA_VERSION,
-            "event_id": event_id,
-            "organization_id": organization_id,
-            "sequence": sequence,
-            "occurred_at": occurred_at,
-            "actor_user_id": actor_user_id,
-            "actor_email": actor_email,
-            "request_id": request_id,
-            "action": action,
-            "object_type": object_type,
-            "object_id": object_id,
-            "summary": summary,
-            "payload": payload,
-            "previous_hash": previous_hash or "",
-        }
-    )
+    values: dict[str, Any] = {
+        "schema_version": HASH_SCHEMA_VERSION,
+        "event_id": event_id,
+        "organization_id": organization_id,
+        "sequence": sequence,
+        "occurred_at": occurred_at,
+        "actor_user_id": actor_user_id,
+        "actor_email": actor_email,
+        "request_id": request_id,
+        "action": action,
+        "object_type": object_type,
+        "object_id": object_id,
+        "summary": summary,
+        "payload": payload,
+        "previous_hash": previous_hash or "",
+    }
+    # HASHED_FIELDS n'est pas une liste décorative : c'est elle qui décide de
+    # la matière hachée. Un champ ajouté ici sans valeur, ou une valeur sans
+    # déclaration, casse immédiatement au lieu de produire une divergence
+    # silencieuse entre ce que le code hache et ce que la constante annonce.
+    if set(values) != set(HASHED_FIELDS):
+        raise RuntimeError(
+            f"HASHED_FIELDS et la matière hachée divergent : {set(values) ^ set(HASHED_FIELDS)}"
+        )
+    material = _canonical({field: values[field] for field in HASHED_FIELDS})
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -119,21 +126,30 @@ def record(
         if request_id == "-":
             request_id = None
 
-    statement = (
+    # `MAX(sequence) + 1` est une course : deux transactions concurrentes lisent
+    # la même valeur et l'une des deux viole `uq_audit_org_sequence`.
+    #
+    # Verrouiller le dernier événement ne suffisait pas : pour le PREMIER
+    # événement d'une organisation, il n'y a aucune ligne à verrouiller, et les
+    # deux transactions calculaient `sequence = 1`. C'est donc la ligne
+    # `Organization` — qui existe toujours — qui porte le verrou. Elle sérialise
+    # l'allocation par tenant sans retenir les autres.
+    #
+    # SQLite n'a pas de `SELECT ... FOR UPDATE` mais sérialise déjà ses
+    # écritures ; la contrainte d'unicité reste le dernier rempart des deux
+    # côtés.
+    on_postgres = session.bind is not None and session.bind.dialect.name != "sqlite"
+    if on_postgres:
+        session.execute(
+            select(Organization.id).where(Organization.id == organization_id).with_for_update()
+        )
+
+    last = session.scalars(
         select(AuditEvent)
         .where(AuditEvent.organization_id == organization_id)
         .order_by(AuditEvent.sequence.desc())
         .limit(1)
-    )
-    # `MAX(sequence) + 1` est une course : deux transactions concurrentes lisent
-    # la même valeur et l'une des deux viole `uq_audit_org_sequence`. Le verrou
-    # de ligne sérialise l'allocation par organisation — les autres tenants ne
-    # sont pas retenus. SQLite n'a pas de SELECT ... FOR UPDATE, mais y sérialise
-    # déjà les écritures ; la contrainte d'unicité reste le dernier rempart dans
-    # les deux cas.
-    if session.bind is not None and session.bind.dialect.name != "sqlite":
-        statement = statement.with_for_update()
-    last = session.scalars(statement).first()
+    ).first()
 
     sequence = (last.sequence if last else 0) + 1
     occurred_at = utcnow()
@@ -154,6 +170,7 @@ def record(
         payload=safe_payload,
         request_id=request_id,
         previous_hash=last.hash if last else None,
+        hash_schema_version=HASH_SCHEMA_VERSION,
         hash=compute_hash(
             event_id=event_id,
             organization_id=organization_id,
@@ -191,6 +208,18 @@ def verify_chain(session: Session, organization_id: str) -> dict[str, Any]:
                 "checked": len(events),
                 "failed_at_sequence": event.sequence,
                 "reason": "sequence_gap",
+            }
+        if event.hash_schema_version != HASH_SCHEMA_VERSION:
+            # Un événement scellé sous une autre version ne peut pas être jugé
+            # par le schéma d'aujourd'hui : le dire, plutôt que de le déclarer
+            # falsifié à tort.
+            return {
+                "valid": False,
+                "checked": len(events),
+                "failed_at_sequence": event.sequence,
+                "reason": "hash_schema_version_mismatch",
+                "event_schema_version": event.hash_schema_version,
+                "code_schema_version": HASH_SCHEMA_VERSION,
             }
         expected = compute_hash(
             event_id=event.id,

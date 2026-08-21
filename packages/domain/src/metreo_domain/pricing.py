@@ -591,6 +591,15 @@ def compute_line_price(
     check_total(direct_cost.amount, label="déboursé sec de la ligne")
     check_total(cost_price.amount, label="prix de revient de la ligne")
     check_total(selling_price_ht.amount, label="prix de vente HT de la ligne")
+    # Les taxes et le TTC sont stockés et exportés comme le HT : les contrôler
+    # ici, et non seulement lorsque la ligne est agrégée par `compute_estimate`.
+    # Une ligne calculée seule — sous-détail, aperçu — doit être refusée par le
+    # même chemin.
+    total_tax = Decimal(0)
+    for tax, amount in tax_amounts:
+        check_total(amount.amount, label=f"total de {tax.code} sur la ligne")
+        total_tax += amount.amount
+    check_total(selling_price_ht.amount + total_tax, label="total TTC de la ligne")
 
     return LinePriceResult(
         quantity=quantity,

@@ -124,7 +124,19 @@ def test_every_significant_column_is_covered_by_the_hash() -> None:
     # Ces colonnes sont exclues à dessein : `hash` est le résultat lui-même,
     # `previous_hash` et `sequence` sont la structure de la chaîne (vérifiés
     # séparément), `payload` est déjà couvert, `id` est vérifié via le hash.
-    structural = {"hash", "previous_hash", "sequence", "payload", "occurred_at", "id"}
+    # `hash_schema_version` est structurel : il dit sous quel schéma l'événement
+    # a été scellé, et `verify_chain` s'en sert pour refuser de juger un scellé
+    # d'hier avec le code d'aujourd'hui. Le falsifier fait échouer la
+    # vérification par ce chemin, pas par le hash.
+    structural = {
+        "hash",
+        "previous_hash",
+        "sequence",
+        "payload",
+        "occurred_at",
+        "id",
+        "hash_schema_version",
+    }
     # `organization_id` a son propre test : le falsifier vers une organisation
     # inexistante est refusé par la clé étrangère, pas par le hash.
     uncovered = columns - structural - set(TAMPERABLE_FIELDS) - {"organization_id"}

@@ -146,3 +146,108 @@ class TestStoredValuesStayWithinCapacity:
         assert listed.status_code == 200
         stored = next(row for row in listed.json() if row["id"] == item_id)
         assert Decimal(stored["quantity"]) == bounds.QUANTITY.maximum
+
+
+class TestTheOriginalDefectEndToEnd:
+    """Le scénario exact de la revue, reproduit au niveau HTTP.
+
+    Quantité 1e9 m³ à 1e9 EUR/m³ : deux valeurs chacune dans sa plage, dont le
+    produit vaut 1,285 × 10^18 après majorations — au-dessus de la capacité de
+    `NUMERIC(28, 10)`. `/computation` répondait 200 et le gel échouait en 500.
+    """
+
+    @pytest.fixture()
+    def overflowing_version(
+        self, seeded_client: TestClient, headers: dict[str, str], price_version: dict, boq: dict
+    ) -> tuple[str, str]:
+        price = seeded_client.post(
+            f"/api/v1/price-books/versions/{price_version['id']}/items",
+            headers=headers,
+            json={
+                "code": "BIG",
+                "label": "Prix au maximum",
+                "unit_code": "m3",
+                "unit_price": str(bounds.UNIT_PRICE.maximum),
+            },
+        )
+        assert price.status_code == 201, price.text
+        item = seeded_client.post(
+            f"/api/v1/boqs/{boq['id']}/items",
+            headers=headers,
+            json={
+                "position": "9.9",
+                "designation": "Déblai démesuré",
+                "unit_code": "m3",
+                "quantity": str(bounds.QUANTITY.maximum),
+                "price_item_id": price.json()["id"],
+            },
+        )
+        assert item.status_code == 201, item.text
+
+        estimate = seeded_client.post(
+            "/api/v1/estimates",
+            headers=headers,
+            json={
+                "project_id": boq["project_id"],
+                "boq_id": boq["id"],
+                "price_book_version_id": price_version["id"],
+                "name": "Dépassement",
+            },
+        )
+        assert estimate.status_code == 201, estimate.text
+        version = seeded_client.post(
+            f"/api/v1/estimates/{estimate.json()['id']}/versions",
+            headers=headers,
+            json={"label": "v1"},
+        )
+        assert version.status_code == 201, version.text
+        return estimate.json()["id"], version.json()["id"]
+
+    def test_the_computation_refuses_with_422_and_not_200(
+        self,
+        seeded_client: TestClient,
+        headers: dict[str, str],
+        overflowing_version: tuple[str, str],
+    ) -> None:
+        estimate_id, version_id = overflowing_version
+        response = seeded_client.get(
+            f"/api/v1/estimates/{estimate_id}/versions/{version_id}/computation",
+            headers=headers,
+        )
+        assert response.status_code == 422, response.text
+        assert response.status_code != 500
+
+    def test_the_freeze_refuses_with_422_and_never_500(
+        self,
+        seeded_client: TestClient,
+        headers: dict[str, str],
+        overflowing_version: tuple[str, str],
+    ) -> None:
+        estimate_id, version_id = overflowing_version
+        response = seeded_client.post(
+            f"/api/v1/estimates/{estimate_id}/versions/{version_id}/freeze",
+            headers=headers,
+            json={"label": "gel", "confirm": True},
+        )
+        assert response.status_code == 422, response.text
+
+    def test_no_version_is_left_partially_frozen(
+        self,
+        seeded_client: TestClient,
+        headers: dict[str, str],
+        overflowing_version: tuple[str, str],
+    ) -> None:
+        """Un gel refusé ne laisse rien à moitié scellé."""
+        estimate_id, version_id = overflowing_version
+        seeded_client.post(
+            f"/api/v1/estimates/{estimate_id}/versions/{version_id}/freeze",
+            headers=headers,
+            json={"label": "gel", "confirm": True},
+        )
+        versions = seeded_client.get(
+            f"/api/v1/estimates/{estimate_id}/versions", headers=headers
+        ).json()
+        stored = next(v for v in versions if v["id"] == version_id)
+        assert stored["status"] == "draft", stored
+        assert stored.get("frozen_at") is None
+        assert stored.get("snapshot_sha256") is None

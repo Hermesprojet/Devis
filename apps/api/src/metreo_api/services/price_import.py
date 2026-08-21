@@ -200,19 +200,55 @@ def _parse_decimal(
     return parsed
 
 
-def _check_length(value: str | None, column: str, maximum: int, errors: list[RowError]) -> None:
-    """Les longueurs SQL sont des règles métier, pas un détail de stockage.
+#: Valeurs acceptées pour les colonnes énumérées de `PriceItem`.
+VALID_STATUS = frozenset({"active", "draft", "archived", "superseded"})
+VALID_CONFIDENCE = frozenset({"declared", "quoted", "contracted", "estimated"})
 
-    Sans ce contrôle, une valeur trop longue passe la prévisualisation puis
-    échoue à l'écriture — sur PostgreSQL par une erreur SQL, sur SQLite par une
-    troncature silencieuse. Les deux sont pires qu'un refus de ligne.
+
+def sql_length(column: str) -> int:
+    """Longueur maximale **lue sur la colonne**, jamais recopiée à la main.
+
+    La première version de ce contrôle portait des constantes écrites de
+    mémoire : `family` était vérifié à 120 pour une colonne `String(60)`, et
+    `region_code` à 20 pour un `String(10)`. Une ligne passait donc la
+    prévisualisation puis échouait à l'écriture. Lire la longueur sur le modèle
+    supprime la classe entière de ce défaut : une migration qui change la
+    colonne change le contrôle.
     """
+    sql_column = PriceItem.__table__.columns[column]
+    length = getattr(sql_column.type, "length", None)
+    if length is None:  # pragma: no cover - colonne Text, sans limite
+        raise KeyError(f"La colonne {column} ne porte pas de longueur.")
+    return int(length)
+
+
+def _check_length(value: str | None, column: str, errors: list[RowError]) -> None:
+    """Une valeur trop longue échoue autrement à l'écriture — erreur SQL sur
+    PostgreSQL, troncature silencieuse sur SQLite. Les deux sont pires qu'un
+    refus de ligne."""
+    maximum = sql_length(column)
     if value and len(value) > maximum:
         errors.append(
             RowError(
                 column,
                 "too_long",
                 f"« {value[:20]}… » fait {len(value)} caractères, maximum {maximum}.",
+            )
+        )
+
+
+def _check_choice(
+    value: str | None, column: str, allowed: frozenset[str], errors: list[RowError]
+) -> None:
+    """Une énumération non contrôlée écrit n'importe quelle chaîne en base."""
+    if value and value not in allowed:
+        errors.append(
+            RowError(
+                column,
+                f"invalid_{column}",
+                f"« {value} » n'est pas une valeur acceptée. Attendu : "
+                + ", ".join(sorted(allowed))
+                + ".",
             )
         )
 
@@ -378,11 +414,19 @@ def parse_csv(
                 else:
                     lead_time = int(as_decimal)
 
-        _check_length(code, "code", 60, errors)
-        _check_length(values.get("label"), "label", 255, errors)
-        _check_length(values.get("supplier_name"), "supplier_name", 200, errors)
-        _check_length(values.get("region_code"), "region_code", 20, errors)
-        _check_length(values.get("family"), "family", 120, errors)
+        for column in (
+            "code",
+            "label",
+            "family",
+            "supplier_name",
+            "region_code",
+            "source",
+            "indexation",
+        ):
+            cell = code if column == "code" else values.get(column)
+            _check_length(cell, column, errors)
+        _check_choice(values.get("status"), "status", VALID_STATUS, errors)
+        _check_choice(values.get("confidence"), "confidence", VALID_CONFIDENCE, errors)
 
         duplicate_in_file = False
         if code:
@@ -501,6 +545,46 @@ def create_preview(
     return batch, meta
 
 
+def validate_normalized(data: dict[str, Any]) -> list[RowError]:
+    """Revalide une ligne de staging avant écriture.
+
+    La prévisualisation et la confirmation sont deux requêtes séparées par un
+    temps arbitraire. Entre les deux, une contrainte a pu changer, une
+    migration a pu raccourcir une colonne, ou la ligne de staging a pu être
+    altérée. Accepter aveuglément ce qui a été jugé valide un jour donné
+    reviendrait à faire confiance à un contrôle qui n'existe plus.
+    """
+    errors: list[RowError] = []
+    for column in (
+        "code",
+        "label",
+        "family",
+        "supplier_name",
+        "region_code",
+        "source",
+        "indexation",
+    ):
+        _check_length(data.get(column), column, errors)
+    _check_choice(data.get("status"), "status", VALID_STATUS, errors)
+    _check_choice(data.get("confidence"), "confidence", VALID_CONFIDENCE, errors)
+
+    price = data.get("unit_price")
+    if price is not None:
+        try:
+            bounds.UNIT_PRICE.check(to_decimal(price), label="unit_price")
+        except (OutOfBoundsError, DomainError) as exc:
+            errors.append(RowError("unit_price", exc.code, exc.message))
+
+    lead_time = data.get("lead_time_days")
+    if lead_time is not None and (not isinstance(lead_time, int) or lead_time < 0):
+        errors.append(
+            RowError(
+                "lead_time_days", "invalid_lead_time", "Délai invalide au moment de l'écriture."
+            )
+        )
+    return errors
+
+
 def commit_batch(
     session: Session,
     batch: ImportBatch,
@@ -532,10 +616,26 @@ def commit_batch(
         ).all()
     }
 
+    rejected_at_commit: list[dict[str, Any]] = []
+
     for row in batch.rows:
         if not row.is_valid or not row.normalized:
             continue
         data = dict(row.normalized)
+
+        late_errors = validate_normalized(data)
+        if late_errors:
+            rejected_at_commit.append(
+                {
+                    "line_number": row.line_number,
+                    "code": data.get("code"),
+                    "outcome": "rejected_at_commit",
+                    "errors": [e.to_dict() for e in late_errors],
+                }
+            )
+            details.append(rejected_at_commit[-1])
+            continue
+
         code = data["code"]
         current = existing.get(code)
 
@@ -577,6 +677,9 @@ def commit_batch(
         "updated": updated,
         "skipped": skipped,
         "conflicted": conflicted,
+        # Une ligne jugée valide à la prévisualisation et refusée à l'écriture
+        # doit être visible : la taire ferait croire à un import complet.
+        "rejected_at_commit": len(rejected_at_commit),
         "strategy": effective_strategy,
         "details": details,
     }

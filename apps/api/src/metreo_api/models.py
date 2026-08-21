@@ -648,5 +648,10 @@ class AuditEvent(Base):
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict] = mapped_column(SAJSON, nullable=False, default=dict)
     request_id: Mapped[str | None] = mapped_column(String(64))
+    #: Version du schéma de hash sous laquelle l'événement a été scellé. Une
+    #: constante Python seule ne permettrait pas de revérifier durablement des
+    #: événements créés sous plusieurs versions : la vérification lirait le code
+    #: d'aujourd'hui pour juger un scellé d'hier.
+    hash_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     previous_hash: Mapped[str | None] = mapped_column(String(64))
     hash: Mapped[str] = mapped_column(String(64), nullable=False)

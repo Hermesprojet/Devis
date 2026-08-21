@@ -246,6 +246,30 @@ def update_item(
                 "current_unit": item.unit_code,
             },
         )
+    # Déroger n'est pas une case à cocher : c'est approuver de nouveau. Sans ce
+    # contrôle, un porteur de BOQ_WRITE refusé sur /approve modifiait une
+    # quantité approuvée en se déclarant lui-même autorisé, et la ligne
+    # redescendait à « vérifié » au passage — le verrou se contournait par son
+    # propre mécanisme de dérogation.
+    if (
+        item.status == "approved"
+        and touches_quantity
+        and override
+        and not context.can(Permission.BOQ_APPROVE)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "approval_required_to_override",
+                "message": (
+                    "Modifier une quantité approuvée exige le droit "
+                    "d'approbation. Demandez la dérogation à un responsable "
+                    "étude de prix."
+                ),
+                "required_permission": Permission.BOQ_APPROVE.value,
+            },
+        )
+
     if item.status == "approved" and touches_quantity and override and not reason:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

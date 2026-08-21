@@ -371,6 +371,9 @@ class ImportCommitOut(BaseModel):
     updated: int
     skipped: int
     conflicted: int
+    #: Lignes jugées valides à la prévisualisation et refusées à l'écriture.
+    #: Les taire ferait croire à un import complet.
+    rejected_at_commit: int = 0
     strategy: str
     details: list[dict[str, Any]]
 

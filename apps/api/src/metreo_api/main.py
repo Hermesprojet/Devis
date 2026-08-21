@@ -67,7 +67,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next: Callable[[Request], Awaitable]):
-        request_id = request.headers.get("X-Request-Id") or uuid.uuid4().hex
+        # La colonne d'audit stocke 64 caractères. Un en-tête plus long serait
+        # tronqué à l'écriture — sur PostgreSQL par une erreur, sur SQLite en
+        # silence — et l'identifiant journalisé ne correspondrait plus à celui
+        # renvoyé au client. Un en-tête hors format est remplacé, pas coupé.
+        supplied = request.headers.get("X-Request-Id")
+        request_id = supplied if supplied and len(supplied) <= 64 else uuid.uuid4().hex
         token = request_id_var.set(request_id)
         started = time.perf_counter()
         # Le `reset` doit venir APRÈS la journalisation, pas avant : placé dans
@@ -88,6 +93,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 },
             )
             return response
+        except Exception:
+            # Une requête qui explose doit laisser une trace corrélée : sans
+            # cela, le seul cas où l'on a vraiment besoin du journal est
+            # précisément celui qui n'y figure pas.
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            logger.exception(
+                "http_request_failed",
+                extra={
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": 500,
+                    "duration_ms": duration_ms,
+                },
+            )
+            raise
         finally:
             request_id_var.reset(token)
 

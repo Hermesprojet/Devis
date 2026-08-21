@@ -13,6 +13,9 @@ from fastapi.testclient import TestClient
 from .conftest import login
 
 HEADER = "code,label,unit_code,unit_price,lead_time_days\n"
+WIDE_HEADER = (
+    "code,label,unit_code,unit_price,family,region_code,source,indexation,status,confidence\n"
+)
 
 
 @pytest.fixture()
@@ -117,3 +120,117 @@ class TestNothingIsWrittenBeforeConfirmation:
             f"/api/v1/price-books/versions/{version}/items", headers=headers
         ).json()
         assert listed == [] or listed.get("items") == []
+
+
+def _wide(client: TestClient, headers: dict[str, str], version: str, body: str) -> dict:
+    response = client.post(
+        f"/api/v1/price-books/versions/{version}/imports/preview",
+        headers=headers,
+        files={"file": ("prix.csv", WIDE_HEADER + body, "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+class TestLengthsComeFromTheModel:
+    """Bloquant B : les limites étaient recopiées, et fausses.
+
+    `family` était contrôlé à 120 pour une colonne `String(60)`, `region_code`
+    à 20 pour un `String(10)`. Une ligne passait la prévisualisation puis
+    échouait à l'écriture.
+    """
+
+    def test_the_declared_limits_match_the_sql_columns(self) -> None:
+        from metreo_api.models import PriceItem
+        from metreo_api.services.price_import import sql_length
+
+        for column in (
+            "code",
+            "label",
+            "family",
+            "supplier_name",
+            "region_code",
+            "source",
+            "indexation",
+        ):
+            assert sql_length(column) == PriceItem.__table__.columns[column].type.length
+
+    def test_a_family_past_the_real_column_length_is_refused(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        report = _wide(seeded_client, headers, version, f"A,Libellé,m3,10,{'F' * 61},BE,,,,\n")
+        row = _row(report)
+        assert row["is_valid"] is False, row
+        assert any(e["column"] == "family" for e in row["errors"])
+
+    def test_a_region_code_past_the_real_column_length_is_refused(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        report = _wide(seeded_client, headers, version, f"A,Libellé,m3,10,,{'R' * 11},,,,\n")
+        assert _row(report)["is_valid"] is False
+
+
+class TestEnumeratedColumns:
+    def test_an_arbitrary_status_is_refused(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        report = _wide(seeded_client, headers, version, "A,Libellé,m3,10,,,,,arbitrary,\n")
+        row = _row(report)
+        assert row["is_valid"] is False, row
+        assert any(e["column"] == "status" for e in row["errors"])
+
+    def test_an_arbitrary_confidence_is_refused(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        report = _wide(seeded_client, headers, version, "A,Libellé,m3,10,,,,,,arbitrary\n")
+        assert _row(report)["is_valid"] is False
+
+    def test_the_accepted_values_still_pass(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        report = _wide(seeded_client, headers, version, "A,Libellé,m3,10,,,,,active,quoted\n")
+        assert _row(report)["is_valid"] is True, _row(report)
+
+
+class TestCommitRevalidates:
+    def test_a_staging_row_altered_after_preview_is_refused_at_commit(
+        self, seeded_client: TestClient, headers: dict[str, str], version: str
+    ) -> None:
+        """La prévisualisation ne fait pas foi indéfiniment.
+
+        Entre les deux requêtes, la ligne de staging peut être altérée ou une
+        contrainte peut avoir changé. L'écriture revalide.
+        """
+        from sqlalchemy import select, update
+
+        from metreo_api.db import get_session_factory
+        from metreo_api.models import ImportBatchRow
+
+        report = _preview(seeded_client, headers, version, "A,Bon,m3,10,\n")
+        assert report["valid_count"] == 1
+        batch_id = report["batch_id"]
+
+        session = get_session_factory()()
+        try:
+            row = session.scalars(
+                select(ImportBatchRow).where(ImportBatchRow.batch_id == batch_id)
+            ).first()
+            assert row is not None
+            forged = dict(row.normalized)
+            forged["label"] = "L" * 300
+            session.execute(
+                update(ImportBatchRow).where(ImportBatchRow.id == row.id).values(normalized=forged)
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        committed = seeded_client.post(
+            f"/api/v1/price-books/imports/{batch_id}/commit",
+            headers=headers,
+            json={"confirm": True},
+        )
+        assert committed.status_code == 200, committed.text
+        body = committed.json()
+        assert body["created"] == 0
+        assert body["rejected_at_commit"] == 1
