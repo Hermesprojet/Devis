@@ -376,6 +376,10 @@ def content_disposition(stem: str, extension: str) -> str:
     cleaned = "".join(
         character if character.isalnum() or character in "-_." else "-" for character in stem
     ).strip("-")
+    # Borné : certains systèmes de fichiers refusent au-delà de 255 octets, et
+    # un nom démesuré n'apporte rien. L'extension est ajoutée après, donc
+    # toujours présente.
+    cleaned = cleaned[:120]
     ascii_stem = (
         unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii") or "export"
     )

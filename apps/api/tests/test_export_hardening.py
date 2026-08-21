@@ -18,6 +18,7 @@ from typing import ClassVar
 import pytest
 from fastapi.testclient import TestClient
 
+from metreo_api.services.exports import content_disposition
 from metreo_domain import bounds
 
 from .conftest import login
@@ -139,6 +140,7 @@ class TestCsvFormulaInjection:
         pytest.param("\rinjection", id="retour-chariot"),
         pytest.param('=HYPERLINK("http://exemple.test","clic")', id="hyperlien"),
         pytest.param("=cmd|'/c calc'!A0", id="commande-DDE"),
+        pytest.param("\r\nX-Test: injected", id="en-tête-injecté"),
     ]
 
     @pytest.mark.parametrize("payload", DANGEROUS)
@@ -219,3 +221,26 @@ class TestContentDisposition:
         ).headers["content-disposition"]
         assert disposition.isascii(), disposition
         assert "filename*=UTF-8''" in disposition, disposition
+
+
+class TestFilenameEdgeCases:
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            pytest.param("a/b", id="barre-oblique"),
+            pytest.param("a\\b", id="antislash"),
+            pytest.param("a\rb", id="retour-chariot"),
+            pytest.param("a\nb", id="saut-de-ligne"),
+            pytest.param('a"b', id="guillemet"),
+            pytest.param("R" * 400, id="très-long"),
+            pytest.param("", id="vide"),
+        ],
+    )
+    def test_the_header_stays_well_formed(self, reference: str) -> None:
+        header = content_disposition(reference, "csv")
+        assert header.isascii()
+        assert "\r" not in header and "\n" not in header
+        assert header.count('"') == 2
+        assert "/" not in header.split('"')[1] and "\\" not in header.split('"')[1]
+        assert header.split('"')[1].endswith(".csv")
+        assert len(header) < 400, len(header)
