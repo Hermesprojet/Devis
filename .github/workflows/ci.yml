@@ -54,11 +54,16 @@ jobs:
           # par une liste parallèle qui masquerait un manque dans pyproject.toml.
           pip install -c constraints/api.txt ./packages/domain "./apps/api[dev]"
       - name: Format et lint
+        # scripts/ y est joint : il porte désormais de la logique — le
+        # contrôle d'installation propre et celui des skills — et non plus
+        # de simples README.
         run: |
-          ruff format --check apps/api/src apps/api/tests
-          ruff check apps/api/src apps/api/tests
+          ruff format --check apps/api/src apps/api/tests scripts
+          ruff check apps/api/src apps/api/tests scripts
       - name: Typage
-        run: mypy apps/api/src/metreo_api
+        run: |
+          mypy apps/api/src/metreo_api
+          mypy scripts
       - name: Tests
         working-directory: apps/api
         run: pytest -q

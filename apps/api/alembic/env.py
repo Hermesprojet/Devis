@@ -12,13 +12,19 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from metreo_api.config import get_settings
+from metreo_api.db import ensure_sqlite_directory
 from metreo_api.models import Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+DATABASE_URL = get_settings().database_url
+# Même geste que l'application : sur un clone neuf, le répertoire de la
+# base SQLite par défaut n'existe pas, et « upgrade head » échouait sur un
+# message qui ne nomme ni le chemin ni ce qui manque.
+ensure_sqlite_directory(DATABASE_URL)
+config.set_main_option("sqlalchemy.url", DATABASE_URL)
 target_metadata = Base.metadata
 
 

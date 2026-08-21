@@ -12,8 +12,9 @@ import re
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
-from metreo_api import config
+from metreo_api import config, db
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
@@ -164,3 +165,59 @@ def test_env_example_carries_no_usable_secret() -> None:
     for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines():
         match = re.match(r"^METREO_(JWT_SECRET|[A-Z0-9_]*(SECRET|TOKEN|PASSWORD|KEY))=(.+)$", line)
         assert match is None, f"valeur renseignée pour un secret dans .env.example : {line}"
+
+
+class TestSqliteStorageDirectory:
+    """Le répertoire par défaut de SQLite n'existe pas dans un clone neuf.
+
+    `METREO_DATABASE_URL` vaut `sqlite+pysqlite:///./var/metreo.sqlite3` par
+    défaut, et `var/` est ignoré par git : `make migrations` échouait donc sur
+    un clone propre avec « unable to open database file », un message qui ne
+    dit pas ce qui manque. Créer le répertoire est le rôle de l'application,
+    pas celui de la personne qui clone.
+    """
+
+    def test_a_missing_directory_is_created_rather_than_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "absent" / "encore" / "metreo.sqlite3"
+        assert not target.parent.exists()
+
+        monkeypatch.setenv("METREO_DATABASE_URL", f"sqlite+pysqlite:///{target}")
+        config.get_settings.cache_clear()
+        db.reset_engine()
+        try:
+            with db.get_engine().connect() as connection:
+                connection.execute(text("SELECT 1"))
+            assert target.exists()
+        finally:
+            db.reset_engine()
+            config.get_settings.cache_clear()
+
+    def test_a_relative_url_is_resolved_against_the_working_directory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("METREO_DATABASE_URL", "sqlite+pysqlite:///./var/metreo.sqlite3")
+        config.get_settings.cache_clear()
+        db.reset_engine()
+        try:
+            with db.get_engine().connect() as connection:
+                connection.execute(text("SELECT 1"))
+            assert (tmp_path / "var" / "metreo.sqlite3").exists()
+        finally:
+            db.reset_engine()
+            config.get_settings.cache_clear()
+
+    def test_an_in_memory_url_creates_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`:memory:` n'est pas un chemin : rien ne doit être créé pour lui."""
+        monkeypatch.setenv("METREO_DATABASE_URL", "sqlite+pysqlite:///:memory:")
+        config.get_settings.cache_clear()
+        db.reset_engine()
+        try:
+            with db.get_engine().connect() as connection:
+                connection.execute(text("SELECT 1"))
+            assert not Path("memory:").exists()
+        finally:
+            db.reset_engine()
+            config.get_settings.cache_clear()

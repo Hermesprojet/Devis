@@ -44,17 +44,20 @@ install: ## Créer l'environnement virtuel et installer les dépendances
 
 .PHONY: format
 format: ## Formater le code Python
-	$(RUFF) format $(DOMAIN) apps/api/src apps/api/tests
+	$(RUFF) format $(DOMAIN) apps/api/src apps/api/tests scripts
 
 .PHONY: lint
 lint: ## Format et lint Python, sans rien modifier
-	$(RUFF) format --check $(DOMAIN) apps/api/src apps/api/tests
-	$(RUFF) check $(DOMAIN) apps/api/src apps/api/tests
+	$(RUFF) format --check $(DOMAIN) apps/api/src apps/api/tests scripts
+	$(RUFF) check $(DOMAIN) apps/api/src apps/api/tests scripts
 
 .PHONY: types
 types: ## Vérification de types Python
 	$(MYPY) $(DOMAIN)/src/metreo_domain
 	$(MYPY) $(API_SRC)/metreo_api
+	# scripts/ porte désormais de la logique — le contrôle d'installation
+	# propre et celui des skills — et non plus de simples README.
+	$(MYPY) scripts
 
 .PHONY: test-domain
 test-domain: ## Tests du moteur de calcul (aucune base requise)

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 from typing import Any, Final
 
 from sqlalchemy import Numeric, String, create_engine, event
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
 
@@ -102,6 +103,27 @@ def _apply_sqlite_pragmas(dbapi_connection: Any, _record: Any) -> None:
     cursor.close()
 
 
+def ensure_sqlite_directory(url: str) -> None:
+    """Create the parent directory of a file-backed SQLite database.
+
+    The default URL points at ``./var/metreo.sqlite3`` and ``var/`` is not
+    versioned, so a fresh clone has no such directory. SQLite does not create
+    it; it reports ``unable to open database file``, which names neither the
+    path nor what is missing. Creating the directory belongs to the
+    application, not to whoever clones the repository.
+
+    Anything that is not a filesystem path is left alone — ``:memory:`` and the
+    shared-cache URI form are databases, not files.
+    """
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "sqlite":
+        return
+    database = parsed.database
+    if not database or database == ":memory:" or database.startswith("file:"):
+        return
+    Path(database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
+
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
@@ -109,6 +131,7 @@ def get_engine() -> Engine:
         kwargs: dict[str, Any] = {"echo": settings.sql_echo, "future": True}
         if settings.database_url.startswith("sqlite"):
             kwargs["connect_args"] = {"check_same_thread": False}
+        ensure_sqlite_directory(settings.database_url)
         _engine = create_engine(settings.database_url, **kwargs)
         if _engine.dialect.name == "sqlite":
             event.listen(_engine, "connect", _apply_sqlite_pragmas)
