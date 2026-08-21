@@ -55,6 +55,15 @@ class TestRefusedUrls:
             # La liste de refus l'emporte sur celle d'acceptation.
             pytest.param(f"{PG}://u:p@h:5432/metreo_ci_production", id="ci-mais-production"),
             pytest.param(f"{PG}://u:p@h:5432/test_live", id="test-mais-live"),
+            # Le composant contrôlé doit être celui qui fait autorité. psycopg
+            # obéit à « dbname= » de la chaîne de requête, qui écrase le chemin :
+            # le garde-fou annonçait « metreo_gate » pendant qu'alembic vidait
+            # « metreo ». Reproduit, avec destruction réelle d'une base témoin.
+            pytest.param(f"{PG}://u:p@h:5432/metreo_gate?dbname=metreo", id="dbname-écrasé"),
+            pytest.param(f"{PG}://u:p@h:5432/metreo_gate?host=/tmp&dbname=x", id="hôte-et-base"),
+            pytest.param(f"{PG}://u:p@h:5432/metreo_gate?service=prod", id="service-pg"),
+            pytest.param(f"{PG}://u:p@h:5432/metreo_gate?user=root", id="utilisateur"),
+            pytest.param("pas une url du tout", id="illisible"),
             pytest.param("", id="vide"),
             pytest.param(f"{PG}://metreo:metreo@localhost:5432/", id="sans-base"),
         ],
@@ -85,12 +94,34 @@ class TestAcceptedUrls:
         assert guard.refusal(url) is None, guard.refusal(url)
 
 
+class TestTheAuthoritativeComponent:
+    """Le nom contrôlé doit être celui que le pilote ouvre réellement."""
+
+    def test_a_query_parameter_cannot_move_the_target_silently(self) -> None:
+        from sqlalchemy.engine import make_url
+
+        url = f"{PG}://metreo:metreo@localhost:5432/metreo_gate?dbname=metreo"
+        parsed = make_url(url)
+        # Le chemin dit une chose…
+        assert parsed.database == "metreo_gate"
+        # …le pilote en fait une autre.
+        arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
+        assert arguments["dbname"] == "metreo"
+        # Le garde-fou ne doit donc pas se laisser rassurer par le chemin.
+        assert guard.refusal(url) is not None
+
+    def test_the_search_path_parameter_stays_legitimate(self) -> None:
+        """La conftest en ajoute un : il ne déplace pas la base, il la scope."""
+        url = f"{PG}://metreo:metreo@localhost:5432/metreo_gate?options=-csearch_path%3Ds1"
+        assert guard.refusal(url) is None
+
+
 class TestNameExtraction:
     @pytest.mark.parametrize(
         ("url", "expected"),
         [
             (f"{PG}://u:p@h:5432/metreo_gate", "metreo_gate"),
-            (f"{PG}://u:p@h:5432/metreo_gate?options=-csearch_path=x", "metreo_gate"),
+            (f"{PG}://u:p@h:5432/metreo_gate?options=-csearch_path%3Dx", "metreo_gate"),
             ("sqlite+pysqlite:///./var/metreo.sqlite3", "metreo.sqlite3"),
             (f"{PG}://u:p@ci.example.com:5432/metreo", "metreo"),
         ],

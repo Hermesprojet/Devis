@@ -43,11 +43,18 @@ pytestmark = pytest.mark.skipif(
 
 
 def hammer(work: Callable[[int], Any], *, threads: int, waves: int) -> list[Any]:
-    """Run ``work`` under plain concurrent load — no barrier, no instrumentation.
+    """Run ``work`` under plain concurrent load.
 
-    A barrier makes a race reproducible; its absence makes the result
-    believable. If the defect needs a barrier to appear, it is a curiosity.
-    If it appears under ordinary load, it is a bug users will meet.
+    **Ce que cette charge ne prouve pas.** Vérifié : les trois tests qui
+    l'utilisent restent verts avec le `FOR UPDATE` fautif rétabli. La fenêtre
+    est trop étroite pour qu'une charge de cette taille la rencontre de façon
+    fiable. Ils gardent leur place comme filet de sécurité sur les routes
+    réelles — un 500 sous charge reste un 500 — mais **seul le test à barrière
+    ci-dessus démontre que l'interblocage est fermé**, et c'est lui qui tombe
+    si le mode de verrou régresse.
+
+    Le dire ici plutôt que de laisser croire l'inverse : une assurance qu'un
+    test ne fournit pas est pire que son absence, parce qu'on s'y fie.
     """
     results: list[Any] = []
     guard = threading.Lock()

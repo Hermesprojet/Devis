@@ -27,7 +27,8 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from urllib.parse import unquote, urlsplit
+
+from sqlalchemy.engine import make_url
 
 #: A database name carrying one of these tokens is understood as throw-away.
 DISPOSABLE_TOKENS = frozenset({"test", "tests", "gate", "ci", "tmp", "temp", "scratch"})
@@ -36,17 +37,42 @@ DISPOSABLE_TOKENS = frozenset({"test", "tests", "gate", "ci", "tmp", "temp", "sc
 FORBIDDEN_TOKENS = frozenset({"prod", "prods", "production", "live", "prd", "real"})
 
 
-def database_name(url: str) -> str:
-    """The database name alone — no host, no user, no password, no query.
+#: Query parameters that move the connection somewhere other than where the
+#: URL path says. libpq reads them, SQLAlchemy passes them through, and the
+#: path then names a database nobody connects to.
+REDIRECTING_PARAMETERS = frozenset(
+    {"dbname", "host", "hostaddr", "port", "user", "service", "passfile"}
+)
 
-    SQLAlchemy URLs carry a driver in the scheme (``postgresql+psycopg``),
-    which ``urlsplit`` handles, and the test harness appends
-    ``?options=-csearch_path=…``, which must not be read as part of the name.
+
+def effective_database(url: str) -> str:
+    """The database the driver will actually open — not the one the path names.
+
+    Reading ``urlsplit(url).path`` is reading the wrong component. The psycopg
+    dialect merges the URL query into its connection arguments, so
+    ``…/metreo_gate?dbname=metreo`` names ``metreo_gate`` in its path and opens
+    ``metreo``. A guard that validates the path validates a database nobody
+    touches, and prints its reassuring name while another one is destroyed.
+    That was reproduced: a victim database went from two organisations to zero
+    while the announced disposable database stayed untouched.
+
+    So the dialect is asked what it will do. When it cannot be asked — an
+    unknown driver, an unparsable URL — the caller is told, rather than being
+    given a guess.
     """
-    parts = urlsplit(url)
-    path = unquote(parts.path).lstrip("/")
-    # A SQLite file URL names a path; its final component is the database.
-    return path.rsplit("/", 1)[-1]
+    from sqlalchemy.engine import make_url
+
+    parsed = make_url(url)
+    if parsed.get_backend_name() == "sqlite":
+        # A SQLite URL names a file; its final component is the database.
+        return (parsed.database or "").rsplit("/", 1)[-1]
+    arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
+    return str(arguments.get("dbname") or arguments.get("database") or parsed.database or "")
+
+
+def database_name(url: str) -> str:
+    """Kept for readability at call sites; the effective name is what counts."""
+    return effective_database(url)
 
 
 def tokens(name: str) -> list[str]:
@@ -57,6 +83,25 @@ def refusal(url: str) -> str | None:
     """Return why this URL is refused, or ``None`` when it is acceptable."""
     if not url.strip():
         return "aucune URL fournie"
+
+    from sqlalchemy.exc import ArgumentError
+
+    try:
+        parsed = make_url(url)
+    except (ArgumentError, ValueError) as exc:
+        return f"URL illisible ({exc})"
+
+    # Un paramètre de requête qui déplace la connexion rend le contrôle
+    # inopérant : ce qui est validé n'est plus ce qui est ouvert. Plutôt que de
+    # tenter de suivre chaque redirection, on les refuse — aucune n'a de raison
+    # d'être dans l'URL d'une commande destructrice.
+    redirecting = sorted(set(parsed.query) & REDIRECTING_PARAMETERS)
+    if redirecting:
+        return (
+            f"l'URL porte {redirecting} dans sa chaîne de requête, ce qui déplace la "
+            "connexion ailleurs que là où son chemin le dit : le nom contrôlé ne serait "
+            "pas celui de la base ouverte"
+        )
 
     name = database_name(url)
     if not name:

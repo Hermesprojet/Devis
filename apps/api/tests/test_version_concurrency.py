@@ -370,13 +370,38 @@ class TestApprovedQuantityLock:
     l'approbation d'une quantité qui n'était plus celle du poste.
     """
 
-    def test_an_approval_cannot_slip_between_the_read_and_the_write(
-        self, seeded: dict[str, str], database_url: str
+    def test_the_route_holds_the_row_between_the_read_and_the_write(
+        self, seeded: dict[str, str], database_url: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from sqlalchemy import create_engine
+        """La propriété, observée dans la fenêtre où elle compte.
+
+        Trois tentatives ont échoué avant celle-ci, et chacune pour une raison
+        différente qu'il vaut mieux écrire que réapprendre :
+
+        * la première réimplémentait la séquence au lieu d'appeler la route,
+          donc elle testait `lock_owned` et non le correctif — le retirer de
+          `routers/boq.py` la laissait verte ;
+        * la deuxième passait par la route mais dépendait d'une course : le fil
+          d'écriture gagnait à tous les coups, une dizaine de millisecondes
+          d'avance mesurée, si bien que l'entrelacement fautif ne survenait
+          jamais ;
+        * la troisième sondait le verrou *après* le retour de la route, alors
+          que l'`UPDATE` lui-même verrouille la ligne : la sonde voyait un
+          verrou tenu même sans le correctif.
+
+        La fenêtre à observer est celle qui sépare la lecture du statut de
+        l'écriture. `_check_price_links` y est appelé : on s'y greffe pour
+        tenter, depuis une autre connexion, le verrou qu'une approbation
+        concurrente prendrait. `lock_timeout` transforme l'attente en preuve.
+        """
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.exc import OperationalError
         from sqlalchemy.orm import Session
 
-        from metreo_api.models import BoqItem
+        from metreo_api.models import BoqItem, Membership, Organization, User
+        from metreo_api.routers import boq as boq_router
+        from metreo_api.schemas import BoqItemUpdate
+        from metreo_api.security.auth import TenantContext
         from metreo_api.services.locking import lock_owned
 
         engine = create_engine(database_url)
@@ -388,66 +413,49 @@ class TestApprovedQuantityLock:
             item_id, organization_id = item.id, item.organization_id
         engine.dispose()
 
-        barrier = threading.Barrier(2)
-        commits: dict[str, float] = {}
+        observed: dict[str, bool] = {}
+        original = boq_router._check_price_links
 
-        def write_quantity(session: Session, _barrier: threading.Barrier) -> str:
-            barrier.wait(timeout=20)
-            locked = lock_owned(session, BoqItem, organization_id, item_id, label="Poste")
-            if locked.status == "approved":
-                session.rollback()
-                return "approved_quantity_locked"
-            locked.quantity = "999.0000000000"
-            session.commit()
-            commits["write"] = time.monotonic()
-            return "written"
-
-        def approve(session: Session, _barrier: threading.Barrier) -> str:
-            barrier.wait(timeout=20)
-            locked = lock_owned(session, BoqItem, organization_id, item_id, label="Poste")
-            locked.status = "approved"
-            session.commit()
-            commits["approve"] = time.monotonic()
-            return "approved"
-
-        results: dict[str, Any] = {}
-
-        def run(name: str, work: Callable[[Session, threading.Barrier], Any]) -> None:
-            engine = create_engine(database_url)
+        def probe(*args: Any, **kwargs: Any) -> Any:
+            """Ce qu'une approbation concurrente rencontrerait, ici et maintenant."""
+            rival_engine = create_engine(database_url)
             try:
-                with Session(engine) as session:
-                    results[name] = work(session, barrier)
-            except BaseException as exc:
-                results[name] = exc
+                with Session(rival_engine) as rival:
+                    rival.execute(text("SET LOCAL lock_timeout = '400ms'"))
+                    try:
+                        lock_owned(rival, BoqItem, organization_id, item_id, label="Poste")
+                        observed["held"] = False
+                    except OperationalError:
+                        observed["held"] = True
+                        rival.rollback()
             finally:
-                engine.dispose()
+                rival_engine.dispose()
+            return original(*args, **kwargs)
 
-        threads = [
-            threading.Thread(target=run, args=("write", write_quantity)),
-            threading.Thread(target=run, args=("approve", approve)),
-        ]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=30)
-        assert not any(isinstance(value, BaseException) for value in results.values()), results
+        monkeypatch.setattr(boq_router, "_check_price_links", probe)
 
-        engine = create_engine(database_url)
-        with Session(engine) as session:
-            final = session.get(BoqItem, item_id)
-            assert final is not None
-            status_final = final.status
-        engine.dispose()
-        assert status_final == "approved", status_final
+        writer_engine = create_engine(database_url)
+        try:
+            with Session(writer_engine) as writer:
+                organization = writer.get(Organization, organization_id)
+                assert organization is not None
+                membership = writer.scalars(
+                    select(Membership).where(Membership.organization_id == organization_id).limit(1)
+                ).one()
+                user = writer.get(User, membership.user_id)
+                assert user is not None
+                boq_router.update_item(
+                    item_id,
+                    BoqItemUpdate(quantity="999"),
+                    TenantContext(user=user, organization=organization, membership=membership),
+                    writer,
+                )
+                writer.rollback()
+        finally:
+            writer_engine.dispose()
 
-        # L'état final ne dit rien à lui seul : « approuvé, quantité 999 » est
-        # légitime si la quantité a été écrite AVANT l'approbation. Ce qui est
-        # interdit, c'est l'écriture qui se glisse APRÈS. Seul l'ordre des
-        # validations en témoigne — c'est la leçon du test voisin, où un
-        # ensemble d'issues acceptées rendait l'assertion incapable d'échouer.
-        if results["write"] == "written":
-            assert commits["write"] < commits["approve"], (
-                "la quantité a été validée APRÈS l'approbation, sans dérogation "
-                f"ni motif (écriture à {commits['write']}, "
-                f"approbation à {commits['approve']})"
-            )
+        assert observed.get("held") is True, (
+            "entre sa lecture du statut et son écriture, la route ne retient pas "
+            "la ligne : une approbation concurrente s'y intercale, et la quantité "
+            "d'un poste approuvé change sans dérogation ni motif"
+        )

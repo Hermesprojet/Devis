@@ -157,11 +157,35 @@ def volatile_problems(body: str, skill: str) -> list[str]:
     problems: list[str] = []
     lines = body.splitlines()
 
-    fences = [number for number, line in enumerate(lines, start=1) if _FENCE.match(line)]
-    unbalanced = len(fences) % 2 == 1
-    if unbalanced:
+    # La parité seule ne suffit pas : deux ouvertures non refermées font un
+    # compte pair, et l'état resterait inversé sans que rien ne l'annonce. On
+    # distingue donc l'ouverture de la fermeture par sa chaîne d'information —
+    # CommonMark interdit d'en mettre une sur une fermeture, si bien qu'un
+    # « ```bash » rencontré alors qu'un bloc est déjà ouvert ne peut être
+    # qu'une ouverture de plus, donc un bloc laissé béant.
+    unbalanced = False
+    open_at = 0
+    state = False
+    for number, line in enumerate(lines, start=1):
+        match = _FENCE.match(line)
+        if not match:
+            continue
+        info = line.strip().lstrip("`~").strip()
+        if not state:
+            state, open_at = True, number
+        elif info:
+            unbalanced = True
+            problems.append(
+                f"{skill}:{open_at}: bloc de code non refermé — un nouveau bloc "
+                f"s'ouvre ligne {number} alors que celui-ci l'est encore."
+            )
+            open_at = number
+        else:
+            state = False
+    if state:
+        unbalanced = True
         problems.append(
-            f"{skill}:{fences[-1]}: bloc de code non refermé — le suivi des blocs "
+            f"{skill}:{open_at}: bloc de code non refermé — le suivi des blocs "
             "ne peut plus distinguer un titre Markdown d'un commentaire de shell, "
             "et les compteurs figés y redeviendraient invisibles. Refermer le bloc."
         )

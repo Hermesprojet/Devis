@@ -133,6 +133,21 @@ class TestVolatileCounters:
         problems = checker.lint_skill(directory)
         assert any("non refermé" in problem for problem in problems), problems
 
+    def test_two_unclosed_blocks_are_still_caught(self, tmp_path: Path) -> None:
+        """Deux oublis font un compte PAIR : la parité seule ne les voit pas.
+
+        C'est l'angle mort de la première correction — elle ne détectait qu'un
+        nombre impair de délimiteurs orphelins, et deux coupés-collés
+        successifs suffisaient à le refermer en silence.
+        """
+        body = "```bash\npytest -q\n\n```bash\n# compteur B : 42 routes\npytest -q\n"
+        directory = write_skill(tmp_path, "faux-skill", body)
+        problems = checker.lint_skill(directory)
+        assert any("non refermé" in problem for problem in problems), problems
+        assert any("42 routes" in problem or "compteur figé" in problem for problem in problems), (
+            problems
+        )
+
     def test_a_counter_after_an_unclosed_block_is_still_seen(self, tmp_path: Path) -> None:
         """Parité fausse : on cesse de faire confiance à l'état, on lit tout."""
         body = "```bash\npytest -q\n\n```bash\n# attendu : 61 passed\n```"

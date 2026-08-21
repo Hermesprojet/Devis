@@ -98,7 +98,13 @@ endif
 # dédié, et non la base configurée de l'application : `downgrade base` détruit
 # tout ce qu'il touche, et le défaut d'une commande destructrice ne doit pas
 # être « la base sur laquelle vous travaillez ».
-MIGRATION_DATABASE_URL ?= \
+# `?=` ne définirait rien si la variable existait déjà dans l'environnement —
+# et une variable d'environnement compte comme définie. Un développeur ayant
+# exporté MIGRATION_DATABASE_URL l'aurait donc emporté sur la base que
+# release-gate valide et transmet : la cible aurait annoncé une base et détruit
+# l'autre. L'affectation est donc inconditionnelle, et release-gate passe la
+# sienne en ligne de commande, ce qui prime sur tout le reste.
+MIGRATION_DATABASE_URL := \
 	$(if $(METREO_DATABASE_URL),$(METREO_DATABASE_URL),sqlite+pysqlite:///$(CURDIR)/var/migrations-test.sqlite3)
 
 .PHONY: migrations
@@ -233,8 +239,12 @@ release-gate: ## La porte stricte : rien d'ignoré, PostgreSQL jetable obligatoi
 	@# sans cette transmission elles agissaient sur la base configurée dans
 	@# l'environnement du développeur, et `downgrade base` la vidait — alors
 	@# même que la base jetable, elle, n'était jamais touchée.
+	@# Les deux variables sont passées : une affectation en ligne de commande
+	@# l'emporte sur l'environnement, ce qui est la seule façon de garantir que
+	@# la base détruite est bien celle qui vient d'être validée.
 	@$(MAKE) --no-print-directory migrations \
-		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)" \
+		MIGRATION_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@$(MAKE) --no-print-directory seed \
 		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@$(MAKE) --no-print-directory e2e
