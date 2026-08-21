@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from metreo_domain.errors import DomainError
+from metreo_domain.estimate import EstimateResult
 
 from ..db import session_scope
 from ..models import (
@@ -254,21 +255,17 @@ def create_version(
     return version
 
 
-@router.get(
-    "/estimates/{estimate_id}/versions/{version_id}/computation",
-    response_model=ComputationOut,
-    summary="Calculer (ou relire) une version",
-)
-def compute(
-    estimate_id: str,
-    version_id: str,
-    context: TenantContext = Depends(require(Permission.ESTIMATE_READ)),
-    session: Session = Depends(session_scope),
-) -> ComputationOut:
-    estimate = _load(session, context, estimate_id)
-    version = _version(session, context, estimate, version_id)
+def _computed(
+    session: Session, *, estimate: Estimate, version: EstimateVersion
+) -> tuple[EstimateResult, dict[str, object]]:
+    """Calcule une version, ou lève une erreur métier lisible.
+
+    Les quatre routes qui calculent — aperçu, gel, CSV, HTML — traitaient leurs
+    erreurs de trois façons différentes, et les deux exports pas du tout : une
+    ligne incalculable y produisait un 500. Un seul chemin, une seule réponse.
+    """
     try:
-        result, _ = estimating.compute_version(session, estimate=estimate, version=version)
+        return estimating.compute_version(session, estimate=estimate, version=version)
     except PricingInputError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -282,6 +279,22 @@ def compute(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.to_dict()
         ) from exc
+
+
+@router.get(
+    "/estimates/{estimate_id}/versions/{version_id}/computation",
+    response_model=ComputationOut,
+    summary="Calculer (ou relire) une version",
+)
+def compute(
+    estimate_id: str,
+    version_id: str,
+    context: TenantContext = Depends(require(Permission.ESTIMATE_READ)),
+    session: Session = Depends(session_scope),
+) -> ComputationOut:
+    estimate = _load(session, context, estimate_id)
+    version = _version(session, context, estimate, version_id)
+    result, _ = _computed(session, estimate=estimate, version=version)
 
     rounding = estimating.rounding_from_dict(version.rounding) if version.rounding else None
     if rounding is None:
@@ -391,7 +404,8 @@ def export_csv(
     if include_internal:
         context.require(Permission.EXPORT_INTERNAL)
 
-    result, _ = estimating.compute_version(session, estimate=estimate, version=version)
+    # Avant tout effet de bord : un export refusé ne doit rien journaliser.
+    result, _ = _computed(session, estimate=estimate, version=version)
     rounding = estimating.rounding_from_dict(version.rounding)
     content = exports.estimate_to_csv(
         result=result,
@@ -421,11 +435,14 @@ def export_csv(
         actor_email=context.user.email,
         payload={"format": "csv", "include_internal": include_internal},
     )
-    filename = f"{project.reference}-v{version.version_number}.csv"
     return Response(
         content=content.encode("utf-8-sig"),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": exports.content_disposition(
+                f"{project.reference}-v{version.version_number}", "csv"
+            )
+        },
     )
 
 
@@ -448,7 +465,7 @@ def quote_preview(
     settings = session.get(OrganizationSettings, context.organization_id)
     assert settings is not None
 
-    result, _ = estimating.compute_version(session, estimate=estimate, version=version)
+    result, _ = _computed(session, estimate=estimate, version=version)
     include_internal = settings.show_internal_costs_in_client_pdf and context.can(
         Permission.COST_READ
     )

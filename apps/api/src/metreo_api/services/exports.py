@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import csv
 import io
+import unicodedata
+from collections.abc import Sequence
 from datetime import datetime
 from html import escape
 from typing import Any
@@ -67,6 +69,51 @@ def _line_rows(
     return rows
 
 
+#: Caractères qui, en tête de cellule, font qu'un tableur interprète la valeur
+#: comme une formule plutôt que comme du texte.
+_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+
+def _looks_like_a_number(value: str) -> bool:
+    """Un nombre négatif commence par « - » et doit rester tel quel.
+
+    Préfixer aveuglément tout ce qui commence par un tiret casserait la
+    réimportation des montants dans un tableur — le remède serait pire que le
+    mal qu'il prétend traiter.
+    """
+    candidate = value.replace(" ", "").replace("\u202f", "").replace(",", ".")
+    try:
+        float(candidate)
+    except ValueError:
+        return False
+    return True
+
+
+def neutralise_cell(value: object) -> str:
+    """Empêche une cellule de données de devenir une formule.
+
+    Un tableur exécute ce qui commence par `=`, `+`, `-` ou `@`. Une
+    désignation de poste, une référence de projet ou un nom de client viennent
+    d'un tiers : `=cmd|'/c calc'!A0` dans un libellé devient une commande
+    lancée à l'ouverture, sur le poste du destinataire du devis.
+
+    Le remède est le préfixe apostrophe, compris par Excel et LibreOffice comme
+    « ceci est du texte ». Les nombres en sont exemptés : un montant négatif
+    doit rester un montant. Les caractères de contrôle en tête sont retirés,
+    faute de quoi ils décaleraient la ligne.
+    """
+    text = "" if value is None else str(value)
+    if not text:
+        return text
+    if text[0] in ("\t", "\r", "\n"):
+        return "'" + text.lstrip("\t\r\n")
+    if text[0] in ("=", "+", "-", "@"):
+        if text[0] == "-" and _looks_like_a_number(text):
+            return text
+        return "'" + text
+    return text
+
+
 def estimate_to_csv(
     *,
     result: EstimateResult,
@@ -82,7 +129,20 @@ def estimate_to_csv(
     once detached from the application.
     """
     buffer = io.StringIO()
-    writer = csv.writer(buffer, delimiter=CSV_DELIMITER, lineterminator="\n")
+    raw_writer = csv.writer(buffer, delimiter=CSV_DELIMITER, lineterminator="\n")
+
+    class _SafeWriter:
+        """Neutralise chaque cellule à l'écriture.
+
+        Passer par un enrobage plutôt que d'appeler `neutralise_cell` sur
+        chaque champ garantit qu'aucune écriture future ne l'oubliera.
+        """
+
+        @staticmethod
+        def writerow(row: Sequence[object]) -> None:
+            raw_writer.writerow([neutralise_cell(cell) for cell in row])
+
+    writer = _SafeWriter()
     for key, value in header.items():
         writer.writerow([f"# {key}", value])
     writer.writerow([])
@@ -299,3 +359,26 @@ def quote_html(
         f"<title>Devis {escape(project.reference)} — version {version.version_number}</title>"
         f"<style>{_STYLE}</style></head><body>{''.join(body)}</body></html>"
     )
+
+
+def content_disposition(stem: str, extension: str) -> str:
+    """En-tête `Content-Disposition` sûr, quel que soit le texte fourni.
+
+    La référence projet vient de l'utilisateur. Telle quelle, un guillemet
+    ferme le champ et un retour chariot injecte un en-tête : la réponse HTTP
+    n'est plus celle qu'on croit. Deux noms sont donc émis — un `filename`
+    strictement ASCII, seul format que tous les clients acceptent, et un
+    `filename*` en UTF-8 pourcent-encodé (RFC 6266) qui rend les accents aux
+    clients modernes.
+    """
+    from urllib.parse import quote
+
+    cleaned = "".join(
+        character if character.isalnum() or character in "-_." else "-" for character in stem
+    ).strip("-")
+    ascii_stem = (
+        unicodedata.normalize("NFKD", cleaned).encode("ascii", "ignore").decode("ascii") or "export"
+    )
+    ascii_name = f"{ascii_stem}.{extension}"
+    utf8_name = quote(f"{cleaned or 'export'}.{extension}", safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
