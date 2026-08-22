@@ -54,8 +54,8 @@ Ce document n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `745fe07` |
-| Procédure | `make install` puis `make release-gate`, depuis un clone vide |
+| Dernier commit contrôlé depuis un clone propre | `c626fe2` |
+| Procédure | `make install` puis les onze étapes ci-dessous, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
 
@@ -81,10 +81,10 @@ Aucun n'est écrit de mémoire. Chacun se rejoue.
 
 | | |
 | --- | --- |
-| Commit | `745fe07d6bb4b8f83890cc5515379910ec9a96e1` |
-| Abrégé | `745fe07` |
-| Fichiers versionnés | 154 |
-| Exécution CI correspondante | [push 32537195840](https://github.com/Hermesprojet/Devis/actions/runs/32537195840) et [pull_request 32537198110](https://github.com/Hermesprojet/Devis/actions/runs/32537198110) — 10/10 chacune |
+| Commit | `c626fe221e493915d727dba249ffc6cfae4252fa` |
+| Abrégé | `c626fe2` |
+| Fichiers versionnés | 161 |
+| Exécution CI correspondante | [push 32600593476](https://github.com/Hermesprojet/Devis/actions/runs/32600593476) et [pull_request 32600595369](https://github.com/Hermesprojet/Devis/actions/runs/32600595369) — dix jobs verts sur dix, sur les deux déclencheurs |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -150,9 +150,9 @@ ou dont le mot de passe contient « tmp ». Et `migrations` et `seed` lisent
 `METREO_DATABASE_URL`, pas `METREO_TEST_DATABASE_URL` : sans transmission
 explicite, `release-gate` validait une URL jetable irréprochable puis lançait
 `alembic downgrade base` sur la base configurée du développeur, la vidant,
-sans jamais toucher la base jetable. `make migrations` vise désormais par
-défaut un fichier de travail dédié, et refuse toute base qui ne se déclare pas
-jetable.
+sans jamais toucher la base jetable. La cible destructive publique a depuis
+été **retirée** : l'aller-retour crée sa propre base et ne détruit que
+celle-là, ce qui ferme la classe entière plutôt que de la garder.
 
 Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 
@@ -161,11 +161,11 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Format et lint Python | `make lint` | `All checks passed!` | < 1 s |
 | Types — domaine | `mypy packages/domain/src/metreo_domain` | 7 fichiers, aucun problème | ~1 s |
 | Types — API | `mypy apps/api/src/metreo_api` | 30 fichiers, aucun problème | ~2 s |
-| Types — scripts | `mypy scripts` | 3 fichiers, aucun problème | < 1 s |
+| Types — scripts | `mypy scripts` | 5 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **407 passed, 13 ignorés** | ~93 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **420 passed** | ~124 s |
-| Migrations aller-retour | `make migrations` | `upgrade head` → `downgrade base` → `upgrade head` | ~3 s |
+| Tests API sur SQLite | `make test-api` | **451 passed, 18 ignorés volontaires** | ~107 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **469 passed** | ~148 s |
+| Aller-retour des migrations | `make migration-roundtrip-test` | base créée par le run, 20 tables, base supprimée | ~6 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
 | Contrôle des skills | `make skills` | `8 skills conformes.` | < 1 s |
@@ -173,7 +173,7 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Composition Docker | `make compose-config` | `docker compose : valide` | ~1 s |
 | Types du front | `make web-typecheck` | `tsc --noEmit` sans erreur | ~2 s |
 | Build de production | `make web-build` | 9 routes compilées | ~3 s |
-| Parcours navigateur | `make e2e` | **15 passed** | ~44 s |
+| Parcours navigateur | `make e2e` | **15 passed** | ~49 s |
 
 Les tests API tournent **réellement** sur PostgreSQL lorsque
 `METREO_TEST_DATABASE_URL` est défini : chaque test obtient son propre schéma.
@@ -572,6 +572,40 @@ annulant les exécutions obsolètes d'une même référence :
   `make types` et le job API de la CI.
 - **Données de démonstration entièrement fictives**, marquées `is_demo_data`.
   Aucun prix n'est un prix de marché.
+
+## Matrice de fermeture
+
+Chaque ligne se lit : le risque, la reproduction qui l'a rendu visible, la
+correction, la falsification qui prouve que la correction mord, et le test
+permanent qui la retient. Toutes ont été jouées sur le commit nommé en tête.
+
+| Risque | Reproduction rouge | Correction | Falsification | Test permanent |
+| --- | --- | --- | --- | --- |
+| Numérotation concurrente | `UniqueViolation` sur 2 tours de 5 | verrou sur la ligne parente avant de compter | verrou neutralisé → rouge | `test_version_concurrency.py` |
+| Publication contre écriture | ordre déduit d'un horodatage pris après `commit()` | deux ordres imposés par `Event`, connexion préchauffée | 5 rouges sur 5 sans verrou | idem, paramétré |
+| Double gel | deux gels réussissaient, deux événements écrits | verrou sur la version avant de décider | verrou neutralisé → rouge | idem |
+| Interblocage d'audit | `40P01` déterministe, 3 essais sur 3 en SQL isolé | `FOR NO KEY UPDATE` au lieu de `FOR UPDATE` | `FOR UPDATE` rétabli → rouge 5/5 | `test_write_contention.py` |
+| Quantité approuvée | modifiée sans dérogation ni droit d'approbation | verrou tenu entre la lecture du statut et l'écriture | correctif retiré de la route → rouge 3/3 | `test_version_concurrency.py` |
+| Rejeu d'import | double clic rejouait, deux événements d'audit | verrou puis relecture du statut | correctif retiré de la route → rouge 3/3 | `test_import_idempotence.py` |
+| Migration sur données invalides | `IntegrityError` nue, sans nommer la ligne | inspection préalable, arrêt qui nomme | `UPDATE` automatique ajouté → rouge | `test_migration_policy.py` |
+| Cible de base destructive | `downgrade base` sur une base fournie | cible retirée ; base créée et possédée par le run | 11 noms refusés dont `metreo_gate` | `test_migration_roundtrip.py` |
+| Détournement libpq | `?dbname=` déplaçait la base réellement ouverte | dialecte interrogé, paramètres de redirection refusés | interception retirée → rouge | `test_disposable_database.py` |
+| Variables d'environnement | `?=` laissait l'environnement écraser la base validée | affectation inconditionnelle, passage en ligne de commande | `make -n` avec la variable exportée | `Makefile` |
+| SQLite réellement exécuté | même suite jouée deux fois sur PostgreSQL | `env -u METREO_TEST_DATABASE_URL` sur `test-api` | chiffres désormais distincts entre les deux étapes | `Makefile` |
+| Concurrence réellement exécutée | un échec passait pour un succès | `pipefail`, refus de `failed` et de `skipped` | trois cas vérifiés : 1, 1, 0 | garde CI sur 5 modules |
+| Identité des tests ignorés | seul le nombre était contrôlé | inventaire nommé, dans les deux sens | garde retirée / ajoutée → rouge | `test_postgres_only_inventory.py` |
+| Vérificateur de skills | vert de complaisance sur des compteurs périmés | motifs élargis, suivi de blocs conforme à CommonMark | chaque règle falsifiée séparément | `test_skills_checker.py` |
+| Règle de cohérence sous `-O` | `assert` supprimé, refus disparu | `raise RuntimeError` | `AssertionError` rétablie → rouge | `test_lock_order.py` |
+| Ordre de verrouillage non exhaustif | 3 routes BOQ hors contrôle, 2 autres trouvées | source unique, détection des enveloppes | verrou déplacé après l'audit → rouge sur les 3 | idem |
+| Dialecte inconnu | traceback nu, code de sortie 0 | interception, refus lisible, code 1 | interception retirée → rouge | `test_disposable_database.py` |
+| `seed` en production | aucun refus, prix fictifs écrivables | `SeedRefused` hors développement et test | refus neutralisé → rouge | `test_seed_safety.py` |
+| `seed --reset` général | supprimait toutes les organisations et tous les utilisateurs | restreint aux organisations semées, nommément | `delete` général rétabli → rouge | idem |
+| Migrations de la base de CI | régression : plus de schéma, seed en échec | étape `upgrade head` séparée de l'aller-retour | étape retirée → rouge | `test_migration_roundtrip.py` |
+
+Cinq de ces risques n'étaient pas dans la liste demandée : ils sont apparus en
+traitant les autres. Deux ont été trouvés par un contrôle que le travail
+venait d'ajouter — l'inventaire des enveloppes de verrouillage en a nommé deux
+de plus que celles qui étaient signalées.
 
 ## Limites connues de l'outillage
 
