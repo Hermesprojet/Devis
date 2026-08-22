@@ -112,6 +112,18 @@ scripts/review_worktree.sh nettoyer  # le supprime
 
 Après toute revue, `git status --porcelain` sur l'arbre candidat doit être vide.
 
+## 4 ter. Trois statuts, jamais interchangeables
+
+`FUNCTIONALLY_COMPLETE` décrit ce qu'un utilisateur peut faire et ce que les
+tests prouvent. `DEPLOYABLE` y ajoute l'absence de vulnérabilité bloquante
+connue, une configuration de déploiement viable et une installation
+reproductible. `PRODUCTION_READY` y ajoute l'exploitation : authentification
+réelle, secrets, sauvegardes **restaurées en test**, supervision, politique
+d'incidents, validation juridique.
+
+Chacun a des critères mécaniques, listés dans `docs/PHASE1_VERIFICATION.md`.
+Écrire l'un pour l'autre est une faute de compte rendu, pas une nuance.
+
 ## 5. La CI décide, pas le poste local
 
 `.github/workflows/ci.yml` — tous bloquants. Pour la liste à jour :

@@ -10,18 +10,43 @@
 > suivant : c'est pourquoi ils vivent ici, et ni dans les skills ni dans le
 > `README.md`.
 
-## Statut, en trois mots qui ne se remplacent pas
+## Trois statuts, trois jeux de critères mécaniques
 
-> **Phase 1 fonctionnellement complète — candidate de validation.**
-> Déploiement et clôture de sécurité **bloqués** jusqu'à Next.js 15.5.24.
-> **Production non prête** : authentification réelle, sauvegardes, supervision
-> et packs juridiques validés restent absents.
+Ils ne se remplacent jamais l'un l'autre. Chacun se vérifie, aucun ne se
+décrète.
 
-*Fonctionnellement complet* décrit ce qu'un utilisateur peut faire et ce que
-les tests prouvent. *Déployable* suppose en plus qu'aucun correctif de
-sécurité connu ne manque. *Prêt pour la production* suppose l'exploitation :
-sauvegardes vérifiées, supervision, authentification réelle. Ce document
-n'atteste que le premier.
+### `FUNCTIONALLY_COMPLETE` — atteint
+
+| Critère | État |
+| --- | --- |
+| Les dix scénarios fonctionnels de la Phase 1 sont couverts | ✅ voir « Scénarios d'acceptation » |
+| Les migrations sont cohérentes avec les modèles | ✅ `test_migrations_reproduce_the_models_exactly` |
+| La concurrence est couverte | ✅ modules listés dans `test_postgres_only_inventory.py` |
+| Aucune anomalie bloquante connue | ✅ à ce commit |
+| `release-gate` verte depuis un clone vide | ✅ voir « Ce qui fait foi » |
+
+### `DEPLOYABLE` — **non atteint**
+
+| Critère | État |
+| --- | --- |
+| `FUNCTIONALLY_COMPLETE` | ✅ |
+| Aucune vulnérabilité bloquante connue dans les dépendances | ❌ **correctif Next.js 15.5.24 attendu** |
+| Configuration de déploiement viable | ✅ images Docker non-root, points de santé |
+| Installation et construction reproductibles | ✅ verrou et manifestes confrontés aux versions posées |
+
+### `PRODUCTION_READY` — **non atteint**
+
+| Critère | État |
+| --- | --- |
+| `DEPLOYABLE` | ❌ |
+| Authentification réelle | ❌ mode développement uniquement |
+| Gestion des secrets | ❌ variables d'environnement seules |
+| Sauvegardes et restauration **testées** | ❌ aucune configurée |
+| Supervision et alertes | ❌ |
+| Politique d'incidents | ❌ |
+| Validation juridique des packs régionaux | ❌ tous en `draft` ou `planned` |
+
+Ce document n'atteste que le premier.
 
 ## Ce qui fait foi
 
@@ -33,6 +58,24 @@ n'atteste que le premier.
 | Procédure | `make install` puis `make release-gate`, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
+
+## Comment chaque chiffre de ce document est obtenu
+
+Aucun n'est écrit de mémoire. Chacun se rejoue.
+
+| Valeur | Commande |
+| --- | --- |
+| SHA | `git rev-parse HEAD` |
+| Commits depuis `d8f2b34` | `git log --oneline d8f2b34..HEAD \| wc -l` |
+| Fichiers versionnés | `git ls-files \| wc -l` |
+| Révisions Alembic | `ls apps/api/alembic/versions/*.py \| wc -l` |
+| Routes montées | `tests/routes_inventory.py:mounted_routes(create_app())` |
+| Tests du domaine | `make test-domain` |
+| Tests API SQLite | `make test-api` |
+| Tests API PostgreSQL | `make test-api-postgres METREO_TEST_DATABASE_URL=…` |
+| Ignorés et leur identité | `pytest -rs` et `test_postgres_only_inventory.py` |
+| Distributions et exigences | `make clean-install` |
+| Parcours navigateur | `make e2e` |
 
 ## Commit contrôlé depuis un clone propre
 
@@ -142,11 +185,23 @@ environnement. Sans cela, la variable passée à `make verify` valait aussi pour
 lui : les deux étapes API tournaient sur PostgreSQL, le chemin SQLite n'était
 jamais vérifié, et la même suite était jouée deux fois sur le même moteur.
 
-Les tests ignorés sur SQLite sont ceux qui refusent de faire semblant sur un
-moteur qui sérialise ses écritures — relevés par `pytest -rs`, non supposés :
-deux dans `test_audit_concurrency.py`, cinq dans `test_version_concurrency.py`,
-cinq dans `test_write_contention.py`, et un dans `test_audit_migration.py` dont
-le comportement est déjà couvert ailleurs sur SQLite.
+### Ce que « rien n'a été ignoré » veut dire, et ce qu'il ne veut pas dire
+
+La formule de sortie de `release-gate` porte sur les **étapes** : toutes les
+étapes obligatoires de la porte ont été exécutées, aucune n'a été sautée pour
+cause de variable absente.
+
+C'est autre chose que les tests ignorés dans la suite SQLite. Ceux-là sont
+**volontairement** ignorés : ils exigent un vrai PostgreSQL, et ils sont
+exécutés dans la suite PostgreSQL. Les deux notions ne doivent jamais partager
+un mot.
+
+Leur identité est contrôlée, pas seulement leur nombre — un compte juste peut
+recouvrir treize skips différents. `apps/api/tests/test_postgres_only_inventory.py`
+nomme les modules concernés avec leur raison, et refuse aussi bien qu'un
+module déclaré perde sa garde qu'un module ordinaire en gagne une. En CI, une
+étape distincte exécute ces modules sous PostgreSQL et refuse un résumé
+portant `skipped`, `failed` ou `error`.
 
 ```bash
 make verify METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo
@@ -230,8 +285,25 @@ changements incompatibles — elle n'est plus imposée par la sécurité.
 
 **Déploiement bloqué jusqu'à 15.5.24.** Un correctif critique annoncé pour le
 26 août 2026 n'est pas encore publié : au jour de cette vérification, le tag
-npm `backport` pointe toujours 15.5.23 (`npm view next dist-tags`). Rien ne
-part en production avant que cette version soit installée et la CI rejouée.
+npm `backport` pointe toujours 15.5.23 (`npm view next dist-tags`).
+
+Quand il paraîtra, dans cet ordre, sans raccourci :
+
+1. lire l'avis de sécurité officiel, et vérifier quelles versions et quelles
+   fonctionnalités sont réellement affectées ;
+2. vérifier l'existence de `next@15.5.24` au registre ;
+3. mettre à jour `package.json` et le lockfile par l'outil du projet ;
+4. `npm ci`, puis `npm audit --audit-level=high` sans exception générale ;
+5. vérifier le diff des dépendances transitives et des `overrides` ;
+6. typage, construction, parcours Playwright ;
+7. reconstruire les images Docker ;
+8. `release-gate` complète sur base éphémère ;
+9. clone vide sur le SHA exact qui porte la nouvelle dépendance ;
+10. CI push et pull request, SHA et liens publiés ;
+11. seulement alors, requalifier `DEPLOYABLE`.
+
+Aucun passage à Next 16, à une version canary ou à une autre branche pour
+contourner l'attente.
 
 ### Exposition réellement mesurée
 
@@ -500,6 +572,23 @@ annulant les exécutions obsolètes d'une même référence :
   `make types` et le job API de la CI.
 - **Données de démonstration entièrement fictives**, marquées `is_demo_data`.
   Aucun prix n'est un prix de marché.
+
+## Limites connues de l'outillage
+
+`scripts/check_skills.py` réimplémente à la main un fragment de CommonMark —
+le suivi des blocs de code, avec le caractère et la longueur du délimiteur.
+C'est allé assez loin : trois corrections successives, dont deux qui se
+trompaient dans les deux sens à la fois.
+
+**Cette logique ne doit plus croître.** Si un cas de délimiteur supplémentaire
+se présente, la réponse est un analyseur Markdown existant, pas une règle de
+plus. En l'état les tests couvrent les formes rencontrées et aucun faux
+positif n'est connu ; c'est une limite à surveiller, pas une dette à payer
+aujourd'hui.
+
+Le principe vaut plus généralement : quelques formes périssables clairement
+interdites, des tests ciblés, zéro faux positif connu — plutôt qu'un
+pseudo-analyseur qui grandit.
 
 ## Reproduire cette vérification
 
