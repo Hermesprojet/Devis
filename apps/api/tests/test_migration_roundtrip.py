@@ -142,3 +142,47 @@ class TestAgainstARealServer:
         )
         assert completed.returncode == 1
         assert "PostgreSQL" in completed.stderr, completed.stderr
+
+
+class TestTheCiStillMigratesItsOwnDatabase:
+    """L'aller-retour ne migre plus la base du job — quelqu'un d'autre doit le faire.
+
+    Régression réellement survenue : déplacer l'aller-retour dans sa propre
+    base a laissé la base du job PostgreSQL sans schéma, et l'étape de seed est
+    tombée sur « relation "organizations" does not exist ». La CI l'a
+    attrapée ; ce test évite qu'elle revienne.
+    """
+
+    def _postgres_steps(self) -> list[dict[str, object]]:
+        import yaml
+
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        )
+        return list(workflow["jobs"]["api-postgres"]["steps"])
+
+    def test_the_postgres_job_applies_the_migrations_before_seeding(self) -> None:
+        steps = self._postgres_steps()
+        names = [str(step.get("name", "")) for step in steps]
+
+        def index_of(fragment: str) -> int:
+            for position, name in enumerate(names):
+                if fragment.lower() in name.lower():
+                    return position
+            raise AssertionError(f"étape introuvable : {fragment} parmi {names}")
+
+        migrate = index_of("appliquer les migrations")
+        seed = index_of("jeu de démonstration")
+        suite = index_of("suite complète")
+        assert migrate < seed < suite, names
+
+        recipe = str(steps[migrate].get("run", ""))
+        assert "upgrade head" in recipe, recipe
+        assert "downgrade" not in recipe, "la base du job ne doit jamais être détruite"
+
+    def test_the_roundtrip_step_creates_its_own_database(self) -> None:
+        recipes = " ".join(str(step.get("run", "")) for step in self._postgres_steps())
+        assert "migration_roundtrip.py" in recipes
+        assert "alembic -c alembic.ini downgrade" not in recipes, (
+            "aucun downgrade ne doit viser une base préexistante"
+        )

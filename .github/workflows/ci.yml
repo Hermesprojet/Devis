@@ -103,8 +103,19 @@ jobs:
         run: |
           python scripts/migration_roundtrip.py \
             --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo --seed
+      - name: Appliquer les migrations sur la base du job
+        working-directory: apps/api
+        # `upgrade head` seul, non destructif. Séparé de l'aller-retour, qui
+        # travaille dans sa propre base : sans cette étape, la base du job
+        # n'aurait plus de schéma — c'est exactement ce que cette CI a
+        # attrapé quand l'aller-retour a été déplacé.
+        env:
+          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+        run: PYTHONPATH=src alembic -c alembic.ini upgrade head
       - name: Jeu de démonstration
         working-directory: apps/api
+        env:
+          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
         run: PYTHONPATH=src python -m metreo_api.seed
       - name: Suite complète sur PostgreSQL réel
         working-directory: apps/api
