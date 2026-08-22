@@ -100,12 +100,17 @@ def lock_owned(
     filter is part of the locking query, so a caller cannot lock a row it is
     not allowed to see.
     """
-    assert model.__name__ in LOCKABLE, (
-        f"{model.__name__} n'est pas dans la liste des lignes verrouillables ; "
-        "l'ajouter à LOCK_ORDER, à sa place dans la séquence, après avoir "
-        "vérifié qu'il ne crée pas de cycle — et jamais Organization avant une "
-        "ligne métier."
-    )
+    # `raise`, pas `assert` : `python -O` supprime les assertions, et une règle
+    # de cohérence qui disparaît en mode optimisé ne protège rien là où elle
+    # compte. Vérifié dans un sous-processus par
+    # `test_the_refusal_survives_python_optimised_mode`.
+    if model.__name__ not in LOCKABLE:
+        raise RuntimeError(
+            f"{model.__name__} n'est pas dans la liste des lignes verrouillables ; "
+            "l'ajouter à LOCK_ORDER, à sa place dans la séquence, après avoir "
+            "vérifié qu'il ne crée pas de cycle — et jamais Organization avant une "
+            "ligne métier."
+        )
     if not supports_row_locks(session):
         return get_owned(session, model, organization_id, object_id, label=label)
 

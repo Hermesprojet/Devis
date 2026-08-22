@@ -29,6 +29,7 @@ import re
 import sys
 
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError, NoSuchModuleError
 
 #: A database name carrying one of these tokens is understood as throw-away.
 DISPOSABLE_TOKENS = frozenset({"test", "tests", "gate", "ci", "tmp", "temp", "scratch"})
@@ -60,14 +61,16 @@ def effective_database(url: str) -> str:
     unknown driver, an unparsable URL — the caller is told, rather than being
     given a guess.
     """
-    from sqlalchemy.engine import make_url
-
     parsed = make_url(url)
     if parsed.get_backend_name() == "sqlite":
         # A SQLite URL names a file; its final component is the database.
         return (parsed.database or "").rsplit("/", 1)[-1]
     arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
     return str(arguments.get("dbname") or arguments.get("database") or parsed.database or "")
+
+
+class UnknownDialect(Exception):
+    """The driver cannot be loaded, so nothing can be said about the target."""
 
 
 def database_name(url: str) -> str:
@@ -83,8 +86,6 @@ def refusal(url: str) -> str | None:
     """Return why this URL is refused, or ``None`` when it is acceptable."""
     if not url.strip():
         return "aucune URL fournie"
-
-    from sqlalchemy.exc import ArgumentError
 
     try:
         parsed = make_url(url)
@@ -103,7 +104,16 @@ def refusal(url: str) -> str | None:
             "pas celui de la base ouverte"
         )
 
-    name = database_name(url)
+    # Sans le dialecte, on ne peut pas savoir quelle base sera ouverte. Le
+    # refus doit donc être explicite : un traceback n'est pas un diagnostic, et
+    # la documentation prétendait traiter ce cas.
+    try:
+        name = database_name(url)
+    except NoSuchModuleError as exc:
+        return (
+            f"dialecte inconnu ({exc}) : impossible de savoir quelle base serait "
+            "ouverte, donc impossible de garantir qu'elle est jetable"
+        )
     if not name:
         return "l'URL ne nomme aucune base de données"
 

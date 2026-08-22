@@ -23,7 +23,6 @@ neutralisant le verrou (voir `docs/PHASE1_VERIFICATION.md`).
 from __future__ import annotations
 
 import threading
-import time
 from collections.abc import Callable
 from typing import Any
 
@@ -165,11 +164,35 @@ class TestEstimateVersionNumbering:
 class TestNeighbouringRaces:
     """Deux courses voisines, à vérifier avant de conclure."""
 
+    @pytest.mark.parametrize("first", ["publication", "écriture"])
     def test_publishing_and_writing_a_price_are_sequential(
-        self, seeded: dict[str, str], database_url: str
+        self, seeded: dict[str, str], database_url: str, first: str
     ) -> None:
-        """Publication contre écriture : jamais un prix ajouté après publication."""
-        from metreo_api.models import PriceBookVersion
+        """Deux ordres imposés, pas une course dont on devine l'issue.
+
+        La version précédente déduisait l'ordre des transactions de
+        `time.monotonic()` appelé **après** le retour de `commit()`. Un fil
+        peut être suspendu entre la validation en base et cet appel : l'ordre
+        des horodatages Python n'est donc pas l'ordre réel des commits. Cela
+        autorisait aussi bien un faux positif qu'un échec intermittent.
+
+        Ici l'ordre est **imposé** par des `Event`. Le gagnant prend le verrou,
+        signale, et ne valide qu'une fois le perdant lancé : le perdant doit
+        donc réellement attendre. On ne déduit plus rien d'un horodatage — on
+        observe ce que chaque transaction a lu avant d'écrire.
+
+        Portée exacte des deux scénarios, mesurée en neutralisant le verrou :
+        « publication d'abord » tombe alors cinq fois sur cinq, parce que
+        l'écriture lit `draft` au lieu de `published` et crée un prix dans une
+        version publiée. « écriture d'abord » reste vert sans le verrou, et
+        c'est normal : l'écriture ne change pas le statut, donc la publication
+        lit `draft` dans les deux cas. Ce second scénario atteste le
+        comportement métier attendu, pas la présence du verrou.
+        """
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.orm import Session
+
+        from metreo_api.models import PriceBookVersion, PriceItem
         from metreo_api.services import pricebook_versions
 
         engine = create_engine(database_url)
@@ -180,110 +203,129 @@ class TestNeighbouringRaces:
             version_id, organization_id = version.id, version.organization_id
         engine.dispose()
 
-        def publish(session: Session, barrier: threading.Barrier) -> str:
-            # La barrière est franchie AVANT la prise de verrou : c'est le
-            # verrou qui doit sérialiser, pas le test. L'attendre après
-            # l'avoir pris fait attendre les deux fils indéfiniment.
-            barrier.wait(timeout=20)
-            locked = pricebook_versions.lock_version(
-                session, organization_id=organization_id, version_id=version_id
-            )
-            if locked.status == "published":
-                session.rollback()
-                return "already_published"
-            locked.status = "published"
-            session.commit()
-            commits["publish"] = time.monotonic()
-            return "published"
+        code = f"CONCURRENT-{first[:3]}"
+        holds_the_lock = threading.Event()
+        loser_attempted = threading.Event()
+        observed: dict[str, Any] = {}
 
-        def write(session: Session, barrier: threading.Barrier) -> str:
-            barrier.wait(timeout=20)
-            locked = pricebook_versions.lock_version(
-                session, organization_id=organization_id, version_id=version_id
-            )
-            if locked.status == "published":
-                session.rollback()
-                return "version_published"
-            from metreo_api.models import PriceItem
-
-            session.add(
-                PriceItem(
-                    organization_id=organization_id,
-                    price_book_version_id=version_id,
-                    code="CONCURRENT-001",
-                    label="Écriture concurrente",
-                    unit_code="m3",
-                    resource_kind="material",
-                    unit_price="1.0000000000",
-                    currency="EUR",
-                    confidence="declared",
-                )
-            )
-            session.commit()
-            commits["write"] = time.monotonic()
-            return "written"
-
-        barrier = threading.Barrier(2)
-        results: dict[str, Any] = {}
-        # Instant de validation de chaque fil : c'est l'ordre réel des
-        # transactions, seul témoin de ce que le verrou a produit.
-        commits: dict[str, float] = {}
-
-        def run(name: str, work: Callable[[Session, threading.Barrier], Any]) -> None:
+        def publish(is_first: bool) -> str:
             engine = create_engine(database_url)
             try:
                 with Session(engine) as session:
-                    results[name] = work(session, barrier)
-            except BaseException as exc:
-                results[name] = exc
+                    if not is_first:
+                        # Ouvrir la connexion AVANT la poignée de main : sans
+                        # cela, l'établissement de la connexion du perdant
+                        # coûtait plus cher que la validation du gagnant, et
+                        # masquait la course qu'on cherche à observer.
+                        session.execute(text("SELECT 1"))
+                        holds_the_lock.wait(timeout=20)
+                        loser_attempted.set()
+                    locked = pricebook_versions.lock_version(
+                        session, organization_id=organization_id, version_id=version_id
+                    )
+                    observed["publication a lu"] = locked.status
+                    if is_first:
+                        holds_the_lock.set()
+                        # Le gagnant tient le verrou et ne valide qu'une fois
+                        # le perdant lancé : sans verrou, celui-ci lirait donc
+                        # l'état d'AVANT la validation, et le test tomberait.
+                        loser_attempted.wait(timeout=20)
+                    if locked.status == "published":
+                        session.rollback()
+                        return "already_published"
+                    locked.status = "published"
+                    session.commit()
+                    return "published"
             finally:
                 engine.dispose()
 
+        def write(is_first: bool) -> str:
+            engine = create_engine(database_url)
+            try:
+                with Session(engine) as session:
+                    if not is_first:
+                        # Ouvrir la connexion AVANT la poignée de main : sans
+                        # cela, l'établissement de la connexion du perdant
+                        # coûtait plus cher que la validation du gagnant, et
+                        # masquait la course qu'on cherche à observer.
+                        session.execute(text("SELECT 1"))
+                        holds_the_lock.wait(timeout=20)
+                        loser_attempted.set()
+                    locked = pricebook_versions.lock_version(
+                        session, organization_id=organization_id, version_id=version_id
+                    )
+                    observed["écriture a lu"] = locked.status
+                    if is_first:
+                        holds_the_lock.set()
+                        loser_attempted.wait(timeout=20)
+                    if locked.status == "published":
+                        session.rollback()
+                        return "version_published"
+                    session.add(
+                        PriceItem(
+                            organization_id=organization_id,
+                            price_book_version_id=version_id,
+                            code=code,
+                            label="Écriture concurrente",
+                            unit_code="m3",
+                            resource_kind="material",
+                            unit_price="1.0000000000",
+                            currency="EUR",
+                            confidence="declared",
+                        )
+                    )
+                    session.commit()
+                    return "written"
+            finally:
+                engine.dispose()
+
+        results: dict[str, Any] = {}
+
+        def run(name: str, work: Callable[[bool], str], is_first: bool) -> None:
+            try:
+                results[name] = work(is_first)
+            except BaseException as exc:
+                results[name] = exc
+
+        publish_first = first == "publication"
         threads = [
-            threading.Thread(target=run, args=("publish", publish)),
-            threading.Thread(target=run, args=("write", write)),
+            threading.Thread(target=run, args=("publish", publish, publish_first)),
+            threading.Thread(target=run, args=("write", write, not publish_first)),
         ]
-        for thread in threads:
+        # Le gagnant démarre seul ; le perdant n'entre en lice qu'une fois le
+        # verrou pris, ce qui garantit qu'il l'attendra.
+        for thread in threads if publish_first else reversed(threads):
             thread.start()
         for thread in threads:
-            thread.join(timeout=30)
-
+            thread.join(timeout=40)
         assert not any(thread.is_alive() for thread in threads)
         assert not any(isinstance(value, BaseException) for value in results.values()), results
-
-        # L'ensemble des issues acceptées ne suffit pas à faire un test : il
-        # contenait l'interleaving que le verrou est censé interdire, si bien
-        # que l'assertion ne pouvait pas échouer. Ce qui compte n'est pas
-        # QUI a gagné, mais que l'écriture, si elle a eu lieu, ait précédé la
-        # publication. On le vérifie sur l'ordre des validations, pas sur
-        # l'ensemble des résultats possibles.
-        outcome = (results["publish"], results["write"])
-        assert outcome in {
-            ("published", "version_published"),  # la publication a gagné
-            ("published", "written"),  # l'écriture a gagné, puis publication
-        }, outcome
-        if results["write"] == "written":
-            assert commits["write"] < commits["publish"], (
-                "le prix a été validé APRÈS la publication : la version publiée "
-                f"a été modifiée (écriture à {commits['write']}, "
-                f"publication à {commits['publish']})"
-            )
 
         engine = create_engine(database_url)
         with Session(engine) as session:
             final = session.get(PriceBookVersion, version_id)
             assert final is not None
-            assert final.status == "published"
-            from metreo_api.models import PriceItem
-
             written = session.scalar(
-                select(func.count())
-                .select_from(PriceItem)
-                .where(PriceItem.code == "CONCURRENT-001")
+                select(func.count()).select_from(PriceItem).where(PriceItem.code == code)
             )
+            status_final = final.status
         engine.dispose()
-        # Un prix écrit après publication serait une modification d'une version figée.
-        assert written == (1 if results["write"] == "written" else 0)
+
+        if publish_first:
+            # La publication gagne : l'écriture doit avoir LU « published »,
+            # donc être refusée, et ne créer aucun prix.
+            assert results["publish"] == "published", results
+            assert results["write"] == "version_published", results
+            assert observed["écriture a lu"] == "published", observed
+            assert written == 0, "un prix a été ajouté à une version publiée"
+        else:
+            # L'écriture gagne : la publication doit avoir LU « draft » puis
+            # publier l'état final, prix compris.
+            assert results["write"] == "written", results
+            assert results["publish"] == "published", results
+            assert observed["publication a lu"] == "draft", observed
+            assert written == 1, "le prix écrit avant publication a disparu"
+        assert status_final == "published", status_final
 
     def test_two_simultaneous_freezes_leave_one_winner(
         self, seeded: dict[str, str], database_url: str

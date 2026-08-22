@@ -116,6 +116,35 @@ class TestTheAuthoritativeComponent:
         assert guard.refusal(url) is None
 
 
+class TestUnknownDialect:
+    """Un dialecte inconnu doit produire un refus lisible, pas un traceback."""
+
+    def test_an_unknown_dialect_is_refused_without_a_traceback(self) -> None:
+        import subprocess
+        import sys
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "check_disposable_database.py"),
+                "postgresql+inconnu://u:p@h/metreo_test",
+                "--label",
+                "essai",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 1, completed.returncode
+        assert "Traceback" not in completed.stderr, completed.stderr
+        assert "refusé" in completed.stderr, completed.stderr
+
+    def test_the_refusal_names_the_dialect(self) -> None:
+        problem = guard.refusal("postgresql+inconnu://u:p@h/metreo_test")
+        assert problem is not None
+        assert "inconnu" in problem or "dialecte" in problem, problem
+
+
 class TestNameExtraction:
     @pytest.mark.parametrize(
         ("url", "expected"),
