@@ -115,7 +115,7 @@ jobs:
         env:
           METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
         run: pytest -q
-      - name: Les tests de concurrence ont réellement tourné
+      - name: Les tests PostgreSQL-only ont réellement tourné
         working-directory: apps/api
         # Ils s'ignorent d'eux-mêmes hors PostgreSQL, ce qui est correct — mais
         # une variable mal orthographiée les ignorerait ici aussi, en silence,
@@ -133,6 +133,8 @@ jobs:
         run: |
           set -o pipefail
           pytest tests/test_version_concurrency.py tests/test_write_contention.py \
+            tests/test_audit_concurrency.py tests/test_import_idempotence.py \
+            tests/test_migration_roundtrip.py \
             -q --no-header | tee /tmp/concurrence.txt
           # `grep '[0-9]+ passed'` acceptait « 2 failed, 3 passed » : le résumé
           # d'un échec partiel contient le mot. On exige donc un résumé SANS

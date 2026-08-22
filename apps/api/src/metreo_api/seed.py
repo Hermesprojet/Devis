@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from .config import get_settings
 from .db import get_session_factory
 from .models import (
     AuditEvent,
@@ -712,21 +713,67 @@ def _seed_project(
     return project, boq, estimate
 
 
+class SeedRefused(RuntimeError):
+    """The demonstration dataset must not be written where it could be believed."""
+
+
+#: Les organisations que ce module sème, et les seules qu'il accepte d'effacer.
+SEEDED_ORGANIZATIONS = (
+    "Terrassements Dubois SA (démo)",
+    "Voiries & Égouttage Martin SPRL (démo)",
+)
+
+
 def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
-    """Create the demonstration dataset. Idempotent unless ``reset`` is set."""
+    """Create the demonstration dataset. Idempotent unless ``reset`` is set.
+
+    Two rules make this the one write command that stays usable on a working
+    database. It refuses an environment that says it is not a working one —
+    fictional prices presented as real would be worse than no prices at all.
+    And ``reset`` only removes what this module seeded: it used to delete
+    **every** organisation and **every** user, which on a populated database
+    would have taken real data with it.
+    """
+    settings = get_settings()
+    if settings.environment not in {"development", "test"}:
+        raise SeedRefused(
+            f"environnement « {settings.environment} » : le jeu de démonstration est "
+            "entièrement fictif et ne doit jamais être écrit là où il pourrait être "
+            "pris pour des données réelles."
+        )
+
     existing = session.scalars(
-        select(Organization).where(Organization.name == "Terrassements Dubois SA (démo)")
+        select(Organization).where(Organization.name == SEEDED_ORGANIZATIONS[0])
     ).one_or_none()
     if existing is not None:
         if not reset:
             return {"status": "already_seeded", "organization_id": existing.id}
-        for organization in session.scalars(select(Organization)).all():
+        # Uniquement les organisations que ce module sème, nommément. Un
+        # `delete(Organization)` général emporterait les données réelles d'une
+        # base de travail — et le nom d'une organisation réelle ne ressemble à
+        # rien de particulier.
+        seeded = list(
+            session.scalars(
+                select(Organization).where(Organization.name.in_(SEEDED_ORGANIZATIONS))
+            ).all()
+        )
+        seeded_ids = [organization.id for organization in seeded]
+        seeded_users = list(
+            session.scalars(
+                select(User)
+                .join(Membership, Membership.user_id == User.id)
+                .where(Membership.organization_id.in_(seeded_ids))
+                .distinct()
+            ).all()
+        )
+        for organization in seeded:
             session.execute(delete(AuditEvent).where(AuditEvent.organization_id == organization.id))
             session.delete(organization)
         # Flush the organisation deletes first: their ON DELETE CASCADE clears
         # the rows that still reference users (projects, estimates, audit).
         session.flush()
-        session.execute(delete(User))
+        for user in seeded_users:
+            session.delete(user)
         session.flush()
 
     _get_or_create_region_packs(session)

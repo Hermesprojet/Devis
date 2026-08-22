@@ -84,30 +84,65 @@ class TestTheAuditLockDoesNotDeadlock:
     son verrou.
     """
 
-    def test_two_writers_then_two_audits_do_not_deadlock(
+    def test_two_independent_business_writes_do_not_deadlock(
         self, seeded: dict[str, str], database_url: str
     ) -> None:
-        from sqlalchemy import create_engine
+        """Le défaut le plus grave de tout ce cycle, sous sa forme nominative.
+
+        Deux écritures métier **sans rapport** — un projet d'un côté, un prix
+        de l'autre, tables différentes, aucune relation entre elles — ne
+        partageant que leur organisation. Elles s'interbloquaient : l'insertion
+        prend un `FOR KEY SHARE` sur la ligne `organizations` par vérification
+        de clé étrangère, `audit.record` demandait ensuite un `FOR UPDATE` sur
+        cette même ligne, et les deux montées croisées formaient un cycle.
+        PostgreSQL en tuait une avec `40P01`, la route rendait un HTTP 500.
+
+        La barrière place les deux transactions exactement dans l'état qui
+        déclenche la montée : insertion faite de part et d'autre, donc
+        `FOR KEY SHARE` détenu des deux côtés, avant que l'audit ne demande son
+        verrou. Rétablir `FOR UPDATE` rend ce test rouge de façon
+        déterministe.
+        """
+        from sqlalchemy import create_engine, func, select
         from sqlalchemy.orm import Session
 
-        from metreo_api.models import Project
+        from metreo_api.models import AuditEvent, PriceBookVersion, PriceItem, Project
         from metreo_api.services import audit
 
         organization_id = seeded["organization_a"]
+        version_id = seeded["price_book_version_a"]
         barrier = threading.Barrier(2)
-        outcomes: dict[int, Any] = {}
+        outcomes: dict[str, Any] = {}
 
-        def write(index: int) -> None:
+        def write_project(session: Session) -> None:
+            session.add(
+                Project(
+                    organization_id=organization_id,
+                    reference="INDEP-PROJET",
+                    name="Chantier indépendant",
+                )
+            )
+
+        def write_price(session: Session) -> None:
+            session.add(
+                PriceItem(
+                    organization_id=organization_id,
+                    price_book_version_id=version_id,
+                    code="INDEP-PRIX",
+                    label="Prix indépendant",
+                    unit_code="m3",
+                    resource_kind="material",
+                    unit_price="1.0000000000",
+                    currency="EUR",
+                    confidence="declared",
+                )
+            )
+
+        def run(name: str, write: Callable[[Session], None]) -> None:
             engine = create_engine(database_url)
             try:
                 with Session(engine) as session:
-                    session.add(
-                        Project(
-                            organization_id=organization_id,
-                            reference=f"DEADLOCK-{index}",
-                            name=f"Chantier {index}",
-                        )
-                    )
+                    write(session)
                     # L'insertion fait vérifier la clé étrangère vers
                     # organizations : PostgreSQL y prend un FOR KEY SHARE, que
                     # les deux transactions obtiennent ensemble.
@@ -117,29 +152,67 @@ class TestTheAuditLockDoesNotDeadlock:
                     audit.record(
                         session,
                         organization_id=organization_id,
-                        action="test.contention",
+                        action=f"test.independent.{name}",
                         object_type="test",
-                        summary=f"Écriture {index}",
+                        summary=f"Écriture indépendante — {name}",
                     )
                     session.commit()
-                    outcomes[index] = "ok"
+                    outcomes[name] = "ok"
             except BaseException as exc:
-                outcomes[index] = f"{type(exc).__name__}: {str(exc).splitlines()[0][:120]}"
+                outcomes[name] = f"{type(exc).__name__}: {str(exc).splitlines()[0][:140]}"
             finally:
                 engine.dispose()
 
-        threads = [threading.Thread(target=write, args=(index,)) for index in range(2)]
+        threads = [
+            threading.Thread(target=run, args=("projet", write_project)),
+            threading.Thread(target=run, args=("prix", write_price)),
+        ]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(timeout=60)
-        assert not any(thread.is_alive() for thread in threads)
 
-        failures = {index: value for index, value in outcomes.items() if value != "ok"}
-        assert failures == {}, (
-            "deux écritures sans rapport se sont interbloquées sur la ligne "
-            f"organizations : {failures}"
-        )
+        # 5. Les deux terminent.
+        assert not any(thread.is_alive() for thread in threads), "un fil ne s'est pas terminé"
+        # 6. Aucun interblocage.
+        deadlocks = {
+            name: value
+            for name, value in outcomes.items()
+            if isinstance(value, str) and "Deadlock" in value
+        }
+        assert deadlocks == {}, f"interblocage 40P01 : {deadlocks}"
+        # 7. Aucune erreur du tout — une route en rendrait un HTTP 500.
+        assert outcomes == {"projet": "ok", "prix": "ok"}, outcomes
+
+        # 8. Les deux événements d'audit existent, avec des séquences distinctes.
+        engine = create_engine(database_url)
+        with Session(engine) as session:
+            actions = set(
+                session.scalars(
+                    select(AuditEvent.action).where(
+                        AuditEvent.action.in_(["test.independent.projet", "test.independent.prix"])
+                    )
+                ).all()
+            )
+            sequences = session.scalar(
+                select(func.count(func.distinct(AuditEvent.sequence))).where(
+                    AuditEvent.organization_id == organization_id
+                )
+            )
+            total = session.scalar(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(AuditEvent.organization_id == organization_id)
+            )
+            written = session.scalar(
+                select(func.count()).select_from(PriceItem).where(PriceItem.code == "INDEP-PRIX")
+            )
+        engine.dispose()
+        assert actions == {"test.independent.projet", "test.independent.prix"}, actions
+        assert total == sequences, f"{total} événements pour {sequences} séquences distinctes"
+        assert written == 1
+        assert version_id  # la version semée existe bien
+        assert PriceBookVersion  # importée pour la lisibilité du scénario
 
     def test_the_sequence_is_still_serialised(
         self, seeded: dict[str, str], database_url: str

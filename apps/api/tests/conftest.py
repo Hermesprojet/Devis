@@ -44,6 +44,9 @@ def database_url(tmp_path: Path) -> Iterator[str]:
 
     from sqlalchemy import create_engine, text
 
+    # Le schéma est créé par ce test et détruit par lui : même principe que
+    # `scripts/migration_roundtrip.py` — on ne supprime que ce qu'on a créé, et
+    # le nom vient d'ici, pas d'un appelant.
     schema = _next_schema_name()
     admin = create_engine(TEST_DATABASE_URL, future=True)
     with admin.begin() as connection:
@@ -51,16 +54,20 @@ def database_url(tmp_path: Path) -> Iterator[str]:
     admin.dispose()
 
     separator = "&" if "?" in TEST_DATABASE_URL else "?"
-    # ``options`` reaches libpq, which applies it as the session search_path:
-    # migrations and queries then land in this test's own schema. The value
-    # is left unencoded on purpose — Alembic stores the URL in a
-    # ConfigParser, which would read a percent sign as an interpolation.
-    yield f"{TEST_DATABASE_URL}{separator}options=-csearch_path={schema}"
-
-    admin = create_engine(TEST_DATABASE_URL, future=True)
-    with admin.begin() as connection:
-        connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
-    admin.dispose()
+    try:
+        # ``options`` reaches libpq, which applies it as the session
+        # search_path: migrations and queries then land in this test's own
+        # schema. The value is left unencoded on purpose — Alembic stores the
+        # URL in a ConfigParser, which would read a percent sign as an
+        # interpolation.
+        yield f"{TEST_DATABASE_URL}{separator}options=-csearch_path={schema}"
+    finally:
+        # `finally` plutôt qu'une simple suite : une erreur de collecte ou une
+        # interruption laisserait sinon un schéma orphelin par test.
+        admin = create_engine(TEST_DATABASE_URL, future=True)
+        with admin.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        admin.dispose()
 
 
 def running_on_postgresql() -> bool:
