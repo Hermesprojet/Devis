@@ -94,32 +94,33 @@ else
 DB_ENV :=
 endif
 
-# La base de l'aller-retour des migrations. Par défaut un fichier de travail
-# dédié, et non la base configurée de l'application : `downgrade base` détruit
-# tout ce qu'il touche, et le défaut d'une commande destructrice ne doit pas
-# être « la base sur laquelle vous travaillez ».
-# `?=` ne définirait rien si la variable existait déjà dans l'environnement —
-# et une variable d'environnement compte comme définie. Un développeur ayant
-# exporté MIGRATION_DATABASE_URL l'aurait donc emporté sur la base que
-# release-gate valide et transmet : la cible aurait annoncé une base et détruit
-# l'autre. L'affectation est donc inconditionnelle, et release-gate passe la
-# sienne en ligne de commande, ce qui prime sur tout le reste.
-MIGRATION_DATABASE_URL := \
-	$(if $(METREO_DATABASE_URL),$(METREO_DATABASE_URL),sqlite+pysqlite:///$(CURDIR)/var/migrations-test.sqlite3)
+# Serveur PostgreSQL sur lequel `migration-roundtrip-test` CRÉE sa propre base.
+# C'est une cible de connexion, jamais une cible de destruction : la base
+# détruite est celle que le script vient de créer, et lui seul en connaît le
+# nom.
+METREO_ADMIN_DATABASE_URL ?=
 
-.PHONY: migrations
-migrations: ## Aller-retour DESTRUCTEUR des migrations : head, base, head
-	@# `downgrade base` supprime toutes les tables applicatives et les données
-	@# avec. Ce n'est pas une procédure de retour arrière, c'est un test. La
-	@# base visée doit donc se déclarer jetable par son nom.
-	@$(PY) scripts/check_disposable_database.py \
-		"$(MIGRATION_DATABASE_URL)" --label "make migrations"
-	cd apps/api && METREO_DATABASE_URL="$(MIGRATION_DATABASE_URL)" PYTHONPATH=src \
-		../../$(ALEMBIC) -c alembic.ini upgrade head
-	cd apps/api && METREO_DATABASE_URL="$(MIGRATION_DATABASE_URL)" PYTHONPATH=src \
-		../../$(ALEMBIC) -c alembic.ini downgrade base
-	cd apps/api && METREO_DATABASE_URL="$(MIGRATION_DATABASE_URL)" PYTHONPATH=src \
-		../../$(ALEMBIC) -c alembic.ini upgrade head
+.PHONY: migrate
+migrate: ## Appliquer les migrations : upgrade head, non destructif
+	@# Aucune protection nécessaire : `upgrade head` n'efface rien. C'est la
+	@# commande normale, celle qu'on lance sur sa base de travail.
+	cd apps/api && PYTHONPATH=src ../../$(ALEMBIC) -c alembic.ini upgrade head
+
+.PHONY: migration-roundtrip-test
+migration-roundtrip-test: ## Aller-retour head → base → head, dans une base créée par ce run
+	@# La cible publique destructive a été retirée. `downgrade base` supprime
+	@# toutes les tables applicatives : aucune URL fournie par l'appelant n'est
+	@# acceptée comme cible de destruction, quel que soit son nom. Le script
+	@# crée sa propre base, au nom tiré au hasard, ne détruit que celle-là, et
+	@# nettoie même en cas d'échec.
+	@if [ -z "$(METREO_ADMIN_DATABASE_URL)" ]; then \
+		echo "migration-roundtrip-test : refusé — METREO_ADMIN_DATABASE_URL est obligatoire." >&2; \
+		echo "  C'est un serveur où ce test peut CRÉER une base, pas une base à détruire." >&2; \
+		echo "  Exemple : make migration-roundtrip-test \\" >&2; \
+		echo "    METREO_ADMIN_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/postgres" >&2; \
+		exit 1; \
+	fi
+	$(PY) scripts/migration_roundtrip.py --admin-url "$(METREO_ADMIN_DATABASE_URL)" --seed
 
 .PHONY: seed
 seed: ## Charger le jeu de démonstration (entièrement fictif)
@@ -228,23 +229,18 @@ release-gate: ## La porte stricte : rien d'ignoré, PostgreSQL jetable obligatoi
 		echo "  make release-gate METREO_TEST_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/metreo_gate" >&2; \
 		exit 1; \
 	fi
-	@# La suite crée et détruit des schémas dans cette base, et `migrations` y
-	@# lance `downgrade base`. Le contrôle porte sur le NOM DE LA BASE seul :
-	@# le chercher dans l'URL entière acceptait une base de production dont
-	@# l'hôte, l'utilisateur ou le mot de passe contenait « ci » ou « test ».
+	@# La suite de tests crée et détruit des SCHÉMAS dans cette base — un par
+	@# test. Le contrôle de nom reste utile à ce titre, mais il n'autorise plus
+	@# aucun `downgrade base` : l'aller-retour a sa propre base.
 	@$(PY) scripts/check_disposable_database.py \
 		"$(METREO_TEST_DATABASE_URL)" --label "make release-gate"
 	@$(MAKE) --no-print-directory verify METREO_TEST_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
-	@# Migrations et seed lisent METREO_DATABASE_URL, pas METREO_TEST_DATABASE_URL :
-	@# sans cette transmission elles agissaient sur la base configurée dans
-	@# l'environnement du développeur, et `downgrade base` la vidait — alors
-	@# même que la base jetable, elle, n'était jamais touchée.
-	@# Les deux variables sont passées : une affectation en ligne de commande
-	@# l'emporte sur l'environnement, ce qui est la seule façon de garantir que
-	@# la base détruite est bien celle qui vient d'être validée.
-	@$(MAKE) --no-print-directory migrations \
-		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)" \
-		MIGRATION_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+	@# L'aller-retour des migrations ne touche PAS la base fournie : le script
+	@# crée la sienne sur le même serveur, et ne détruit que celle-là. Un nom
+	@# rassurant n'est pas une preuve qu'une base est jetable — « metreo_gate »
+	@# peut parfaitement désigner une base qui compte.
+	@$(MAKE) --no-print-directory migration-roundtrip-test \
+		METREO_ADMIN_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@$(MAKE) --no-print-directory seed \
 		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@$(MAKE) --no-print-directory e2e

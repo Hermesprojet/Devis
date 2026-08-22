@@ -95,12 +95,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
-      - name: Migrations
-        working-directory: apps/api
+      - name: Aller-retour des migrations, dans une base créée par ce run
+        # Le service PostgreSQL est éphémère — il meurt avec le job — mais
+        # l'aller-retour ne s'appuie pas là-dessus : il crée sa propre base au
+        # nom tiré au hasard et ne détruit que celle-là. Un `downgrade base`
+        # ne peut donc atteindre aucune base préexistante, ici comme ailleurs.
         run: |
-          PYTHONPATH=src alembic -c alembic.ini upgrade head
-          PYTHONPATH=src alembic -c alembic.ini downgrade base
-          PYTHONPATH=src alembic -c alembic.ini upgrade head
+          python scripts/migration_roundtrip.py \
+            --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo --seed
       - name: Jeu de démonstration
         working-directory: apps/api
         run: PYTHONPATH=src python -m metreo_api.seed

@@ -69,11 +69,11 @@ ruff format --check packages/domain apps/api/src apps/api/tests scripts
 ruff check       packages/domain apps/api/src apps/api/tests scripts
 mypy packages/domain/src/metreo_domain apps/api/src/metreo_api scripts
 
-# 4. Migrations : l'aller-retour complet, jamais seulement `upgrade head`
-mkdir -p var && export METREO_DATABASE_URL="sqlite+pysqlite:///$PWD/var/check.sqlite3"
-(cd apps/api && PYTHONPATH=src alembic -c alembic.ini upgrade head \
-             && PYTHONPATH=src alembic -c alembic.ini downgrade base \
-             && PYTHONPATH=src alembic -c alembic.ini upgrade head)
+# 4. Migrations : l'aller-retour complet, dans une base que la commande crée
+#    elle-même et détruit ensuite. Aucune base fournie par l'appelant n'est
+#    acceptée comme cible destructive — un nom rassurant n'est pas une preuve.
+make migration-roundtrip-test \
+  METREO_ADMIN_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/postgres
 
 # 5. Jeu de démonstration — idempotent : un second passage répond `status: already_seeded`
 (cd apps/api && PYTHONPATH=src python -m metreo_api.seed)
@@ -84,6 +84,12 @@ mkdir -p var && export METREO_DATABASE_URL="sqlite+pysqlite:///$PWD/var/check.sq
 
 Règles d'usage :
 
+- **Tout garde-fou est livré avec sa falsification.** Un contrôle qui n'a jamais été vu
+  refuser ne prouve rien : les deux versions successives du garde-fou de base jetable
+  acceptaient correctement, et aucune n'avait été mise à l'épreuve d'une URL hostile.
+  Pour un garde-fou qui engage des données ou de la sécurité, trois preuves :
+  cas autorisé au vert, cas interdit au rouge, et garde-fou artificiellement neutralisé
+  faisant tomber au moins un test.
 - Une commande non lancée n'est pas citée dans le compte rendu. On colle la sortie réelle,
   pas une sortie plausible.
 - Un compteur de tests qui **baisse** est un défaut à expliquer, jamais un effet de bord accepté.
@@ -91,6 +97,20 @@ Règles d'usage :
   date de reprise.
 - Toucher `apps/api/src/metreo_api/models.py` sans révision Alembic fait échouer
   `test_migrations_reproduce_the_models_exactly` : produire la révision dans le même lot.
+
+## 4 bis. Une revue ne touche jamais l'arbre candidat
+
+Une relecture adversariale mute le code pour éprouver ses garde-fous. Ces mutations
+se font dans un `git worktree` jetable ou un clone isolé, **jamais dans l'arbre
+candidat** : une version fautive laissée en place est repartie une fois sous une
+étiquette sans rapport, et seul un hook l'a rattrapée.
+
+```bash
+scripts/review_worktree.sh créer   # crée un worktree jetable et l'affiche
+scripts/review_worktree.sh nettoyer  # le supprime
+```
+
+Après toute revue, `git status --porcelain` sur l'arbre candidat doit être vide.
 
 ## 5. La CI décide, pas le poste local
 
