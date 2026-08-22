@@ -104,7 +104,7 @@ METREO_ADMIN_DATABASE_URL ?=
 migrate: ## Appliquer les migrations : upgrade head, non destructif
 	@# Aucune protection nécessaire : `upgrade head` n'efface rien. C'est la
 	@# commande normale, celle qu'on lance sur sa base de travail.
-	cd apps/api && PYTHONPATH=src ../../$(ALEMBIC) -c alembic.ini upgrade head
+	cd apps/api && $(DB_ENV) PYTHONPATH=src ../../$(ALEMBIC) -c alembic.ini upgrade head
 
 .PHONY: migration-roundtrip-test
 migration-roundtrip-test: ## Aller-retour head → base → head, dans une base créée par ce run
@@ -241,6 +241,13 @@ release-gate: ## La porte stricte : rien d'ignoré, PostgreSQL jetable obligatoi
 	@# peut parfaitement désigner une base qui compte.
 	@$(MAKE) --no-print-directory migration-roundtrip-test \
 		METREO_ADMIN_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+	@# Le seed écrit dans la base fournie : il faut donc qu'elle porte le
+	@# schéma. L'aller-retour ne le pose plus — il travaille dans la sienne —
+	@# et la porte ne passait que grâce au schéma laissé par une commande
+	@# antérieure. Sur une base réellement neuve, elle tombait sur
+	@# « relation "organizations" does not exist ». `upgrade head` ne détruit rien.
+	@$(MAKE) --no-print-directory migrate \
+		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@$(MAKE) --no-print-directory seed \
 		METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@$(MAKE) --no-print-directory e2e

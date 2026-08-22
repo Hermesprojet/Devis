@@ -336,6 +336,40 @@ class TestAFailedCreationDestroysNothing:
         assert engine.disposed
 
 
+class TestTheGateMigratesTheDatabaseItSeeds:
+    """`release-gate` semait une base que rien n'avait migrée.
+
+    Trouvé en lançant la porte depuis un clone propre contre une base
+    `metreo_gate` fraîchement créée : `relation "organizations" does not exist`.
+    Les exécutions précédentes ne passaient que parce que la base traînait le
+    schéma d'une commande antérieure — l'aller-retour, lui, travaille dans sa
+    propre base et ne migre plus celle de la porte. Même classe de régression
+    que celle déjà attrapée côté CI, à l'autre bout de la chaîne.
+    """
+
+    def _gate_recipe(self) -> str:
+        """Les commandes de la porte, commentaires du Makefile retirés.
+
+        Un commentaire qui parle de `downgrade` n'en exécute pas un ; lire les
+        deux ensemble ferait échouer le contrôle sur du texte explicatif.
+        """
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        recipe = makefile[makefile.index("\nrelease-gate:") :]
+        return "\n".join(line for line in recipe.splitlines() if not line.strip().startswith("@#"))
+
+    def test_the_gate_applies_the_migrations_before_seeding(self) -> None:
+        recipe = self._gate_recipe()
+        migrate = recipe.index("migrate ")
+        seed = recipe.index("seed \\")
+        assert migrate < seed, "la porte sème avant de migrer"
+        head = recipe[migrate:seed]
+        assert 'METREO_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"' in head, head
+
+    def test_the_gate_never_downgrades_the_database_it_was_given(self) -> None:
+        recipe = self._gate_recipe()
+        assert "downgrade" not in recipe, recipe
+
+
 class TestASingleListOfRedirectingParameters:
     def test_the_scripts_share_one_definition(self) -> None:
         """Deux listes divergeraient : celle du contrôle de nom n'avait pas `database`."""
