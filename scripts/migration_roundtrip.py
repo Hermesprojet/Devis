@@ -18,6 +18,19 @@ development and production databases cannot reach anything real.
 The admin URL is a *connection* target, never a destruction target: it is used
 to create and drop the throw-away database, and nothing else.
 
+Two later defects showed that stating the rule is not applying it. First, the
+ephemeral URL was built with `parsed.set(database=name)`, which replaces the
+path and keeps the query string — so `…/postgres?dbname=metreo_victim_a` ran
+the whole round-trip, `downgrade base` included, on the victim: two
+organisations became zero while the script announced success and dropped its
+own empty database. Second, the cleanup ran on the way out of a *failed*
+`CREATE DATABASE`; `owns()` only proves a name looks generated, so a
+pre-existing database of the same name — a leftover from an interrupted run —
+was terminated and dropped, three witness rows with it. Redirecting query
+parameters are now refused before anything is opened, the built URL is checked
+against `create_connect_args()`, and nothing is dropped without the proof that
+this run created it.
+
 Usage:
     python scripts/migration_roundtrip.py --admin-url postgresql+psycopg://…/postgres
 """
@@ -33,10 +46,21 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 
 ROOT = Path(__file__).resolve().parent.parent
 API = ROOT / "apps" / "api"
+
+# Le module voisin porte la seule liste de paramètres redirecteurs du dépôt.
+# Deux listes divergeraient — celle du contrôle de nom n'avait pas `database`.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _url_safety import (  # noqa: E402 - après l'ajustement de sys.path ci-dessus
+    REDIRECTING_PARAMETERS,
+    effective_database,
+    redirecting_parameters,
+)
 
 # `alembic/env.py` importe la configuration de l'application : sans cela, il
 # faudrait lancer alembic depuis apps/api avec PYTHONPATH=src, et ce script
@@ -66,41 +90,92 @@ def owns(name: str) -> bool:
     return bool(re.fullmatch(PREFIX + "[0-9a-f]{16}", name))
 
 
+class UnsafeAdminUrl(RuntimeError):
+    """L'URL d'administration ne désigne pas de façon univoque ce qu'on ouvrira."""
+
+
+def ephemeral_url(parsed: URL, name: str) -> str:
+    """L'URL de la base éphémère, débarrassée de toute redirection.
+
+    `parsed.set(database=name)` ne suffit pas : il change le CHEMIN et conserve
+    la chaîne de requête, à laquelle libpq obéit. Reproduit avec destruction
+    réelle : `…/postgres?dbname=metreo_victim_a` a fait tourner
+    `upgrade head`, `downgrade base` puis `upgrade head` sur `metreo_victim_a`,
+    passée de deux organisations à zéro, pendant que le script supprimait sa
+    propre base jetable, restée vide.
+
+    On retire donc les paramètres redirecteurs, puis on demande au dialecte ce
+    qu'il ouvrira. Les deux couches sont distinctes : la première refuse en
+    amont, la seconde vérifie l'URL réellement construite.
+    """
+    candidate = parsed.set(database=name).difference_update_query(sorted(REDIRECTING_PARAMETERS))
+    opened = effective_database(candidate)
+    if opened != name:
+        raise UnsafeAdminUrl(
+            f"l'URL construite ouvrirait « {opened} » et non « {name} » : "
+            "refus, aucune migration ne doit toucher une autre base"
+        )
+    # `str()` sur une URL SQLAlchemy remplace le mot de passe par « *** » :
+    # l'URL rendue serait inutilisable, avec une erreur d'authentification
+    # pour tout diagnostic.
+    return candidate.render_as_string(hide_password=False)
+
+
 @contextmanager
 def owned_database(admin_url: str) -> Iterator[str]:
-    """Create a database, yield its URL, and drop it — whatever happens.
+    """Create a database, yield its URL, and drop it — if this run created it.
 
     ``CREATE DATABASE`` is the proof of ownership: PostgreSQL refuses it if the
-    name already exists, so reaching the body means this run created it. The
-    drop is in a ``finally`` so an exception, an assertion or a keyboard
-    interrupt still cleans up.
+    name already exists, so reaching the body means this run created it. That
+    proof is recorded in ``created``; without it nothing is dropped, because
+    ``owns()`` only establishes that a name *looks* generated, not that this
+    process generated it. A pre-existing database of the same name — a leftover
+    from an interrupted run — used to be terminated and dropped on the way out
+    of a failed creation. Reproduced: three witness rows lost.
+
+    The drop is still in a ``finally`` so an exception, a refusal or a keyboard
+    interrupt cleans up what this run really did create, and ``dispose()`` is
+    guaranteed either way.
     """
     parsed = make_url(admin_url)
+
+    # Avant toute connexion, création, migration ou suppression : une URL qui
+    # peut se déplacer ailleurs qu'où son chemin le dit n'est pas exploitable.
+    redirecting = redirecting_parameters(parsed)
+    if redirecting:
+        raise UnsafeAdminUrl(
+            f"l'URL d'administration porte {redirecting} dans sa chaîne de requête, "
+            "ce qui déplace la connexion ailleurs que là où son chemin le dit : "
+            "les migrations tourneraient sur une base que ce run n'a pas créée"
+        )
+
     name = generated_name()
+    url = ephemeral_url(parsed, name)
+
     # AUTOCOMMIT: CREATE/DROP DATABASE cannot run inside a transaction block.
     admin = create_engine(admin_url, isolation_level="AUTOCOMMIT", future=True)
+    created = False
     try:
         with admin.connect() as connection:
             connection.execute(text(f'CREATE DATABASE "{name}"'))
+        created = True
         print(f"base créée par ce run : {name}")
-        # `str()` sur une URL SQLAlchemy remplace le mot de passe par « *** » :
-        # l'URL rendue serait inutilisable, avec une erreur d'authentification
-        # pour tout diagnostic.
-        yield parsed.set(database=name).render_as_string(hide_password=False)
+        yield url
     finally:
-        if not owns(name):  # pragma: no cover - defensive, unreachable by design
-            raise RuntimeError(f"refus de supprimer « {name} » : ce run ne l'a pas créée")
         try:
-            with admin.connect() as connection:
-                connection.execute(
-                    text(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                        "WHERE datname = :name AND pid <> pg_backend_pid()"
-                    ),
-                    {"name": name},
-                )
-                connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
-            print(f"base supprimée : {name}")
+            if created:
+                if not owns(name):  # pragma: no cover - defensive, unreachable by design
+                    raise RuntimeError(f"refus de supprimer « {name} » : ce run ne l'a pas créée")
+                with admin.connect() as connection:
+                    connection.execute(
+                        text(
+                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                            "WHERE datname = :name AND pid <> pg_backend_pid()"
+                        ),
+                        {"name": name},
+                    )
+                    connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+                print(f"base supprimée : {name}")
         finally:
             admin.dispose()
 
@@ -162,6 +237,15 @@ def main() -> int:
         )
         return 1
 
+    try:
+        return roundtrip(arguments)
+    except UnsafeAdminUrl as refusal:
+        # Un traceback n'est pas un diagnostic : la raison du refus doit se lire.
+        print(f"migration-roundtrip : refusé — {refusal}.", file=sys.stderr)
+        return 1
+
+
+def roundtrip(arguments: argparse.Namespace) -> int:
     with owned_database(arguments.admin_url) as url:
         print("upgrade head…")
         alembic(url, "upgrade", "head")

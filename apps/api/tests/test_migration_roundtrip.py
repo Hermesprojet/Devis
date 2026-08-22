@@ -23,6 +23,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from sqlalchemy.engine import make_url
 
 from .conftest import running_on_postgresql
 
@@ -186,3 +187,285 @@ class TestTheCiStillMigratesItsOwnDatabase:
         assert "alembic -c alembic.ini downgrade" not in recipes, (
             "aucun downgrade ne doit viser une base préexistante"
         )
+
+
+PG_ADMIN = "postgresql+psycopg://metreo:metreo@localhost:5432/postgres"
+
+
+class _Connection:
+    """Une connexion qui note ce qu'on lui demande, et peut refuser le CREATE."""
+
+    def __init__(self, log: list[str], fail_on_create: bool) -> None:
+        self.log = log
+        self.fail_on_create = fail_on_create
+
+    def execute(self, statement: object, parameters: object = None) -> None:
+        sql = str(statement)
+        self.log.append(sql)
+        if "CREATE DATABASE" in sql and self.fail_on_create:
+            raise RuntimeError('database "…" already exists')
+
+    def __enter__(self) -> _Connection:
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        return None
+
+
+class _Engine:
+    def __init__(self, log: list[str], fail_on_create: bool = False) -> None:
+        self.log = log
+        self.fail_on_create = fail_on_create
+        self.disposed = False
+
+    def connect(self) -> _Connection:
+        return _Connection(self.log, self.fail_on_create)
+
+    def dispose(self) -> None:
+        self.disposed = True
+
+
+class TestARedirectingUrlIsRefusedBeforeAnything:
+    """Un `?dbname=` dans l'URL d'administration déplace TOUT l'aller-retour.
+
+    Reproduit sur un vrai serveur avant correction : `…/postgres?dbname=metreo_victim_a`
+    a fait tourner `upgrade head`, `downgrade base` puis `upgrade head` sur
+    `metreo_victim_a`, qui est passée de 2 organisations à 0 — pendant que le
+    script annonçait « aller-retour valide » et supprimait sa propre base
+    jetable, restée vide. `parsed.set(database=name)` conserve la chaîne de
+    requête, et libpq lui obéit plutôt qu'au chemin.
+    """
+
+    @pytest.mark.parametrize(
+        "parameter",
+        ["dbname", "database", "host", "hostaddr", "port", "user", "service", "passfile"],
+    )
+    def test_a_redirecting_parameter_is_refused_before_create_engine(
+        self, parameter: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def forbidden(*arguments: object, **keywords: object) -> object:
+            raise AssertionError(
+                "create_engine a été appelé : la connexion a eu lieu malgré la redirection"
+            )
+
+        monkeypatch.setattr(roundtrip, "create_engine", forbidden)
+        with (
+            pytest.raises(roundtrip.UnsafeAdminUrl, match=parameter),
+            roundtrip.owned_database(f"{PG_ADMIN}?{parameter}=victime"),
+        ):
+            pass  # pragma: no cover - le refus doit venir avant
+
+    def test_the_url_builder_alone_refuses_a_redirected_url(self) -> None:
+        """Seconde couche, contrôlée séparément de la première.
+
+        Le refus en amont et la vérification par `create_connect_args()` sont
+        deux gardes distincts. Celui-ci est appelé directement, sans passer par
+        l'autre : si `ephemeral_url` se contentait de `parsed.set(database=…)`,
+        l'URL rendue ouvrirait encore « victime ».
+        """
+        parsed = make_url(f"{PG_ADMIN}?dbname=victime")
+        name = roundtrip.generated_name()
+        built = roundtrip.ephemeral_url(parsed, name)
+        assert roundtrip.effective_database(built) == name, built
+
+    def test_the_yielded_url_opens_exactly_the_generated_database(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ce n'est pas le chemin de l'URL qui décide, c'est le dialecte."""
+        log: list[str] = []
+        monkeypatch.setattr(roundtrip, "create_engine", lambda *a, **k: _Engine(log))
+        seen: list[str] = []
+        with roundtrip.owned_database(f"{PG_ADMIN}?connect_timeout=5") as url:
+            seen.append(url)
+
+        parsed = make_url(seen[0])
+        arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
+        created = next(line for line in log if "CREATE DATABASE" in line)
+        name = created.split('"')[1]
+        assert arguments["dbname"] == name, arguments
+        assert roundtrip.owns(name)
+        # Un paramètre qui ne déplace rien n'a pas de raison d'être perdu.
+        assert arguments["connect_timeout"] == "5"
+
+
+class TestAFailedCreationDestroysNothing:
+    """`owns()` ne prouve qu'un format de nom, pas que ce run a créé la base.
+
+    Reproduit sur un vrai serveur avant correction : une base préexistante
+    nommée `metreo_roundtrip_deadbeefdeadbeef`, portant trois lignes témoins, a
+    fait échouer `CREATE DATABASE` — puis le `finally` l'a terminée et
+    supprimée. La preuve de propriété était le CREATE ; s'il échoue, il n'y a
+    plus de preuve, donc plus de droit de détruire.
+    """
+
+    def test_no_termination_and_no_drop_when_the_creation_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log: list[str] = []
+        engine = _Engine(log, fail_on_create=True)
+        monkeypatch.setattr(roundtrip, "create_engine", lambda *a, **k: engine)
+
+        with (
+            pytest.raises(RuntimeError, match="already exists"),
+            roundtrip.owned_database(PG_ADMIN),
+        ):
+            pass  # pragma: no cover - le corps ne doit pas être atteint
+
+        assert any("CREATE DATABASE" in line for line in log), log
+        assert not [line for line in log if "DROP DATABASE" in line], (
+            f"une base que ce run n'a pas créée a été supprimée : {log}"
+        )
+        assert not [line for line in log if "pg_terminate_backend" in line], (
+            f"les connexions d'une base étrangère ont été coupées : {log}"
+        )
+        assert engine.disposed, "le moteur d'administration doit être libéré quoi qu'il arrive"
+
+    def test_a_successful_creation_still_drops_and_disposes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """La correction ne doit pas transformer le nettoyage en fuite."""
+        log: list[str] = []
+        engine = _Engine(log)
+        monkeypatch.setattr(roundtrip, "create_engine", lambda *a, **k: engine)
+
+        with roundtrip.owned_database(PG_ADMIN):
+            pass
+
+        assert [line for line in log if "DROP DATABASE" in line], log
+        assert [line for line in log if "pg_terminate_backend" in line], log
+        assert engine.disposed
+
+
+class TestASingleListOfRedirectingParameters:
+    def test_the_scripts_share_one_definition(self) -> None:
+        """Deux listes divergeraient : celle du contrôle de nom n'avait pas `database`."""
+        defining = [
+            path.name
+            for path in sorted((ROOT / "scripts").glob("*.py"))
+            if "REDIRECTING_PARAMETERS = " in path.read_text(encoding="utf-8")
+        ]
+        assert defining == ["_url_safety.py"], defining
+
+
+@pytest.mark.skipif(
+    not running_on_postgresql(),
+    reason="Ces deux preuves détruisent ou épargnent de vraies bases ; il en faut un serveur.",
+)
+class TestAgainstARealServerAfterTheFix:
+    """Les deux reproductions, rejouées telles quelles contre un vrai serveur."""
+
+    def _admin(self) -> str:
+        from .conftest import TEST_DATABASE_URL
+
+        return TEST_DATABASE_URL
+
+    def test_a_victims_data_survives_a_dbname_parameter(self) -> None:
+        from sqlalchemy import create_engine, text
+
+        admin_url = self._admin()
+        admin = create_engine(admin_url, isolation_level="AUTOCOMMIT", future=True)
+        victim = "metreo_temoin_dbname"
+        try:
+            with admin.connect() as connection:
+                connection.execute(text(f'DROP DATABASE IF EXISTS "{victim}"'))
+                connection.execute(text(f'CREATE DATABASE "{victim}"'))
+            victim_url = (
+                make_url(admin_url).set(database=victim).render_as_string(hide_password=False)
+            )
+            engine = create_engine(victim_url, future=True)
+            try:
+                with engine.begin() as connection:
+                    connection.execute(text("CREATE TABLE temoin (id integer)"))
+                    connection.execute(text("INSERT INTO temoin VALUES (1), (2), (3)"))
+            finally:
+                engine.dispose()
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "migration_roundtrip.py"),
+                    "--admin-url",
+                    f"{admin_url}?dbname={victim}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert completed.returncode == 1, completed.stdout + completed.stderr
+            assert "dbname" in completed.stderr, completed.stderr
+            assert "Traceback" not in completed.stderr, completed.stderr
+
+            engine = create_engine(victim_url, future=True)
+            try:
+                with engine.connect() as connection:
+                    rows = connection.execute(text("SELECT count(*) FROM temoin")).scalar_one()
+            finally:
+                engine.dispose()
+            assert rows == 3, "la base témoin a été touchée"
+        finally:
+            with admin.connect() as connection:
+                connection.execute(
+                    text(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = :name AND pid <> pg_backend_pid()"
+                    ),
+                    {"name": victim},
+                )
+                connection.execute(text(f'DROP DATABASE IF EXISTS "{victim}"'))
+            admin.dispose()
+
+    def test_a_pre_existing_database_of_the_same_name_survives(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from sqlalchemy import create_engine, text
+
+        admin_url = self._admin()
+        taken = "metreo_roundtrip_deadbeefdeadbeef"
+        assert roundtrip.owns(taken), "le nom doit être de ceux que le script sait engendrer"
+        admin = create_engine(admin_url, isolation_level="AUTOCOMMIT", future=True)
+        try:
+            with admin.connect() as connection:
+                connection.execute(text(f'DROP DATABASE IF EXISTS "{taken}"'))
+                connection.execute(text(f'CREATE DATABASE "{taken}"'))
+            taken_url = (
+                make_url(admin_url).set(database=taken).render_as_string(hide_password=False)
+            )
+            engine = create_engine(taken_url, future=True)
+            try:
+                with engine.begin() as connection:
+                    connection.execute(text("CREATE TABLE temoin (id integer)"))
+                    connection.execute(text("INSERT INTO temoin VALUES (1), (2), (3)"))
+            finally:
+                engine.dispose()
+
+            monkeypatch.setattr(roundtrip, "generated_name", lambda: taken)
+            with (
+                pytest.raises(Exception, match="already exists"),
+                roundtrip.owned_database(admin_url),
+            ):
+                pass  # pragma: no cover - la création doit échouer
+
+            with admin.connect() as connection:
+                still_there = connection.execute(
+                    text("SELECT count(*) FROM pg_database WHERE datname = :name"),
+                    {"name": taken},
+                ).scalar_one()
+            assert still_there == 1, "la base préexistante a été supprimée"
+            engine = create_engine(taken_url, future=True)
+            try:
+                with engine.connect() as connection:
+                    rows = connection.execute(text("SELECT count(*) FROM temoin")).scalar_one()
+            finally:
+                engine.dispose()
+            assert rows == 3
+        finally:
+            with admin.connect() as connection:
+                connection.execute(
+                    text(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = :name AND pid <> pg_backend_pid()"
+                    ),
+                    {"name": taken},
+                )
+                connection.execute(text(f'DROP DATABASE IF EXISTS "{taken}"'))
+            admin.dispose()

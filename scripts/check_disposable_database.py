@@ -1,9 +1,9 @@
 """Refuse a database URL that does not name a disposable database.
 
-`make release-gate` and `make migrations` both destroy what they touch: the
-first runs the full suite, which creates and drops a schema per test; the
-second runs `alembic downgrade base`, which removes every application table.
-Pointing either at a real database loses data.
+`make release-gate` destroys what it touches: it runs the full suite, which
+creates and drops a schema per test. Pointing it at a real database loses
+data. (`make migrations`, which ran `alembic downgrade base` on a caller-named
+database, no longer exists; the round-trip now creates its own database.)
 
 The first version of this check looked for `test`, `gate`, `ci`, `tmp` or
 `scratch` **anywhere in the URL**, which is not a check at all: a production
@@ -27,50 +27,29 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from pathlib import Path
 
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, NoSuchModuleError
+
+# Le module voisin porte la seule liste de paramètres redirecteurs du dépôt.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _url_safety import (
+    REDIRECTING_PARAMETERS,
+    UnknownDialect,
+    effective_database,
+    redirecting_parameters,
+)
+
+__all__ = ["REDIRECTING_PARAMETERS", "UnknownDialect", "database_name", "refusal", "tokens"]
 
 #: A database name carrying one of these tokens is understood as throw-away.
 DISPOSABLE_TOKENS = frozenset({"test", "tests", "gate", "ci", "tmp", "temp", "scratch"})
 
 #: These win over the list above, whatever else the name carries.
 FORBIDDEN_TOKENS = frozenset({"prod", "prods", "production", "live", "prd", "real"})
-
-
-#: Query parameters that move the connection somewhere other than where the
-#: URL path says. libpq reads them, SQLAlchemy passes them through, and the
-#: path then names a database nobody connects to.
-REDIRECTING_PARAMETERS = frozenset(
-    {"dbname", "host", "hostaddr", "port", "user", "service", "passfile"}
-)
-
-
-def effective_database(url: str) -> str:
-    """The database the driver will actually open — not the one the path names.
-
-    Reading ``urlsplit(url).path`` is reading the wrong component. The psycopg
-    dialect merges the URL query into its connection arguments, so
-    ``…/metreo_gate?dbname=metreo`` names ``metreo_gate`` in its path and opens
-    ``metreo``. A guard that validates the path validates a database nobody
-    touches, and prints its reassuring name while another one is destroyed.
-    That was reproduced: a victim database went from two organisations to zero
-    while the announced disposable database stayed untouched.
-
-    So the dialect is asked what it will do. When it cannot be asked — an
-    unknown driver, an unparsable URL — the caller is told, rather than being
-    given a guess.
-    """
-    parsed = make_url(url)
-    if parsed.get_backend_name() == "sqlite":
-        # A SQLite URL names a file; its final component is the database.
-        return (parsed.database or "").rsplit("/", 1)[-1]
-    arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
-    return str(arguments.get("dbname") or arguments.get("database") or parsed.database or "")
-
-
-class UnknownDialect(Exception):
-    """The driver cannot be loaded, so nothing can be said about the target."""
 
 
 def database_name(url: str) -> str:
@@ -96,7 +75,7 @@ def refusal(url: str) -> str | None:
     # inopérant : ce qui est validé n'est plus ce qui est ouvert. Plutôt que de
     # tenter de suivre chaque redirection, on les refuse — aucune n'a de raison
     # d'être dans l'URL d'une commande destructrice.
-    redirecting = sorted(set(parsed.query) & REDIRECTING_PARAMETERS)
+    redirecting = redirecting_parameters(parsed)
     if redirecting:
         return (
             f"l'URL porte {redirecting} dans sa chaîne de requête, ce qui déplace la "
