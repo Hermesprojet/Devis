@@ -18,18 +18,18 @@ from metreo_contracts import (
 )
 
 
-def revision() -> DocumentRevisionRef:
+def revision(organization_id: str = "org-1") -> DocumentRevisionRef:
     return DocumentRevisionRef(
-        organization_id="org-1",
+        organization_id=organization_id,
         document_id="doc-1",
         revision_id="rev-1",
         revision_number=1,
     )
 
 
-def citation() -> SourceCitation:
+def citation(organization_id: str = "org-1") -> SourceCitation:
     return SourceCitation(
-        revision=revision(),
+        revision=revision(organization_id),
         page=2,
         char_start=10,
         char_end=20,
@@ -70,6 +70,11 @@ def test_bounding_box_rejects_out_of_range_or_reversed_coordinates(
     assert error.value.code == "invalid_document_bounding_box"
 
 
+def test_bounding_box_rejects_float_coordinates() -> None:
+    with pytest.raises(InvalidBoundingBoxError):
+        BoundingBox(0.1, Decimal("0"), Decimal("1"), Decimal("1"))  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("page", "char_start", "char_end"),
     [(0, 0, 1), (1, -1, 1), (1, 2, 2), (1, 3, 2)],
@@ -98,6 +103,18 @@ def test_structured_extraction_requires_a_citation() -> None:
             data=FrozenJsonObject.from_mapping({"value": "C30/37"}),
             confidence=Confidence(Decimal("0.9")),
             citations=(),
+            version=ExecutionVersion("pipeline-1", "prompt-1", "model-1"),
+        )
+
+
+def test_structured_extraction_rejects_citations_from_two_tenants() -> None:
+    with pytest.raises(InvalidCitationError):
+        StructuredExtraction(
+            schema_name="clause",
+            schema_version="1",
+            data=FrozenJsonObject.from_mapping({"value": "C30/37"}),
+            confidence=Confidence(Decimal("0.9")),
+            citations=(citation("org-1"), citation("org-2")),
             version=ExecutionVersion("pipeline-1", "prompt-1", "model-1"),
         )
 

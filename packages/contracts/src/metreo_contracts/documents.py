@@ -381,6 +381,15 @@ class Classification:
                 "Une classification doit avoir au moins une citation.",
                 field="citations",
             )
+        organization_id = self.citations[0].revision.organization_id
+        if any(
+            citation.revision.organization_id != organization_id
+            for citation in self.citations
+        ):
+            raise InvalidCitationError(
+                "Les citations d'une classification doivent appartenir au même tenant.",
+                field="citations",
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,6 +410,15 @@ class StructuredExtraction:
         if not self.citations:
             raise InvalidCitationError(
                 "Une extraction structurée doit avoir au moins une citation.",
+                field="citations",
+            )
+        organization_id = self.citations[0].revision.organization_id
+        if any(
+            citation.revision.organization_id != organization_id
+            for citation in self.citations
+        ):
+            raise InvalidCitationError(
+                "Les citations d'une extraction doivent appartenir au même tenant.",
                 field="citations",
             )
 
