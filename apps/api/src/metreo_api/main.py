@@ -20,7 +20,17 @@ from metreo_domain.errors import DomainError
 
 from .config import Settings, get_settings
 from .logging_config import configure_logging, request_id_var
-from .routers import audit_log, auth, boq, estimates, meta, organizations, pricebooks, projects
+from .routers import (
+    audit_log,
+    auth,
+    boq,
+    documents,
+    estimates,
+    meta,
+    organizations,
+    pricebooks,
+    projects,
+)
 
 logger = logging.getLogger("metreo.api")
 
@@ -34,7 +44,8 @@ décomposition soit consultable.
 Phase 1: organisations, projets, bibliothèque de prix (import CSV en deux temps),
 bordereau, moteur de calcul déterministe, gel de version, exports et journal
 d'audit. Les modules documentaires, plans et achats sont décrits dans
-`docs/ROADMAP.md` et ne sont **pas** implémentés.
+`docs/ROADMAP.md`. La Phase 2A expose uniquement les métadonnées documentaires
+et la validation humaine ; aucun upload, OCR ou fournisseur IA n'est actif.
 """
 
 
@@ -127,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix=prefix)
     app.include_router(organizations.router, prefix=prefix)
     app.include_router(projects.router, prefix=prefix)
+    app.include_router(documents.router, prefix=prefix)
     app.include_router(pricebooks.router, prefix=prefix)
     app.include_router(boq.router, prefix=prefix)
     app.include_router(estimates.router, prefix=prefix)

@@ -42,6 +42,9 @@ class Permission(str, Enum):
     USER_MANAGE = "user:manage"
     PROJECT_READ = "project:read"
     PROJECT_WRITE = "project:write"
+    DOCUMENT_READ = "document:read"
+    DOCUMENT_WRITE = "document:write"
+    DOCUMENT_VALIDATE = "document:validate"
     PRICEBOOK_READ = "pricebook:read"
     PRICEBOOK_WRITE = "pricebook:write"
     BOQ_READ = "boq:read"
@@ -67,6 +70,9 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     Role.ESTIMATOR: {
         Permission.PROJECT_READ,
         Permission.PROJECT_WRITE,
+        Permission.DOCUMENT_READ,
+        Permission.DOCUMENT_WRITE,
+        Permission.DOCUMENT_VALIDATE,
         Permission.PRICEBOOK_READ,
         Permission.PRICEBOOK_WRITE,
         Permission.BOQ_READ,
@@ -79,6 +85,9 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     },
     Role.PROJECT_MANAGER: {
         Permission.PROJECT_READ,
+        Permission.DOCUMENT_READ,
+        Permission.DOCUMENT_WRITE,
+        Permission.DOCUMENT_VALIDATE,
         Permission.PRICEBOOK_READ,
         Permission.BOQ_READ,
         Permission.ESTIMATE_READ,
@@ -87,6 +96,7 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     },
     Role.BUYER: {
         Permission.PROJECT_READ,
+        Permission.DOCUMENT_READ,
         Permission.PRICEBOOK_READ,
         Permission.PRICEBOOK_WRITE,
         Permission.BOQ_READ,
@@ -95,6 +105,7 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     },
     Role.VIEWER: {
         Permission.PROJECT_READ,
+        Permission.DOCUMENT_READ,
         Permission.BOQ_READ,
         Permission.ESTIMATE_READ,
         Permission.AUDIT_READ,
