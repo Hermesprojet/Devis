@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
 import pytest
+
 from metreo_contracts import (
     BoundingBox,
     Confidence,
