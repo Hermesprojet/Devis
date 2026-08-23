@@ -22,9 +22,25 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      id-token: write
       actions: read
     steps:
+      - name: Refuser une pull request provenant d’un fork
+        # Autoriser Bash sur le code d’un fork permettrait à ce code d’essayer
+        # d’exfiltrer les secrets du job. Le commentaire doit viser une PR dont
+        # la branche source appartient à ce dépôt, sinon le job s’arrête avant
+        # le checkout et avant Claude.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          test -n "$PR_NUMBER"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.repo.full_name')"
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "Refus : la branche source appartient à $head_repo, pas à $GITHUB_REPOSITORY." >&2
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -35,3 +51,13 @@ jobs:
         uses: anthropics/claude-code-action@24dcd50c0568f0fc9e9211213a4fd2d9eb15c4e0 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          # Les opérations de fichiers et GitHub de base restent fournies par
+          # l’action. Bash n’est ouvert que pour l’installation, les contrôles
+          # du dépôt et un fetch non destructif. Pas de shell générique, pas de
+          # pull/rebase, pas de commande de suppression.
+          claude_args: |
+            --allowedTools "Bash(make install),Bash(make lint),Bash(make types),Bash(make test-domain),Bash(make test-api),Bash(make verify),Bash(pytest:*),Bash(python3 -m pytest:*),Bash(git fetch origin:*)"
+            --disallowedTools "TaskOutput,KillTask"
+            --max-turns 40
