@@ -13,6 +13,12 @@ le nom rassurant s'affichait à l'écran.
 
 Une seule liste, ici : deux listes divergent. Celle du contrôle de nom avait
 `dbname` mais pas `database`, et l'aller-retour n'en avait aucune.
+
+Et un seul constructeur d'URL cible, pour la même raison. Le défaut a été fermé
+dans l'aller-retour, puis rouvert quelques commits plus loin par le helper
+témoin des tests, qui avait réécrit le sien avec `set(database=…)` — il créait
+sa base aléatoire et écrivait ses sentinelles dans la base redirigée. Ce module
+est donc importé aussi bien par `scripts/` que par `apps/api/tests/`.
 """
 
 from __future__ import annotations
@@ -30,6 +36,10 @@ REDIRECTING_PARAMETERS = frozenset(
 
 class UnknownDialect(Exception):
     """Le pilote ne se charge pas : on ne peut rien dire de la cible."""
+
+
+class UnsafeUrl(RuntimeError):
+    """L'URL ne désigne pas de façon univoque la base qui sera ouverte."""
 
 
 def redirecting_parameters(url: str | URL) -> list[str]:
@@ -52,3 +62,54 @@ def effective_database(url: str | URL) -> str:
         return (parsed.database or "").rsplit("/", 1)[-1]
     arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
     return str(arguments.get("dbname") or arguments.get("database") or parsed.database or "")
+
+
+def refuse_redirection(url: str | URL, *, doing: str) -> None:
+    """Refuser, **avant toute connexion**, une URL qui peut se déplacer ailleurs.
+
+    Premier des deux gardes. Il ne répare rien et ne devine rien : une URL
+    d'administration portant `dbname`, `host` ou `service` n'est pas exploitable
+    par un appelant qui va créer puis détruire, parce que le nom qu'il lit n'est
+    pas celui qu'il ouvrira. ``doing`` nomme la conséquence dans le message, pour
+    que le refus se lise sans traceback.
+    """
+    redirecting = redirecting_parameters(url)
+    if redirecting:
+        raise UnsafeUrl(
+            f"l'URL porte {redirecting} dans sa chaîne de requête, ce qui déplace la "
+            f"connexion ailleurs que là où son chemin le dit : {doing}"
+        )
+
+
+def safe_target_url(admin: str | URL, name: str) -> str:
+    """L'URL de ``name`` sur ce serveur, débarrassée de toute redirection.
+
+    Second des deux gardes, et le seul constructeur d'URL cible du dépôt.
+    `parsed.set(database=name)` ne suffit pas : il change le CHEMIN et conserve
+    la chaîne de requête, à laquelle libpq obéit. Reproduit deux fois avec
+    conséquence réelle — d'abord dans l'aller-retour des migrations, où
+    `…/postgres?dbname=metreo_victim_a` a fait tourner `downgrade base` sur la
+    victime, puis dans le helper témoin des tests, qui créait bien une base
+    aléatoire mais écrivait ses sentinelles dans la base redirigée, et les
+    relisait au même endroit — donc passait au vert en ayant modifié une base
+    étrangère.
+
+    Deux implémentations divergeraient, comme les deux listes de paramètres
+    l'avaient déjà fait : il n'y en a qu'une, ici, et les deux appelants
+    l'utilisent.
+
+    On retire les paramètres redirecteurs, puis on demande au dialecte ce qu'il
+    ouvrira réellement — la vérification ne fait pas confiance au retrait.
+    """
+    parsed = make_url(admin) if isinstance(admin, str) else admin
+    candidate = parsed.set(database=name).difference_update_query(sorted(REDIRECTING_PARAMETERS))
+    opened = effective_database(candidate)
+    if opened != name:
+        raise UnsafeUrl(
+            f"l'URL construite ouvrirait « {opened} » et non « {name} » : refus, "
+            "aucune écriture ni destruction ne doit toucher une autre base"
+        )
+    # `str()` sur une URL SQLAlchemy remplace le mot de passe par « *** » :
+    # l'URL rendue serait inutilisable, avec une erreur d'authentification pour
+    # tout diagnostic.
+    return candidate.render_as_string(hide_password=False)

@@ -57,10 +57,22 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _url_safety import (  # noqa: E402 - après l'ajustement de sys.path ci-dessus
-    REDIRECTING_PARAMETERS,
+    UnsafeUrl,
     effective_database,
-    redirecting_parameters,
+    refuse_redirection,
+    safe_target_url,
 )
+
+#: Réexportés : les tests interrogent la cible effective à travers ce module, et
+#: `UnsafeAdminUrl` reste le nom sous lequel le refus se lit ici.
+__all__ = [
+    "UnsafeAdminUrl",
+    "effective_database",
+    "ephemeral_url",
+    "generated_name",
+    "owned_database",
+    "owns",
+]
 
 # `alembic/env.py` importe la configuration de l'application : sans cela, il
 # faudrait lancer alembic depuis apps/api avec PYTHONPATH=src, et ce script
@@ -90,35 +102,21 @@ def owns(name: str) -> bool:
     return bool(re.fullmatch(PREFIX + "[0-9a-f]{16}", name))
 
 
-class UnsafeAdminUrl(RuntimeError):
-    """L'URL d'administration ne désigne pas de façon univoque ce qu'on ouvrira."""
+#: Le refus porte le même nom qu'avant — c'est ainsi qu'il se lit dans `main()`
+#: et dans les tests — mais c'est désormais l'exception du module partagé, pour
+#: qu'un refus levé par le constructeur commun soit rattrapé ici.
+UnsafeAdminUrl = UnsafeUrl
 
 
 def ephemeral_url(parsed: URL, name: str) -> str:
     """L'URL de la base éphémère, débarrassée de toute redirection.
 
-    `parsed.set(database=name)` ne suffit pas : il change le CHEMIN et conserve
-    la chaîne de requête, à laquelle libpq obéit. Reproduit avec destruction
-    réelle : `…/postgres?dbname=metreo_victim_a` a fait tourner
-    `upgrade head`, `downgrade base` puis `upgrade head` sur `metreo_victim_a`,
-    passée de deux organisations à zéro, pendant que le script supprimait sa
-    propre base jetable, restée vide.
-
-    On retire donc les paramètres redirecteurs, puis on demande au dialecte ce
-    qu'il ouvrira. Les deux couches sont distinctes : la première refuse en
-    amont, la seconde vérifie l'URL réellement construite.
+    Le constructeur vit dans `_url_safety` : le helper témoin des tests avait
+    réécrit le sien avec `parsed.set(database=name)`, et écrivait donc ses
+    sentinelles dans la base redirigée. Deux implémentations divergent ; il n'y
+    en a plus qu'une.
     """
-    candidate = parsed.set(database=name).difference_update_query(sorted(REDIRECTING_PARAMETERS))
-    opened = effective_database(candidate)
-    if opened != name:
-        raise UnsafeAdminUrl(
-            f"l'URL construite ouvrirait « {opened} » et non « {name} » : "
-            "refus, aucune migration ne doit toucher une autre base"
-        )
-    # `str()` sur une URL SQLAlchemy remplace le mot de passe par « *** » :
-    # l'URL rendue serait inutilisable, avec une erreur d'authentification
-    # pour tout diagnostic.
-    return candidate.render_as_string(hide_password=False)
+    return safe_target_url(parsed, name)
 
 
 @contextmanager
@@ -141,13 +139,9 @@ def owned_database(admin_url: str) -> Iterator[str]:
 
     # Avant toute connexion, création, migration ou suppression : une URL qui
     # peut se déplacer ailleurs qu'où son chemin le dit n'est pas exploitable.
-    redirecting = redirecting_parameters(parsed)
-    if redirecting:
-        raise UnsafeAdminUrl(
-            f"l'URL d'administration porte {redirecting} dans sa chaîne de requête, "
-            "ce qui déplace la connexion ailleurs que là où son chemin le dit : "
-            "les migrations tourneraient sur une base que ce run n'a pas créée"
-        )
+    refuse_redirection(
+        parsed, doing="les migrations tourneraient sur une base que ce run n'a pas créée"
+    )
 
     name = generated_name()
     url = ephemeral_url(parsed, name)
@@ -239,7 +233,7 @@ def main() -> int:
 
     try:
         return roundtrip(arguments)
-    except UnsafeAdminUrl as refusal:
+    except UnsafeUrl as refusal:
         # Un traceback n'est pas un diagnostic : la raison du refus doit se lire.
         print(f"migration-roundtrip : refusé — {refusal}.", file=sys.stderr)
         return 1

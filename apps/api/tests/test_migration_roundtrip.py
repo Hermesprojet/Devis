@@ -34,6 +34,8 @@ from .conftest import running_on_postgresql
 from .witness_database import (
     count_sentinels,
     exists,
+    has_table,
+    names_with_prefix,
     owned_witness,
     witness_name,
 )
@@ -234,6 +236,12 @@ class _Engine:
     def connect(self) -> _Connection:
         return _Connection(self.log, self.fail_on_create)
 
+    def begin(self) -> _Connection:
+        # Le helper témoin écrit ses sentinelles dans une transaction. Sans
+        # serveur, l'écriture est notée comme le reste : ce qui compte est
+        # l'URL qui aurait été ouverte, pas la ligne insérée.
+        return _Connection(self.log, self.fail_on_create)
+
     def dispose(self) -> None:
         self.disposed = True
 
@@ -393,6 +401,100 @@ class TestASingleListOfRedirectingParameters:
         ]
         assert defining == ["_url_safety.py"], defining
 
+    def test_the_witness_helper_builds_no_url_of_its_own(self) -> None:
+        """Le contrôle permanent contre la divergence qui a rouvert le défaut.
+
+        Le code de production avait fermé le détournement `?dbname=` ; le helper
+        témoin des tests, écrit ensuite, a réintroduit `set(database=…)` et donc
+        le défaut. Ce n'est pas l'ignorance qui l'a rouvert, c'est la seconde
+        implémentation. Elle est interdite ici plutôt que corrigée une fois de
+        plus.
+        """
+        helper = (Path(__file__).parent / "witness_database.py").read_text(encoding="utf-8")
+        tree = ast.parse(helper)
+
+        # Lu dans l'AST, pas dans le texte : la docstring du helper raconte le
+        # défaut, et un contrôle textuel se déclencherait sur son propre récit.
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == "_url_safety"
+            for alias in node.names
+        }
+        assert {"refuse_redirection", "safe_target_url"} <= imported, (
+            f"le helper doit importer les deux gardes du module partagé ; il a {imported}"
+        )
+
+        offending = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "set"
+            and any(keyword.arg == "database" for keyword in node.keywords)
+        ]
+        assert offending == [], (
+            f"lignes {offending} — `set(database=…)` remplace le CHEMIN et conserve "
+            "la chaîne de requête : l'URL rendue ouvrirait encore la base redirigée"
+        )
+        assert "REDIRECTING_PARAMETERS = " not in helper, (
+            "une seconde liste divergerait de celle de scripts/_url_safety.py"
+        )
+
+
+class TestTheWitnessHelperCannotBeRedirected:
+    """Le helper qui prouve l'absence de destruction écrivait dans une victime.
+
+    Reproduit avant correction : avec `admin_url = …/postgres?dbname=victime`,
+    `owned_witness` créait bien sa base aléatoire `metreo_temoin_…`, mais
+    construisait son URL avec `make_url(admin_url).set(database=name)` — qui
+    remplace le chemin et garde la requête. `CREATE TABLE temoin` et les trois
+    `INSERT` partaient donc dans « victime » ; `count_sentinels(witness.url)`
+    les y relisait, l'assertion passait au vert, et le nettoyage supprimait la
+    base aléatoire restée vide. Une preuve verte, une base étrangère modifiée.
+
+    Ces deux contrôles n'ouvrent aucune base : ils tournent partout, y compris
+    là où le défaut ferait le plus de dégâts.
+    """
+
+    @pytest.mark.parametrize(
+        "parameter",
+        ["dbname", "database", "host", "hostaddr", "port", "user", "service", "passfile"],
+    )
+    def test_a_redirecting_parameter_is_refused_before_create_engine(
+        self, parameter: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def forbidden(*arguments: object, **keywords: object) -> object:
+            raise AssertionError(
+                "create_engine a été appelé : le helper s'est connecté malgré la redirection"
+            )
+
+        monkeypatch.setattr(witness_database, "create_engine", forbidden)
+        with (
+            pytest.raises(witness_database.UnsafeUrl, match=parameter),
+            witness_database.owned_witness(f"{PG_ADMIN}?{parameter}=victime"),
+        ):
+            pass  # pragma: no cover - le refus doit venir avant
+
+    def test_the_witness_url_opens_exactly_the_database_it_created(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ce n'est pas le chemin de l'URL qui décide, c'est le dialecte.
+
+        Un paramètre inoffensif — `connect_timeout` — est conservé : le
+        correctif retire les redirections, pas la configuration.
+        """
+        log: list[str] = []
+        monkeypatch.setattr(witness_database, "create_engine", lambda *a, **k: _Engine(log))
+
+        with witness_database.owned_witness(f"{PG_ADMIN}?connect_timeout=5") as witness:
+            parsed = make_url(witness.url)
+            arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
+            assert arguments["dbname"] == witness.name, arguments
+            assert arguments["connect_timeout"] == "5", arguments
+            created = next(line for line in log if "CREATE DATABASE" in line)
+            assert created.split('"')[1] == witness.name, created
+
 
 class TestTheseTestsCannotDestroyWhatTheyDoNotOwn:
     """Le contrôle qui empêche ces preuves de redevenir dangereuses.
@@ -527,6 +629,78 @@ class TestAgainstARealServerAfterTheFix:
         from .conftest import TEST_DATABASE_URL
 
         return TEST_DATABASE_URL
+
+    def _with(self, admin_url: str, parameter: str) -> str:
+        """Ajouter un paramètre sans supposer que l'URL n'en portait aucun."""
+        separator = "&" if "?" in admin_url else "?"
+        return f"{admin_url}{separator}{parameter}"
+
+    def test_a_redirected_admin_url_never_reaches_the_witness_of_another_test(self) -> None:
+        """La reproduction du P1, rejouée sur un vrai serveur.
+
+        Avant correction : la victime perdait sa table `temoin` au profit de
+        celle du helper, et les trois sentinelles relues étaient les siennes.
+        Après : le refus tombe avant la moindre connexion, les sentinelles de la
+        victime sont intactes, et aucune base témoin n'a été créée au passage.
+        """
+        admin_url = self._admin()
+        with owned_witness(admin_url) as victim:
+            assert count_sentinels(victim.url) == 3
+            before = names_with_prefix(admin_url)
+
+            with (
+                pytest.raises(witness_database.UnsafeUrl, match="dbname"),
+                owned_witness(self._with(admin_url, f"dbname={victim.name}")),
+            ):
+                pass  # pragma: no cover - le refus doit venir avant
+
+            assert count_sentinels(victim.url) == 3, "les sentinelles de la victime ont bougé"
+            assert names_with_prefix(admin_url) == before, (
+                "un refus qui laisse une base derrière lui n'est pas un refus"
+            )
+
+    def test_the_sentinels_never_land_in_the_redirected_database(self) -> None:
+        """La version non circulaire de la preuve, celle qui passait au vert.
+
+        La victime précédente porte déjà une table `temoin` : avec l'ancien
+        code, l'écriture détournée s'y heurtait et le test tombait sur une
+        erreur, ce qui est visible. Le cas dangereux est l'autre : une base
+        **vide**, où le détournement écrivait sans conflit, relisait ses trois
+        sentinelles au même endroit, et concluait au vert en ayant créé une
+        table dans une base étrangère. On le rejoue ici avec une base vide
+        possédée par ce test, et on vérifie l'endroit où rien n'a été écrit.
+        """
+        admin_url = self._admin()
+        with roundtrip.owned_database(admin_url) as ephemeral:
+            target = make_url(ephemeral).database or ""
+            assert target, ephemeral
+            assert not has_table(ephemeral), "la base de départ n'est pas vide"
+
+            with (
+                pytest.raises(witness_database.UnsafeUrl, match="dbname"),
+                owned_witness(self._with(admin_url, f"dbname={target}")),
+            ):
+                pass  # pragma: no cover - le refus doit venir avant
+
+            assert not has_table(ephemeral), (
+                "la table témoin a été créée dans la base redirigée — le helper "
+                "a écrit dans une base qu'il ne possède pas"
+            )
+
+    def test_the_witness_url_targets_the_database_the_helper_created(self) -> None:
+        """Cible effective, contrôlée par le dialecte, sur une URL paramétrée.
+
+        `connect_timeout` ne déplace rien : il doit survivre au nettoyage de
+        l'URL, sinon le correctif serait un appauvrissement déguisé.
+        """
+        admin_url = self._admin()
+        with owned_witness(self._with(admin_url, "connect_timeout=5")) as witness:
+            parsed = make_url(witness.url)
+            arguments = parsed.get_dialect()().create_connect_args(parsed)[1]
+            assert arguments["dbname"] == witness.name, arguments
+            assert arguments["connect_timeout"] == "5", arguments
+            assert exists(admin_url, witness.name), "la base annoncée n'existe pas"
+            assert count_sentinels(witness.url) == 3
 
     def test_the_helper_refuses_to_touch_a_database_it_did_not_create(self) -> None:
         """La preuve directe du P1 : une base étrangère n'est jamais supprimée.
