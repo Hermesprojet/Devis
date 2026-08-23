@@ -226,6 +226,81 @@ class TestDocumentRevisionNumbering:
         assert persisted == [1, 2, 3, 4]
 
 
+class TestDocumentStepRunIdempotence:
+    def test_four_simultaneous_claims_share_one_run(
+        self, seeded: dict[str, str], database_url: str
+    ) -> None:
+        from metreo_api.models import Document, DocumentRevision, DocumentStepRun, Project
+        from metreo_api.services import documents
+
+        engine = create_engine(database_url)
+        with Session(engine) as session:
+            project = session.scalars(select(Project).limit(1)).one()
+            document = Document(
+                organization_id=project.organization_id,
+                project_id=project.id,
+                title="Étape concurrente",
+            )
+            session.add(document)
+            session.flush()
+            revision = DocumentRevision(
+                organization_id=project.organization_id,
+                document_id=document.id,
+                revision_number=1,
+                sha256="e" * 64,
+                byte_size=1,
+                media_type="application/pdf",
+                storage_key=f"concurrency/{document.id}/1",
+                original_filename="revision.pdf",
+                status="draft",
+            )
+            session.add(revision)
+            session.commit()
+            organization_id = project.organization_id
+            revision_id = revision.id
+        engine.dispose()
+
+        def claim(session: Session, barrier: threading.Barrier) -> tuple[str, bool]:
+            barrier.wait(timeout=20)
+            run, created = documents.claim_step_run(
+                session,
+                organization_id=organization_id,
+                revision_id=revision_id,
+                step="ocr",
+                pipeline_version="pipeline-1",
+                prompt_version="none",
+                model_version="ocr-1",
+            )
+            session.commit()
+            return run.id, created
+
+        outcomes = run_in_parallel(claim, database_url, threads=4)
+        errors = [item for item in outcomes if isinstance(item, BaseException)]
+        assert errors == [], f"une revendication a échoué : {errors}"
+        claims = [item for item in outcomes if isinstance(item, tuple)]
+        assert len({run_id for run_id, _created in claims}) == 1, claims
+        assert [created for _run_id, created in claims].count(True) == 1, claims
+
+        engine = create_engine(database_url)
+        with Session(engine) as session:
+            rows = list(
+                session.scalars(
+                    select(DocumentStepRun).where(
+                        DocumentStepRun.organization_id == organization_id,
+                        DocumentStepRun.revision_id == revision_id,
+                        DocumentStepRun.step == "ocr",
+                        DocumentStepRun.pipeline_version == "pipeline-1",
+                        DocumentStepRun.prompt_version == "none",
+                        DocumentStepRun.model_version == "ocr-1",
+                    )
+                ).all()
+            )
+        engine.dispose()
+        assert len(rows) == 1
+        assert rows[0].status == "running"
+        assert rows[0].attempt == 1
+
+
 class TestNeighbouringRaces:
     """Deux courses voisines, à vérifier avant de conclure."""
 

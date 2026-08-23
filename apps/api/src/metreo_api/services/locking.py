@@ -14,6 +14,9 @@ callers queue instead of colliding:
 
 * the :class:`~metreo_api.models.PriceBook` before numbering its versions;
 * the :class:`~metreo_api.models.Estimate` before numbering its versions;
+* the :class:`~metreo_api.models.DocumentRevision` before claiming a pipeline
+  step and the :class:`~metreo_api.models.DocumentStepRun` before changing its
+  state;
 * the version row itself before publishing it, writing into it, or freezing
   it — there the row being decided *is* the row to lock.
 
@@ -71,6 +74,8 @@ LOCK_ORDER: tuple[str, ...] = (
     "ImportBatch",
     "BoqItem",
     "Document",
+    "DocumentRevision",
+    "DocumentStepRun",
     "PriceBook",
     "PriceBookVersion",
     "Estimate",

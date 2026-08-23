@@ -8,21 +8,76 @@ validation reason or extracted value.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
     Document,
     DocumentRevision,
+    DocumentStepRun,
     ExtractionProposal,
     Project,
     ValidationDecision,
+    utcnow,
 )
 from ..schemas import ValidationDecisionCreate
 from ..security.auth import TenantContext
 from . import audit
 from .locking import lock_owned
 from .tenant import get_owned, owned_query
+
+DOCUMENT_PIPELINE_STEPS = frozenset(
+    {
+        "receive_security",
+        "detection",
+        "native_text",
+        "ocr",
+        "tables",
+        "segmentation",
+        "classification",
+        "structured_extraction",
+        "indexing",
+        "consistency",
+        "human_review",
+    }
+)
+
+# Only stable machine codes cross this boundary.  A provider exception or a
+# document excerpt is mapped to one of these before persistence; no free-form
+# failure message is accepted by the service.
+SAFE_STEP_ERROR_CODES = frozenset(
+    {
+        "invalid_output",
+        "malware_detected",
+        "processing_failed",
+        "provider_unavailable",
+        "timeout",
+        "unsupported_media_type",
+    }
+)
+
+
+class DocumentStepRunRefused(Exception):
+    """Typed refusal whose message never includes document or provider data."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def _nonblank_version(value: str, *, code: str) -> str:
+    normalized = value.strip()
+    if not normalized or len(normalized) > 80:
+        raise DocumentStepRunRefused(code)
+    return normalized
+
+
+def _duration(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise DocumentStepRunRefused("invalid_step_duration")
+    return value
 
 
 def list_documents(
@@ -134,6 +189,176 @@ def next_revision_number(
         )
     )
     return int(current or 0) + 1
+
+
+def claim_step_run(
+    session: Session,
+    *,
+    organization_id: str,
+    revision_id: str,
+    step: str,
+    pipeline_version: str,
+    prompt_version: str,
+    model_version: str,
+) -> tuple[DocumentStepRun, bool]:
+    """Claim exactly one versioned step run, returning ``(row, created)``.
+
+    The immutable revision is the concurrency mutex.  Two workers claiming
+    the same key queue on it; the second then observes the row created by the
+    first instead of hitting the uniqueness constraint.  The database unique
+    key remains the final defence against writers that bypass this service.
+    """
+    if step not in DOCUMENT_PIPELINE_STEPS:
+        raise DocumentStepRunRefused("invalid_document_step")
+    pipeline_version = _nonblank_version(
+        pipeline_version,
+        code="invalid_pipeline_version",
+    )
+    prompt_version = _nonblank_version(
+        prompt_version,
+        code="invalid_prompt_version",
+    )
+    model_version = _nonblank_version(
+        model_version,
+        code="invalid_model_version",
+    )
+
+    lock_owned(
+        session,
+        DocumentRevision,
+        organization_id,
+        revision_id,
+        label="Révision documentaire",
+    )
+    existing = session.scalars(
+        owned_query(DocumentStepRun, organization_id).where(
+            DocumentStepRun.revision_id == revision_id,
+            DocumentStepRun.step == step,
+            DocumentStepRun.pipeline_version == pipeline_version,
+            DocumentStepRun.prompt_version == prompt_version,
+            DocumentStepRun.model_version == model_version,
+        )
+    ).one_or_none()
+    if existing is not None:
+        return existing, False
+
+    started_at = utcnow()
+    run = DocumentStepRun(
+        organization_id=organization_id,
+        revision_id=revision_id,
+        step=step,
+        pipeline_version=pipeline_version,
+        prompt_version=prompt_version,
+        model_version=model_version,
+        status="running",
+        attempt=1,
+        started_at=started_at,
+    )
+    session.add(run)
+    session.flush()
+    return run, True
+
+
+def succeed_step_run(
+    session: Session,
+    *,
+    organization_id: str,
+    step_run_id: str,
+    duration_ms: int,
+    finished_at: datetime | None = None,
+) -> DocumentStepRun:
+    """Finish a running step; repeating the same outcome is idempotent."""
+    duration_ms = _duration(duration_ms)
+    run = lock_owned(
+        session,
+        DocumentStepRun,
+        organization_id,
+        step_run_id,
+        label="Étape documentaire",
+    )
+    if run.status == "succeeded":
+        return run
+    if run.status == "failed":
+        raise DocumentStepRunRefused("step_already_failed")
+    if run.status != "running":
+        raise DocumentStepRunRefused("step_not_running")
+    run.status = "succeeded"
+    run.finished_at = finished_at or utcnow()
+    run.duration_ms = duration_ms
+    run.error_code = None
+    run.error_summary = None
+    session.flush()
+    return run
+
+
+def fail_step_run(
+    session: Session,
+    *,
+    organization_id: str,
+    step_run_id: str,
+    error_code: str,
+    duration_ms: int,
+    finished_at: datetime | None = None,
+) -> DocumentStepRun:
+    """Record a failed step using a bounded, non-sensitive machine code."""
+    duration_ms = _duration(duration_ms)
+    if error_code not in SAFE_STEP_ERROR_CODES:
+        raise DocumentStepRunRefused("invalid_step_error_code")
+    run = lock_owned(
+        session,
+        DocumentStepRun,
+        organization_id,
+        step_run_id,
+        label="Étape documentaire",
+    )
+    if run.status == "failed" and run.error_code == error_code:
+        return run
+    if run.status == "failed":
+        raise DocumentStepRunRefused("step_already_failed")
+    if run.status == "succeeded":
+        raise DocumentStepRunRefused("step_already_succeeded")
+    if run.status != "running":
+        raise DocumentStepRunRefused("step_not_running")
+    run.status = "failed"
+    run.finished_at = finished_at or utcnow()
+    run.duration_ms = duration_ms
+    run.error_code = error_code
+    # Deliberately no free-form provider exception or document text.
+    run.error_summary = None
+    session.flush()
+    return run
+
+
+def retry_failed_step_run(
+    session: Session,
+    *,
+    organization_id: str,
+    step_run_id: str,
+    started_at: datetime | None = None,
+) -> tuple[DocumentStepRun, bool]:
+    """Restart one failed row without changing its idempotence key."""
+    run = lock_owned(
+        session,
+        DocumentStepRun,
+        organization_id,
+        step_run_id,
+        label="Étape documentaire",
+    )
+    if run.status == "running":
+        return run, False
+    if run.status == "succeeded":
+        raise DocumentStepRunRefused("step_already_succeeded")
+    if run.status != "failed":
+        raise DocumentStepRunRefused("step_not_failed")
+    run.status = "running"
+    run.attempt += 1
+    run.started_at = started_at or utcnow()
+    run.finished_at = None
+    run.duration_ms = None
+    run.error_code = None
+    run.error_summary = None
+    session.flush()
+    return run, True
 
 
 def record_validation_decision(
