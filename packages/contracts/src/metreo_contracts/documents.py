@@ -21,9 +21,7 @@ from .errors import (
 def _text(value: str, field: str) -> str:
     normalized = value.strip()
     if not normalized:
-        raise InvalidIdentifierError(
-            "Une valeur non vide est obligatoire.", field=field
-        )
+        raise InvalidIdentifierError("Une valeur non vide est obligatoire.", field=field)
     return normalized
 
 
@@ -49,9 +47,7 @@ class Confidence:
 
     def __post_init__(self) -> None:
         if not isinstance(self.value, Decimal) or not self.value.is_finite():
-            raise InvalidConfidenceError(
-                "La confiance doit être un Decimal fini.", field="value"
-            )
+            raise InvalidConfidenceError("La confiance doit être un Decimal fini.", field="value")
         if self.value < Decimal("0") or self.value > Decimal("1"):
             raise InvalidConfidenceError(
                 "La confiance doit être comprise entre 0 et 1.", field="value"
@@ -97,9 +93,7 @@ class DocumentRevisionRef:
     revision_number: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "organization_id", _text(self.organization_id, "organization_id")
-        )
+        object.__setattr__(self, "organization_id", _text(self.organization_id, "organization_id"))
         object.__setattr__(self, "document_id", _text(self.document_id, "document_id"))
         object.__setattr__(self, "revision_id", _text(self.revision_id, "revision_id"))
         _positive(self.revision_number, "revision_number")
@@ -145,9 +139,7 @@ class SourceCitation:
 
     def __post_init__(self) -> None:
         if isinstance(self.page, bool) or self.page < 1:
-            raise InvalidCitationError(
-                "La page doit être supérieure ou égale à 1.", field="page"
-            )
+            raise InvalidCitationError("La page doit être supérieure ou égale à 1.", field="page")
         if isinstance(self.char_start, bool) or self.char_start < 0:
             raise InvalidCitationError(
                 "Le début de plage doit être supérieur ou égal à 0.", field="char_start"
@@ -177,23 +169,15 @@ def _freeze_json(value: object, field: str) -> JsonValue:
         return value
     if isinstance(value, Decimal):
         if not value.is_finite():
-            raise InvalidStructuredDataError(
-                "Un Decimal structuré doit être fini.", field=field
-            )
+            raise InvalidStructuredDataError("Un Decimal structuré doit être fini.", field=field)
         return value
     if isinstance(value, float):
-        raise InvalidStructuredDataError(
-            "Les float sont interdits dans les contrats.", field=field
-        )
+        raise InvalidStructuredDataError("Les float sont interdits dans les contrats.", field=field)
     if isinstance(value, Mapping):
-        return FrozenJsonObject.from_mapping(
-            cast(Mapping[str, object], value), field=field
-        )
+        return FrozenJsonObject.from_mapping(cast(Mapping[str, object], value), field=field)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return tuple(_freeze_json(item, field) for item in value)
-    raise InvalidStructuredDataError(
-        "Type de donnée structurée non pris en charge.", field=field
-    )
+    raise InvalidStructuredDataError("Type de donnée structurée non pris en charge.", field=field)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,9 +209,7 @@ class FrozenJsonObject:
         object.__setattr__(self, "items", tuple(normalized))
 
     @classmethod
-    def from_mapping(
-        cls, value: Mapping[str, object], *, field: str = "data"
-    ) -> FrozenJsonObject:
+    def from_mapping(cls, value: Mapping[str, object], *, field: str = "data") -> FrozenJsonObject:
         frozen: list[tuple[str, JsonValue]] = []
         seen: set[str] = set()
         for raw_key, raw_value in value.items():
@@ -236,9 +218,7 @@ class FrozenJsonObject:
                     "Les clés JSON doivent être des chaînes non vides.", field=field
                 )
             if raw_key in seen:
-                raise InvalidStructuredDataError(
-                    "Une clé JSON est dupliquée.", field=field
-                )
+                raise InvalidStructuredDataError("Une clé JSON est dupliquée.", field=field)
             seen.add(raw_key)
             frozen.append((raw_key, _freeze_json(raw_value, field)))
         frozen.sort(key=lambda item: item[0])
@@ -254,9 +234,7 @@ class TextSegment:
     def __post_init__(self) -> None:
         object.__setattr__(self, "segment_id", _text(self.segment_id, "segment_id"))
         if not self.text:
-            raise InvalidContractValueError(
-                "Le texte du segment est obligatoire.", field="text"
-            )
+            raise InvalidContractValueError("Le texte du segment est obligatoire.", field="text")
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,10 +257,7 @@ class OcrPage:
         if self.language is not None:
             object.__setattr__(self, "language", _text(self.language, "language"))
         for segment in self.segments:
-            if (
-                segment.citation.revision != self.revision
-                or segment.citation.page != self.page
-            ):
+            if segment.citation.revision != self.revision or segment.citation.page != self.page:
                 raise InvalidCitationError(
                     "Chaque segment OCR doit citer sa propre page et révision.",
                     field="segments",
@@ -309,9 +284,7 @@ class OcrDocument:
                     field="pages",
                 )
             if page.page in numbers:
-                raise InvalidContractValueError(
-                    "Une page OCR est dupliquée.", field="pages"
-                )
+                raise InvalidContractValueError("Une page OCR est dupliquée.", field="pages")
             numbers.add(page.page)
             if page.version != self.version:
                 raise InvalidVersionError(
@@ -331,9 +304,7 @@ class TableCell:
 
     def __post_init__(self) -> None:
         if isinstance(self.row, bool) or self.row < 0:
-            raise InvalidContractValueError(
-                "La ligne doit être positive ou nulle.", field="row"
-            )
+            raise InvalidContractValueError("La ligne doit être positive ou nulle.", field="row")
         if isinstance(self.column, bool) or self.column < 0:
             raise InvalidContractValueError(
                 "La colonne doit être positive ou nulle.", field="column"
@@ -361,9 +332,7 @@ class ExtractedTable:
                 field="citations",
             )
         if any(citation.revision != self.revision for citation in self.citations):
-            raise InvalidCitationError(
-                "Une citation vise une autre révision.", field="citations"
-            )
+            raise InvalidCitationError("Une citation vise une autre révision.", field="citations")
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,10 +351,7 @@ class Classification:
                 field="citations",
             )
         organization_id = self.citations[0].revision.organization_id
-        if any(
-            citation.revision.organization_id != organization_id
-            for citation in self.citations
-        ):
+        if any(citation.revision.organization_id != organization_id for citation in self.citations):
             raise InvalidCitationError(
                 "Les citations d'une classification doivent appartenir au même tenant.",
                 field="citations",
@@ -403,9 +369,7 @@ class StructuredExtraction:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_name", _text(self.schema_name, "schema_name"))
-        object.__setattr__(
-            self, "schema_version", _text(self.schema_version, "schema_version")
-        )
+        object.__setattr__(self, "schema_version", _text(self.schema_version, "schema_version"))
         object.__setattr__(self, "citations", tuple(self.citations))
         if not self.citations:
             raise InvalidCitationError(
@@ -413,10 +377,7 @@ class StructuredExtraction:
                 field="citations",
             )
         organization_id = self.citations[0].revision.organization_id
-        if any(
-            citation.revision.organization_id != organization_id
-            for citation in self.citations
-        ):
+        if any(citation.revision.organization_id != organization_id for citation in self.citations):
             raise InvalidCitationError(
                 "Les citations d'une extraction doivent appartenir au même tenant.",
                 field="citations",
@@ -433,9 +394,7 @@ class Embedding:
         object.__setattr__(self, "segment_id", _text(self.segment_id, "segment_id"))
         object.__setattr__(self, "vector", tuple(self.vector))
         if not self.vector:
-            raise InvalidContractValueError(
-                "Un embedding ne peut pas être vide.", field="vector"
-            )
+            raise InvalidContractValueError("Un embedding ne peut pas être vide.", field="vector")
         for value in self.vector:
             _decimal(value, "vector")
 
@@ -465,14 +424,9 @@ def to_primitive(value: object) -> object:
     if isinstance(value, Decimal):
         return format(value, "f")
     if is_dataclass(value) and not isinstance(value, type):
-        return {
-            field.name: to_primitive(getattr(value, field.name))
-            for field in fields(value)
-        }
+        return {field.name: to_primitive(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, tuple):
         return [to_primitive(item) for item in value]
     if isinstance(value, (str, int, bool)) or value is None:
         return value
-    raise InvalidStructuredDataError(
-        "Objet non sérialisable par le contrat.", field="value"
-    )
+    raise InvalidStructuredDataError("Objet non sérialisable par le contrat.", field="value")

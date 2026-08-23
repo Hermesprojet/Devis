@@ -41,9 +41,7 @@ class FakeObjectStore:
     ) -> StoredObject:
         async for _chunk in chunks:
             pass
-        return StoredObject(
-            organization_id, object_key, content_type, sha256, byte_size
-        )
+        return StoredObject(organization_id, object_key, content_type, sha256, byte_size)
 
     def stream(self, *, organization_id: str, object_key: str) -> AsyncIterator[bytes]:
         return empty_stream()
@@ -98,9 +96,7 @@ class FakeEmbedding:
 
 
 class FakeSearch:
-    async def search(
-        self, *, organization_id: str, query: SearchQuery
-    ) -> tuple[SearchResult, ...]:
+    async def search(self, *, organization_id: str, query: SearchQuery) -> tuple[SearchResult, ...]:
         return ()
 
 

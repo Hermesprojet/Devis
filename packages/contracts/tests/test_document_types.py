@@ -33,9 +33,7 @@ def citation(organization_id: str = "org-1") -> SourceCitation:
         page=2,
         char_start=10,
         char_end=20,
-        bbox=BoundingBox(
-            Decimal("0.1"), Decimal("0.2"), Decimal("0.8"), Decimal("0.9")
-        ),
+        bbox=BoundingBox(Decimal("0.1"), Decimal("0.2"), Decimal("0.8"), Decimal("0.9")),
         extractor="fixture@1",
         confidence=Confidence(Decimal("0.82")),
     )

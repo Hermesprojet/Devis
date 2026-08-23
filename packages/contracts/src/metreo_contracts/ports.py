@@ -24,9 +24,7 @@ from .errors import InvalidContractValueError, InvalidIdentifierError
 def _text(value: str, field: str) -> str:
     normalized = value.strip()
     if not normalized:
-        raise InvalidIdentifierError(
-            "Une valeur non vide est obligatoire.", field=field
-        )
+        raise InvalidIdentifierError("Une valeur non vide est obligatoire.", field=field)
     return normalized
 
 
@@ -45,9 +43,7 @@ class StoredObject:
     def __post_init__(self) -> None:
         object.__setattr__(self, "organization_id", _tenant(self.organization_id))
         object.__setattr__(self, "object_key", _text(self.object_key, "object_key"))
-        object.__setattr__(
-            self, "content_type", _text(self.content_type, "content_type")
-        )
+        object.__setattr__(self, "content_type", _text(self.content_type, "content_type"))
         object.__setattr__(self, "sha256", _text(self.sha256, "sha256"))
         if re.fullmatch(r"[0-9a-f]{64}", self.sha256) is None:
             raise InvalidContractValueError(
@@ -68,12 +64,8 @@ class StructuredLlmRequest:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_name", _text(self.schema_name, "schema_name"))
-        object.__setattr__(
-            self, "schema_version", _text(self.schema_version, "schema_version")
-        )
-        object.__setattr__(
-            self, "prompt_version", _text(self.prompt_version, "prompt_version")
-        )
+        object.__setattr__(self, "schema_version", _text(self.schema_version, "schema_version"))
+        object.__setattr__(self, "prompt_version", _text(self.prompt_version, "prompt_version"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,9 +95,7 @@ class ObjectStore(Protocol):
         chunks: AsyncIterator[bytes],
     ) -> StoredObject: ...
 
-    def stream(
-        self, *, organization_id: str, object_key: str
-    ) -> AsyncIterator[bytes]: ...
+    def stream(self, *, organization_id: str, object_key: str) -> AsyncIterator[bytes]: ...
 
     async def delete(self, *, organization_id: str, object_key: str) -> None: ...
 
