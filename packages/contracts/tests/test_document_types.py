@@ -103,7 +103,10 @@ def test_structured_extraction_requires_a_citation() -> None:
 
 
 def test_structured_data_is_deeply_immutable_and_rejects_float() -> None:
-    source = {"nested": {"quantity": Decimal("12.50")}, "labels": ["a", "b"]}
+    source: dict[str, object] = {
+        "nested": {"quantity": Decimal("12.50")},
+        "labels": ["a", "b"],
+    }
     frozen = FrozenJsonObject.from_mapping(source)
     source["nested"] = {"quantity": Decimal("99")}
     assert to_primitive(frozen) == {

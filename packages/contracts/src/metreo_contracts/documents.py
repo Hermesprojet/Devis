@@ -187,7 +187,7 @@ def _freeze_json(value: object, field: str) -> JsonValue:
         )
     if isinstance(value, Mapping):
         return FrozenJsonObject.from_mapping(
-            cast(Mapping[object, object], value), field=field
+            cast(Mapping[str, object], value), field=field
         )
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return tuple(_freeze_json(item, field) for item in value)
@@ -226,7 +226,7 @@ class FrozenJsonObject:
 
     @classmethod
     def from_mapping(
-        cls, value: Mapping[object, object], *, field: str = "data"
+        cls, value: Mapping[str, object], *, field: str = "data"
     ) -> FrozenJsonObject:
         frozen: list[tuple[str, JsonValue]] = []
         seen: set[str] = set()

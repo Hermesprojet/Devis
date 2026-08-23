@@ -57,7 +57,7 @@ lint: ## Format et lint Python, sans rien modifier
 .PHONY: types
 types: ## Vérification de types Python
 	$(MYPY) $(DOMAIN)/src/metreo_domain
-	$(MYPY) $(CONTRACTS)/src/metreo_contracts
+	$(MYPY) $(CONTRACTS)/src/metreo_contracts $(CONTRACTS)/tests
 	$(MYPY) $(API_SRC)/metreo_api
 	$(MYPY) scripts
 

@@ -37,7 +37,7 @@ jobs:
       - name: Typage
         run: |
           mypy packages/domain/src/metreo_domain
-          mypy packages/contracts/src/metreo_contracts
+          mypy packages/contracts/src/metreo_contracts packages/contracts/tests
       - name: Tests du domaine
         run: pytest packages/domain/tests -q
       - name: Tests des contrats

@@ -104,6 +104,17 @@ class FakeSearch:
         return ()
 
 
+# Ces affectations sont vérifiées par mypy : contrairement à
+# ``runtime_checkable``, elles contrôlent aussi les signatures complètes.
+OBJECT_STORE: ObjectStore = FakeObjectStore()
+OCR_PORT: OcrPort = FakeOcr()
+TABLE_PORT: TableExtractionPort = FakeTables()
+CLASSIFIER_PORT: ClassifierPort = FakeClassifier()
+STRUCTURED_LLM_PORT: StructuredLlmPort = FakeStructuredLlm()
+EMBEDDING_PORT: EmbeddingPort = FakeEmbedding()
+SEARCH_PORT: SearchPort = FakeSearch()
+
+
 def test_fakes_satisfy_the_seven_runtime_protocols() -> None:
     assert isinstance(FakeObjectStore(), ObjectStore)
     assert isinstance(FakeOcr(), OcrPort)
