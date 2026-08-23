@@ -312,8 +312,8 @@ class DocumentRevision(TimestampMixin, Base):
         ),
         CheckConstraint("status IN ('draft','published')", name="ck_document_revision_status"),
         CheckConstraint(
-            "(status = 'draft' AND published_at IS NULL) OR "
-            "(status = 'published' AND published_at IS NOT NULL)",
+            "(status != 'draft' OR published_at IS NULL) AND "
+            "(status != 'published' OR published_at IS NOT NULL)",
             name="ck_document_revision_publication",
         ),
         Index("ix_document_revisions_org_document", "organization_id", "document_id"),
@@ -524,9 +524,9 @@ class ValidationDecision(Base):
             name="ck_validation_decision_reason",
         ),
         CheckConstraint(
-            "(decision = 'corrected' AND before_value IS NOT NULL AND after_value IS NOT NULL) "
-            "OR (decision IN ('accepted','rejected') AND before_value IS NULL "
-            "AND after_value IS NULL)",
+            "(decision != 'corrected' OR (before_value IS NOT NULL AND after_value IS NOT NULL)) "
+            "AND (decision NOT IN ('accepted','rejected') OR "
+            "(before_value IS NULL AND after_value IS NULL))",
             name="ck_validation_decision_correction_payload",
         ),
         Index("ix_validation_decisions_org_proposal", "organization_id", "proposal_id"),

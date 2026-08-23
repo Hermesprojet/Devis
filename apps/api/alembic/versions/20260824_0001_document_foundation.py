@@ -199,8 +199,8 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("status IN ('draft','published')", name="ck_document_revision_status"),
         sa.CheckConstraint(
-            "(status = 'draft' AND published_at IS NULL) OR "
-            "(status = 'published' AND published_at IS NOT NULL)",
+            "(status != 'draft' OR published_at IS NULL) AND "
+            "(status != 'published' OR published_at IS NOT NULL)",
             name="ck_document_revision_publication",
         ),
         sa.ForeignKeyConstraint(
@@ -425,9 +425,9 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("length(trim(reason)) > 0", name="ck_validation_decision_reason"),
         sa.CheckConstraint(
-            "(decision = 'corrected' AND before_value IS NOT NULL AND after_value IS NOT NULL) "
-            "OR (decision IN ('accepted','rejected') AND before_value IS NULL "
-            "AND after_value IS NULL)",
+            "(decision != 'corrected' OR (before_value IS NOT NULL AND after_value IS NOT NULL)) "
+            "AND (decision NOT IN ('accepted','rejected') OR "
+            "(before_value IS NULL AND after_value IS NULL))",
             name="ck_validation_decision_correction_payload",
         ),
         sa.ForeignKeyConstraint(

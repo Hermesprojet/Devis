@@ -273,6 +273,8 @@ def test_all_six_tables_and_composite_tenant_keys_exist(migrated: None) -> None:
         "validation_decisions",
     }
     assert expected <= set(inspector.get_table_names())
+    for table in expected:
+        assert "organization_id" in {column["name"] for column in inspector.get_columns(table)}
 
     expected_fk_columns: dict[str, set[tuple[str, ...]]] = {
         "documents": {("organization_id", "project_id")},
@@ -293,6 +295,30 @@ def test_all_six_tables_and_composite_tenant_keys_exist(migrated: None) -> None:
             for foreign_key in inspector.get_foreign_keys(table)
         }
         assert composite_keys <= actual
+
+
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {"title": " "},
+        {"status": "approved"},
+    ),
+)
+def test_document_checks_are_database_constraints(
+    db_session: Session,
+    changes: dict[str, object],
+) -> None:
+    graph = _add_graph(db_session)
+    values: dict[str, object] = {
+        "id": _id(),
+        "organization_id": graph.organization.id,
+        "project_id": graph.project.id,
+        "title": "Rapport géologique",
+        "status": "active",
+        "created_by": graph.user.id,
+    }
+    values.update(changes)
+    _commit_is_refused(db_session, Document(**values))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
