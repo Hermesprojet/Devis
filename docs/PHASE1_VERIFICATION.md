@@ -54,10 +54,64 @@ Ce document n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `eaf6090` |
+| Dernier commit de **code** contrôlé | `6d05eb449ed520baacdfdf0b45f15f5a176537ae` |
+| CI indépendante de ce code | [run 32664182873](https://github.com/Hermesprojet/Devis/actions/runs/32664182873) — **10 jobs sur 10 verts** |
+| Dernier commit contrôlé depuis un clone propre | `eaf6090` — voir la distinction ci-dessous |
 | Procédure | `make install` puis les onze étapes ci-dessous, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
+
+## Contrôle indépendant de la tête de code `6d05eb4`
+
+Le dernier changement de code ferme le défaut P1 du helper de base témoin. La
+preuve retenue n'est pas le compte rendu de son auteur, mais le workflow CI
+exécuté sur le SHA exact
+[`6d05eb449ed520baacdfdf0b45f15f5a176537ae`](https://github.com/Hermesprojet/Devis/commit/6d05eb449ed520baacdfdf0b45f15f5a176537ae).
+
+| Contrôle | Résultat vérifié dans les journaux |
+| --- | --- |
+| Workflow | [32664182873](https://github.com/Hermesprojet/Devis/actions/runs/32664182873), **10/10 jobs verts** |
+| Domaine | **127 passed** |
+| API SQLite | **480 passed, 25 skipped** — les 25 cas PostgreSQL-only sont inventoriés |
+| API PostgreSQL 16 + PostGIS | **505 passed**, aucun skip |
+| Inventaire PostgreSQL-only rejoué | **71 passed**, aucun skip |
+| Parcours Playwright | **15 passed** |
+| Skills du dépôt | **8 skills conformes** |
+| Installation depuis les manifestes | 34 chemins, 51 schémas, 35 distributions, 52 exigences |
+| Tête Alembic réellement appliquée | `e2be18fcac1b` |
+
+Le correctif P1 repose sur une seule implémentation, dans
+`scripts/_url_safety.py`. `owned_witness()` refuse tout paramètre capable de
+rediriger la connexion **avant** le premier `create_engine`, puis
+`safe_target_url()` retire ces paramètres et demande au dialecte quelle base
+sera effectivement ouverte. Les preuves sans serveur vérifient l'ordre du
+refus ; les preuves PostgreSQL vérifient qu'une victime reste intacte, qu'une
+base vide ne reçoit aucune table témoin, que la cible ouverte est celle créée
+par le helper et qu'aucune base résiduelle ne subsiste.
+
+Aucune nouvelle falsification manuelle n'a été exécutée sur ce SHA. Elle n'est
+donc pas présentée comme une preuve de fermeture. Les preuves qui font foi ici
+sont les tests discriminants lus dans le diff et leur exécution verte sur
+PostgreSQL réel.
+
+### Contrôle du canal Claude — preuve distincte
+
+Le [run 32667562716](https://github.com/Hermesprojet/Devis/actions/runs/32667562716)
+a vérifié que Claude peut désormais exécuter les commandes explicitement
+autorisées : lint et typage verts, puis **127 tests domaine passés**. Dans ce
+runner, l'action remplace les chemins sensibles de la PR par ceux de `main`
+avant d'exécuter Claude ; comme les skills appartiennent encore à cette PR,
+`.claude/skills` y est absent. `make test-api` y donne donc **476 passés,
+4 échecs et 25 ignorés**, les quatre échecs étant exclusivement les contrôles
+qui lisent ce répertoire.
+
+Ce run Claude prouve le canal et les permissions Bash, **pas** la suite API.
+La preuve API reste le workflow CI normal ci-dessus, dont le checkout contient
+les huit skills et qui rend 480/25 sur SQLite puis 505/0 sur PostgreSQL.
+
+`DEPLOYABLE` reste **non atteint** : le correctif Next.js attendu doit être
+publié, installé et toute la porte de validation rejouée avant que ce statut
+puisse changer.
 
 ## Comment chaque chiffre de ce document est obtenu
 
@@ -127,6 +181,8 @@ le verrou n'en est pas une.
 
 ## Commandes de vérification et résultats
 
+Les compteurs et durées des suites ci-dessous sont ceux de la CI du code `6d05eb4`. Le contrôle depuis un clone propre reste rattaché séparément à `eaf6090` ; les confondre créerait une preuve qui n'a pas été exécutée.
+
 `make verify` rejoue les étapes de lint, de typage, de tests, d'installation
 propre et de construction. Il ne lance **ni** les migrations, **ni** le seed,
 **ni** les parcours navigateur, et `make test-api-postgres` sort en succès
@@ -163,8 +219,8 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Types — API | `mypy apps/api/src/metreo_api` | 30 fichiers, aucun problème | ~2 s |
 | Types — scripts | `mypy scripts` | 6 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **470 passed, 22 ignorés volontaires** | ~126 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **492 passed** | ~168 s |
+| Tests API sur SQLite | `make test-api` | **480 passed, 25 ignorés volontaires** | ~89 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **505 passed** | ~121 s |
 | Aller-retour des migrations | `make migration-roundtrip-test` | base créée par le run, 20 tables, base supprimée | ~6 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
@@ -173,7 +229,7 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Composition Docker | `make compose-config` | `docker compose : valide` | ~1 s |
 | Types du front | `make web-typecheck` | `tsc --noEmit` sans erreur | ~2 s |
 | Build de production | `make web-build` | 9 routes compilées | ~3 s |
-| Parcours navigateur | `make e2e` | **15 passed** | ~49 s |
+| Parcours navigateur | `make e2e` | **15 passed** | ~40 s |
 
 Les tests API tournent **réellement** sur PostgreSQL lorsque
 `METREO_TEST_DATABASE_URL` est défini : chaque test obtient son propre schéma.
