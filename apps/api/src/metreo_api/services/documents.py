@@ -8,7 +8,7 @@ validation reason or extracted value.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -21,6 +21,7 @@ from ..models import (
 from ..schemas import ValidationDecisionCreate
 from ..security.auth import TenantContext
 from . import audit
+from .locking import lock_owned
 from .tenant import get_owned, owned_query
 
 
@@ -105,6 +106,34 @@ def list_revisions(
             .order_by(DocumentRevision.revision_number.desc())
         ).all()
     )
+
+
+def next_revision_number(
+    session: Session,
+    *,
+    organization_id: str,
+    document_id: str,
+) -> int:
+    """Allocate the next revision number while holding the parent document.
+
+    PostgreSQL serialises concurrent allocators on the document row. SQLite
+    serialises writers at file level; the unique constraint remains the final
+    defence on both engines.
+    """
+    lock_owned(
+        session,
+        Document,
+        organization_id,
+        document_id,
+        label="Document",
+    )
+    current = session.scalar(
+        select(func.max(DocumentRevision.revision_number)).where(
+            DocumentRevision.organization_id == organization_id,
+            DocumentRevision.document_id == document_id,
+        )
+    )
+    return int(current or 0) + 1
 
 
 def record_validation_decision(

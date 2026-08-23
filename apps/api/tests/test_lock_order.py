@@ -26,6 +26,7 @@ LOCK_CALLS: dict[str, str] = {
     "_version_open_for_writing": "PriceBookVersion",
     "estimating.next_version_number": "Estimate",
     "pricebook_versions.next_version_number": "PriceBook",
+    "documents.next_revision_number": "Document",
     "_locked_item": "BoqItem",
     # Trouvées par le contrôle d'enveloppes lui-même, au-delà des trois
     # signalées : `transition_item` verrouille pour `approve_item`, et
@@ -112,6 +113,14 @@ class TestLockOrder:
             "Organization est verrouillée en dernier par audit.record ; "
             "la rendre verrouillable ici inviterait à inverser l'ordre."
         )
+        assert "Document" in locking.LOCKABLE
+
+    def test_document_numbering_locks_its_parent(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "src" / "metreo_api" / "services" / "documents.py"
+        )
+        function = next(item for item in _functions(source) if item.name == "next_revision_number")
+        assert [model for _, model in _locks_taken(function)] == ["Document"]
 
     def test_every_wrapper_of_the_primitive_is_declared(self) -> None:
         """Une nouvelle enveloppe de `lock_owned` ne doit pas passer inaperçue.

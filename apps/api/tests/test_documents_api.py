@@ -6,6 +6,8 @@ import json
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -21,6 +23,7 @@ from metreo_api.models import (
     ValidationDecision,
 )
 from metreo_api.security.roles import ROLE_PERMISSIONS, Permission, Role
+from metreo_api.services import documents
 
 from .conftest import login
 
@@ -348,3 +351,66 @@ def test_document_payloads_reject_ambiguous_or_extra_data(
     assert extra.status_code == 422
     assert missing_correction.status_code == 422
     assert forged_acceptance.status_code == 422
+
+
+def test_revision_numbering_is_document_scoped_and_tenant_scoped(
+    seeded_client: TestClient,
+) -> None:
+    admin_a = login(seeded_client, "admin@dubois.demo")
+    admin_b = login(seeded_client, "admin@janssens.demo")
+    project_id = _project(seeded_client, admin_a, "DOC-NUMBER")
+    document_a = _document(seeded_client, admin_a, project_id, title="Document A")
+    document_b = _document(seeded_client, admin_a, project_id, title="Document B")
+    identity_a = seeded_client.get("/api/v1/auth/me", headers=admin_a).json()
+    identity_b = seeded_client.get("/api/v1/auth/me", headers=admin_b).json()
+
+    session = get_session_factory()()
+    try:
+        assert (
+            documents.next_revision_number(
+                session,
+                organization_id=identity_a["organization_id"],
+                document_id=document_a,
+            )
+            == 1
+        )
+        session.add(
+            DocumentRevision(
+                organization_id=identity_a["organization_id"],
+                document_id=document_a,
+                revision_number=1,
+                sha256="1" * 64,
+                byte_size=1,
+                media_type="application/pdf",
+                storage_key="numbering/document-a/1",
+                original_filename="a.pdf",
+                status="draft",
+            )
+        )
+        session.commit()
+        assert (
+            documents.next_revision_number(
+                session,
+                organization_id=identity_a["organization_id"],
+                document_id=document_a,
+            )
+            == 2
+        )
+        assert (
+            documents.next_revision_number(
+                session,
+                organization_id=identity_a["organization_id"],
+                document_id=document_b,
+            )
+            == 1
+        )
+        with pytest.raises(HTTPException) as refused:
+            documents.next_revision_number(
+                session,
+                organization_id=identity_b["organization_id"],
+                document_id=document_a,
+            )
+        assert refused.value.status_code == 404
+    finally:
+        session.rollback()
+        session.close()

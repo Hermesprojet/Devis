@@ -161,6 +161,71 @@ class TestEstimateVersionNumbering:
         assert sorted(outcomes) == [before + 1, before + 2], outcomes
 
 
+class TestDocumentRevisionNumbering:
+    def test_four_simultaneous_creations_get_distinct_contiguous_numbers(
+        self, seeded: dict[str, str], database_url: str
+    ) -> None:
+        from metreo_api.models import Document, DocumentRevision, Project
+        from metreo_api.services import documents
+
+        engine = create_engine(database_url)
+        with Session(engine) as session:
+            project = session.scalars(select(Project).limit(1)).one()
+            document = Document(
+                organization_id=project.organization_id,
+                project_id=project.id,
+                title="Document concurrent",
+            )
+            session.add(document)
+            session.commit()
+            document_id = document.id
+            organization_id = document.organization_id
+        engine.dispose()
+
+        def create(session: Session, barrier: threading.Barrier) -> int:
+            barrier.wait(timeout=20)
+            number = documents.next_revision_number(
+                session,
+                organization_id=organization_id,
+                document_id=document_id,
+            )
+            session.add(
+                DocumentRevision(
+                    organization_id=organization_id,
+                    document_id=document_id,
+                    revision_number=number,
+                    sha256=f"{number:064x}",
+                    byte_size=number,
+                    media_type="application/pdf",
+                    storage_key=f"concurrency/{document_id}/{number}",
+                    original_filename=f"revision-{number}.pdf",
+                    status="draft",
+                )
+            )
+            session.commit()
+            return number
+
+        outcomes = run_in_parallel(create, database_url, threads=4)
+        errors = [item for item in outcomes if isinstance(item, BaseException)]
+        assert errors == [], f"une création de révision a échoué : {errors}"
+        assert sorted(outcomes) == [1, 2, 3, 4], outcomes
+
+        engine = create_engine(database_url)
+        with Session(engine) as session:
+            persisted = list(
+                session.scalars(
+                    select(DocumentRevision.revision_number)
+                    .where(
+                        DocumentRevision.organization_id == organization_id,
+                        DocumentRevision.document_id == document_id,
+                    )
+                    .order_by(DocumentRevision.revision_number)
+                ).all()
+            )
+        engine.dispose()
+        assert persisted == [1, 2, 3, 4]
+
+
 class TestNeighbouringRaces:
     """Deux courses voisines, à vérifier avant de conclure."""
 

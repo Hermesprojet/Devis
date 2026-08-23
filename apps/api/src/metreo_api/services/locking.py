@@ -70,6 +70,7 @@ ModelT = TypeVar("ModelT", bound=Base)
 LOCK_ORDER: tuple[str, ...] = (
     "ImportBatch",
     "BoqItem",
+    "Document",
     "PriceBook",
     "PriceBookVersion",
     "Estimate",
