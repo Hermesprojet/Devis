@@ -22,6 +22,9 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      id-token: write
+      # Nécessaire même avec ANTHROPIC_API_KEY : l’action échange ce jeton
+      # contre son jeton GitHub interne avant d’appeler Claude.
       actions: read
     steps:
       - name: Refuser une pull request provenant d’un fork
