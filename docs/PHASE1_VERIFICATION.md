@@ -54,7 +54,7 @@ Ce document n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `752ec2b` |
+| Dernier commit contrôlé depuis un clone propre | `eaf6090` |
 | Procédure | `make install` puis les onze étapes ci-dessous, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
@@ -81,10 +81,10 @@ Aucun n'est écrit de mémoire. Chacun se rejoue.
 
 | | |
 | --- | --- |
-| Commit | `752ec2bb026b6a07b118e2777cb52eb72b74d70f` |
-| Abrégé | `752ec2b` |
-| Fichiers versionnés | 162 |
-| Exécution CI correspondante | [push 32606256441](https://github.com/Hermesprojet/Devis/actions/runs/32606256441) et [pull_request 32606258105](https://github.com/Hermesprojet/Devis/actions/runs/32606258105) — dix jobs verts sur dix, sur les deux déclencheurs |
+| Commit | `eaf60902eb0d08cd188356f4d5bca478d6124562` |
+| Abrégé | `eaf6090` |
+| Fichiers versionnés | 163 |
+| Exécution CI correspondante | [push 32634256412](https://github.com/Hermesprojet/Devis/actions/runs/32634256412) et [pull_request 32634258016](https://github.com/Hermesprojet/Devis/actions/runs/32634258016) — dix jobs verts sur dix, sur les deux déclencheurs |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -163,8 +163,8 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Types — API | `mypy apps/api/src/metreo_api` | 30 fichiers, aucun problème | ~2 s |
 | Types — scripts | `mypy scripts` | 6 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **466 passed, 20 ignorés volontaires** | ~109 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **486 passed** | ~142 s |
+| Tests API sur SQLite | `make test-api` | **470 passed, 22 ignorés volontaires** | ~126 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **492 passed** | ~168 s |
 | Aller-retour des migrations | `make migration-roundtrip-test` | base créée par le run, 20 tables, base supprimée | ~6 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
@@ -611,9 +611,17 @@ permanent qui la retient. Toutes ont été jouées sur le commit nommé en tête
 | Destruction sans preuve de création | collision de nom : `CREATE` échoue, la base préexistante et ses 3 lignes témoins sont supprimées | `created` passé à True après le seul CREATE réussi ; rien n'est terminé ni supprimé sans lui | garde retirée → 2 rouges, dont la preuve sur serveur réel | idem |
 | Listes de paramètres divergentes | le contrôle de nom connaissait `dbname`, pas `database` ; l'aller-retour ni l'un ni l'autre | source unique dans `scripts/_url_safety.py` | seconde définition réintroduite → rouge | idem |
 | Porte semant une base non migrée | clone propre, base `metreo_gate` neuve : `relation "organizations" does not exist` | `upgrade head` avant le seed, URL transportée explicitement | étape retirée → rouge | idem |
+| Preuves détruisant une base étrangère | base préexistante au nom fixe du test, avec trois sentinelles et une table sans rapport : elle disparaît **pendant que le test passe au vert** | base témoin possédée, nom tiré au hasard, `created_by_test` faux au départ | nom fixe ou DROP de préparation réintroduit → rouge | `test_migration_roundtrip.py`, `witness_database.py` |
+| Helper « faisant de la place » | un second helper à qui l'on impose un nom occupé | collision → nouveau tirage, jamais de suppression | suppression de préparation rétablie → « le second a pris la base du premier » | idem |
+| Destruction après échec total de création | toutes les créations échouent, le nettoyage supprime quand même | terminaison et DROP conditionnés par `created_by_test` | drapeau neutralisé → DROP émis sur un nom non créé | idem, contrôle déterministe sans serveur |
+| Suites concurrentes non isolées | deux exécutions visaient les mêmes noms fixes | noms aléatoires par test et par run | tourniquet imposant le chevauchement, noms comparés | idem |
 
-Huit de ces risques n'étaient pas dans la liste demandée : ils sont apparus en
-traitant les autres. Deux ont été trouvés par un contrôle que le travail
+Douze de ces risques n'étaient pas dans la liste demandée : ils sont apparus en
+traitant les autres. Les quatre derniers viennent d'une supervision externe, et
+tiennent en une phrase : le code de production avait fermé la classe de
+défauts, les tests censés le prouver la rouvraient. Une preuve qui commence par
+détruire ce qu'elle prétend épargner n'est pas une preuve — elle passait au
+vert en supprimant une base de développeur. Deux ont été trouvés par un contrôle que le travail
 venait d'ajouter — l'inventaire des enveloppes de verrouillage en a nommé deux
 de plus que celles qui étaient signalées. Trois autres sont sortis du dernier
 tour : les deux couches de défense qui manquaient autour de l'URL éphémère, et
