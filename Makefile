@@ -17,6 +17,7 @@ ALEMBIC := $(VENV)/bin/alembic
 
 API_SRC := apps/api/src
 DOMAIN := packages/domain
+CONTRACTS := packages/contracts
 
 # Base PostgreSQL pour les vérifications qui n'ont de sens que sur un vrai
 # serveur. Vide, elles sont ignorées avec un message — jamais silencieusement.
@@ -37,31 +38,36 @@ install: ## Créer l'environnement virtuel et installer les dépendances
 	# valident un jeu de versions qui n'est pas celui livré en production.
 	# Les outils de développement n'y figurent pas — une contrainte ne force
 	# aucune installation, elle ne fait que borner ce qui l'est.
-	$(PIP) install -c constraints/api.txt -e $(DOMAIN) -e "apps/api[dev,postgres]"
+	$(PIP) install -c constraints/api.txt -e $(DOMAIN) -e $(CONTRACTS) -e "apps/api[dev,postgres]"
 	cd apps/web && npm ci
 
 # -- vérifications élémentaires -------------------------------------------
 
 .PHONY: format
 format: ## Formater le code Python
-	$(RUFF) format $(DOMAIN) apps/api/src apps/api/tests scripts
+	$(RUFF) format $(DOMAIN) $(CONTRACTS) apps/api/src apps/api/tests scripts
 
 .PHONY: lint
 lint: ## Format et lint Python, sans rien modifier
-	$(RUFF) format --check $(DOMAIN) apps/api/src apps/api/tests scripts
-	$(RUFF) check $(DOMAIN) apps/api/src apps/api/tests scripts
+	$(RUFF) format --check $(DOMAIN) $(CONTRACTS) apps/api/src apps/api/tests scripts
+	$(RUFF) check $(DOMAIN) $(CONTRACTS) apps/api/src apps/api/tests scripts
 
 # scripts/ est inclus : il porte désormais de la logique — le contrôle
 # d'installation propre et celui des skills — et non plus de simples README.
 .PHONY: types
 types: ## Vérification de types Python
 	$(MYPY) $(DOMAIN)/src/metreo_domain
+	$(MYPY) $(CONTRACTS)/src/metreo_contracts
 	$(MYPY) $(API_SRC)/metreo_api
 	$(MYPY) scripts
 
 .PHONY: test-domain
 test-domain: ## Tests du moteur de calcul (aucune base requise)
 	$(PY) -m pytest $(DOMAIN)/tests -q
+
+.PHONY: test-contracts
+test-contracts: ## Tests des contrats documentaires purs
+	$(PY) -m pytest $(CONTRACTS)/tests -q
 
 .PHONY: test-api
 test-api: ## Tests de l'API sur SQLite
@@ -135,7 +141,7 @@ lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	@tmp=$$(mktemp -d); \
 	$(PY) -m venv $$tmp/venv; \
 	$$tmp/venv/bin/pip install --quiet --upgrade pip; \
-	$$tmp/venv/bin/pip install --quiet ./packages/domain "./apps/api[postgres]"; \
+	$$tmp/venv/bin/pip install --quiet ./packages/domain ./packages/contracts "./apps/api[postgres]"; \
 	{ echo "# Verrou de résolution des dépendances d'EXÉCUTION, régénéré par : make lock"; \
 	  echo "#"; \
 	  echo "# Ne contient délibérément pas les outils de développement (pytest, ruff,"; \
@@ -203,6 +209,7 @@ verify: ## Tout vérifier, dans l'ordre de la CI, sans rien masquer
 	@$(MAKE) --no-print-directory lint
 	@$(MAKE) --no-print-directory types
 	@$(MAKE) --no-print-directory test-domain
+	@$(MAKE) --no-print-directory test-contracts
 	@$(MAKE) --no-print-directory test-api
 	@$(MAKE) --no-print-directory test-api-postgres
 	@$(MAKE) --no-print-directory clean-install

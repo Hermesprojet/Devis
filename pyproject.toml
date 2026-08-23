@@ -1,5 +1,5 @@
 # Outillage Python partagé par le monorepo.
-# Les paquets publiables ont leur propre pyproject: packages/domain, apps/api.
+# Les paquets publiables ont leur propre pyproject : domain, contracts et API.
 
 [tool.ruff]
 line-length = 100
@@ -21,7 +21,7 @@ ignore = [
 "**/tests/*" = ["B011"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["metreo_domain", "metreo_api"]
+known-first-party = ["metreo_domain", "metreo_contracts", "metreo_api"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -34,9 +34,9 @@ warn_unused_ignores = false
 no_implicit_optional = true
 check_untyped_defs = true
 ignore_missing_imports = true
-mypy_path = "packages/domain/src:apps/api/src"
+mypy_path = "packages/domain/src:packages/contracts/src:apps/api/src"
 exclude = "apps/api/alembic/versions"
 
 [[tool.mypy.overrides]]
-module = "metreo_domain.*"
+module = ["metreo_domain.*", "metreo_contracts.*"]
 disallow_untyped_defs = true
