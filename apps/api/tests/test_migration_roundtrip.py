@@ -16,16 +16,27 @@ preuve — une base qui compte peut parfaitement s'appeler `metreo_gate`.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import re
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType
 
 import pytest
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ProgrammingError
 
+from . import witness_database
 from .conftest import running_on_postgresql
+from .witness_database import (
+    count_sentinels,
+    exists,
+    owned_witness,
+    witness_name,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -203,7 +214,9 @@ class _Connection:
         sql = str(statement)
         self.log.append(sql)
         if "CREATE DATABASE" in sql and self.fail_on_create:
-            raise RuntimeError('database "…" already exists')
+            # La vraie erreur de collision, pour que les deux appelants —
+            # `owned_database` et le helper témoin — la traitent comme en vrai.
+            raise ProgrammingError("CREATE DATABASE", {}, Exception('database "…" already exists'))
 
     def __enter__(self) -> _Connection:
         return self
@@ -306,7 +319,7 @@ class TestAFailedCreationDestroysNothing:
         monkeypatch.setattr(roundtrip, "create_engine", lambda *a, **k: engine)
 
         with (
-            pytest.raises(RuntimeError, match="already exists"),
+            pytest.raises(ProgrammingError, match="already exists"),
             roundtrip.owned_database(PG_ADMIN),
         ):
             pass  # pragma: no cover - le corps ne doit pas être atteint
@@ -381,45 +394,176 @@ class TestASingleListOfRedirectingParameters:
         assert defining == ["_url_safety.py"], defining
 
 
+class TestTheseTestsCannotDestroyWhatTheyDoNotOwn:
+    """Le contrôle qui empêche ces preuves de redevenir dangereuses.
+
+    Les preuves « une base préexistante survit » commençaient par supprimer,
+    sous un nom fixe, toute base portant ce nom. Sur un serveur partagé, cette
+    préparation détruisait précisément la base qu'elle prétendait épargner,
+    puis en recréait une du même nom et concluait qu'elle avait survécu —
+    preuve circulaire, perte réelle. Reproduit : une base de développeur
+    portant une table sans rapport avec le test a disparu, **pendant que le
+    test passait au vert**. Deux suites lancées ensemble se supprimaient aussi
+    l'une l'autre.
+
+    Ces contrôles sont statiques : ils lisent le source, n'ouvrent aucune base,
+    et tournent donc partout — y compris là où le défaut ferait le plus de
+    dégâts, sur la machine d'un développeur.
+
+    Leur portée est celle de leur lecture : ils voient le SQL écrit en clair
+    dans un appel, pas une requête assemblée ailleurs puis exécutée. C'est la
+    forme qu'a prise le défaut, et celle qu'ils retiennent.
+    """
+
+    #: La classe qui passe des noms à `owns()`, un prédicat pur. Ces chaînes ne
+    #: touchent aucun serveur : ce sont les noms que le script doit REFUSER.
+    PURE_PREDICATE = "TestOwnership"
+
+    def _module_source(self) -> str:
+        return Path(__file__).read_text(encoding="utf-8")
+
+    def _executed_sql_lines(self, source: str) -> list[str]:
+        """Les lignes qui exécutent du SQL écrit en clair."""
+        return [
+            f"{number}: {line.strip()}"
+            for number, line in enumerate(source.splitlines(), start=1)
+            if "execute(" in line and "DATABASE" in line
+        ]
+
+    def test_no_test_here_drops_a_database(self) -> None:
+        """Seul le helper propriétaire supprime, et seulement ce qu'il a créé."""
+        offending = [
+            line for line in self._executed_sql_lines(self._module_source()) if "DROP" in line
+        ]
+        assert offending == [], (
+            f"ces lignes suppriment une base depuis un test : {offending} — la "
+            "destruction appartient à witness_database.owned_witness, qui ne "
+            "détruit que ce qu'il a lui-même créé"
+        )
+
+    def test_no_fixed_database_name_reaches_a_server(self) -> None:
+        """Un nom en dur est partagé par toutes les exécutions du monde.
+
+        Les littéraux de `TestOwnership` sont exclus : ils alimentent `owns()`,
+        qui ne se connecte à rien. Partout ailleurs, un nom fixe finit tôt ou
+        tard dans un `CREATE` ou un `DROP`.
+        """
+        pattern = re.compile(r"^metreo_(?:temoin|roundtrip)_[a-z0-9_]+$")
+        tree = ast.parse(self._module_source())
+        found: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == self.PURE_PREDICATE:
+                continue
+            if isinstance(node, ast.ClassDef):
+                for inner in ast.walk(node):
+                    if (
+                        isinstance(inner, ast.Constant)
+                        and isinstance(inner.value, str)
+                        and pattern.match(inner.value)
+                    ):
+                        found.append(f"{node.name}:{inner.lineno}:{inner.value}")
+        assert found == [], (
+            f"noms de base fixes hors du prédicat pur : {found} — deux "
+            "exécutions concurrentes viseraient la même base ; le nom doit être "
+            "tiré au hasard par witness_database.witness_name ou par le "
+            "générateur du script sous test"
+        )
+
+    def test_the_owning_helper_never_prepares_by_dropping(self) -> None:
+        helper = (Path(__file__).parent / "witness_database.py").read_text(encoding="utf-8")
+        conditional = [
+            line for line in self._executed_sql_lines(helper) if "IF EXISTS" in line.upper()
+        ]
+        assert conditional == [], (
+            f"{conditional} — un DROP conditionnel accepte de supprimer une base "
+            "dont on ne sait rien ; le helper ne supprime que celle qu'il vient "
+            "de créer, et veut échouer bruyamment si elle a disparu"
+        )
+        assert "created_by_test = False" in helper, "l'état de possession doit partir de faux"
+
+
+class TestAHelperThatCreatedNothingDropsNothing:
+    """`created_by_test` épinglé sans serveur, donc partout.
+
+    La falsification par le serveur réel se manifeste par un crash — le helper
+    tente `DROP DATABASE` sur un nom qu'il n'a pas créé. Ce test-ci le dit
+    avant le crash : quand toutes les créations échouent, aucune destruction
+    n'est émise. C'est le cas dangereux, celui où la base d'en face existe.
+    """
+
+    def test_no_drop_and_no_termination_when_every_creation_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log: list[str] = []
+        engine = _Engine(log, fail_on_create=True)
+        monkeypatch.setattr(witness_database, "create_engine", lambda *a, **k: engine)
+
+        with (
+            pytest.raises(RuntimeError, match="aucun nom libre"),
+            witness_database.owned_witness(PG_ADMIN),
+        ):
+            pass  # pragma: no cover - aucune base n'a pu être créée
+
+        assert [line for line in log if "CREATE DATABASE" in line], log
+        assert not [line for line in log if "DROP DATABASE" in line], (
+            f"une base que ce test n'a pas créée a été supprimée : {log}"
+        )
+        assert not [line for line in log if "pg_terminate_backend" in line], log
+        assert engine.disposed, "le moteur d'administration doit être libéré quoi qu'il arrive"
+
+
 @pytest.mark.skipif(
     not running_on_postgresql(),
-    reason="Ces deux preuves détruisent ou épargnent de vraies bases ; il en faut un serveur.",
+    reason="Ces preuves créent et épargnent de vraies bases ; il en faut un serveur.",
 )
 class TestAgainstARealServerAfterTheFix:
-    """Les deux reproductions, rejouées telles quelles contre un vrai serveur."""
+    """Les reproductions, rejouées contre un vrai serveur — sans rien détruire.
+
+    Chaque base témoin est créée par le test sous un nom tiré au hasard, et
+    n'est supprimée que par le helper qui l'a créée.
+    """
 
     def _admin(self) -> str:
         from .conftest import TEST_DATABASE_URL
 
         return TEST_DATABASE_URL
 
-    def test_a_victims_data_survives_a_dbname_parameter(self) -> None:
-        from sqlalchemy import create_engine, text
+    def test_the_helper_refuses_to_touch_a_database_it_did_not_create(self) -> None:
+        """La preuve directe du P1 : une base étrangère n'est jamais supprimée.
 
+        Un second helper se voit imposer le nom du premier. Il ne doit pas
+        « faire de la place » : il tire un autre nom, et les sentinelles du
+        premier restent intactes.
+        """
         admin_url = self._admin()
-        admin = create_engine(admin_url, isolation_level="AUTOCOMMIT", future=True)
-        victim = "metreo_temoin_dbname"
-        try:
-            with admin.connect() as connection:
-                connection.execute(text(f'DROP DATABASE IF EXISTS "{victim}"'))
-                connection.execute(text(f'CREATE DATABASE "{victim}"'))
-            victim_url = (
-                make_url(admin_url).set(database=victim).render_as_string(hide_password=False)
-            )
-            engine = create_engine(victim_url, future=True)
-            try:
-                with engine.begin() as connection:
-                    connection.execute(text("CREATE TABLE temoin (id integer)"))
-                    connection.execute(text("INSERT INTO temoin VALUES (1), (2), (3)"))
-            finally:
-                engine.dispose()
+        with owned_witness(admin_url) as occupant:
+            attempts: list[str] = []
 
+            def collide_then_move_on() -> str:
+                # Deux fois le nom de l'occupant, puis un nom libre.
+                attempts.append(occupant.name if len(attempts) < 2 else witness_name())
+                return attempts[-1]
+
+            with owned_witness(admin_url, name_factory=collide_then_move_on) as latecomer:
+                assert latecomer.name != occupant.name, "le second a pris la base du premier"
+                assert attempts[:2] == [occupant.name, occupant.name], attempts
+                assert exists(admin_url, occupant.name), "la base de l'occupant a disparu"
+                assert count_sentinels(occupant.url) == 3, "les sentinelles ont été perdues"
+                second = latecomer.name
+
+            assert not exists(admin_url, second), "le second helper a laissé un résidu"
+            assert count_sentinels(occupant.url) == 3, "l'occupant a été touché à la sortie"
+
+    def test_a_witness_survives_a_dbname_parameter(self) -> None:
+        """`?dbname=` ne doit déclencher ni migration ni destruction."""
+        admin_url = self._admin()
+        with owned_witness(admin_url) as witness:
             completed = subprocess.run(
                 [
                     sys.executable,
                     str(ROOT / "scripts" / "migration_roundtrip.py"),
                     "--admin-url",
-                    f"{admin_url}?dbname={victim}",
+                    f"{admin_url}?dbname={witness.name}",
                 ],
                 capture_output=True,
                 text=True,
@@ -428,78 +572,68 @@ class TestAgainstARealServerAfterTheFix:
             assert completed.returncode == 1, completed.stdout + completed.stderr
             assert "dbname" in completed.stderr, completed.stderr
             assert "Traceback" not in completed.stderr, completed.stderr
-
-            engine = create_engine(victim_url, future=True)
-            try:
-                with engine.connect() as connection:
-                    rows = connection.execute(text("SELECT count(*) FROM temoin")).scalar_one()
-            finally:
-                engine.dispose()
-            assert rows == 3, "la base témoin a été touchée"
-        finally:
-            with admin.connect() as connection:
-                connection.execute(
-                    text(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                        "WHERE datname = :name AND pid <> pg_backend_pid()"
-                    ),
-                    {"name": victim},
-                )
-                connection.execute(text(f'DROP DATABASE IF EXISTS "{victim}"'))
-            admin.dispose()
+            assert count_sentinels(witness.url) == 3, "la base témoin a été touchée"
 
     def test_a_pre_existing_database_of_the_same_name_survives(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from sqlalchemy import create_engine, text
+        """Collision : le CREATE échoue, et la base d'en face n'est pas détruite.
 
+        Le nom vient du générateur du script lui-même — donc `owns()` l'accepte
+        et le nettoyage aurait bien porté sur lui — mais il est tiré au hasard à
+        chaque exécution, jamais écrit en dur.
+        """
         admin_url = self._admin()
-        taken = "metreo_roundtrip_deadbeefdeadbeef"
-        assert roundtrip.owns(taken), "le nom doit être de ceux que le script sait engendrer"
-        admin = create_engine(admin_url, isolation_level="AUTOCOMMIT", future=True)
-        try:
-            with admin.connect() as connection:
-                connection.execute(text(f'DROP DATABASE IF EXISTS "{taken}"'))
-                connection.execute(text(f'CREATE DATABASE "{taken}"'))
-            taken_url = (
-                make_url(admin_url).set(database=taken).render_as_string(hide_password=False)
-            )
-            engine = create_engine(taken_url, future=True)
-            try:
-                with engine.begin() as connection:
-                    connection.execute(text("CREATE TABLE temoin (id integer)"))
-                    connection.execute(text("INSERT INTO temoin VALUES (1), (2), (3)"))
-            finally:
-                engine.dispose()
+        with owned_witness(admin_url, name_factory=roundtrip.generated_name) as witness:
+            assert roundtrip.owns(witness.name), witness.name
+            monkeypatch.setattr(roundtrip, "generated_name", lambda: witness.name)
 
-            monkeypatch.setattr(roundtrip, "generated_name", lambda: taken)
             with (
                 pytest.raises(Exception, match="already exists"),
                 roundtrip.owned_database(admin_url),
             ):
                 pass  # pragma: no cover - la création doit échouer
 
-            with admin.connect() as connection:
-                still_there = connection.execute(
-                    text("SELECT count(*) FROM pg_database WHERE datname = :name"),
-                    {"name": taken},
-                ).scalar_one()
-            assert still_there == 1, "la base préexistante a été supprimée"
-            engine = create_engine(taken_url, future=True)
+            assert exists(admin_url, witness.name), "la base préexistante a été supprimée"
+            assert count_sentinels(witness.url) == 3
+
+    def test_two_concurrent_runs_leave_each_other_alone(self) -> None:
+        """Deux exécutions simultanées : ni suppression croisée, ni résidu.
+
+        Chacune crée sa base témoin, attend l'autre au tourniquet pour que les
+        durées de vie se chevauchent réellement, puis ouvre une base éphémère.
+        Avec des noms fixes, les deux viseraient la même base.
+        """
+        admin_url = self._admin()
+        barrier = threading.Barrier(2)
+        seen: dict[int, tuple[str, str, int]] = {}
+        failures: list[BaseException] = []
+
+        def run(index: int) -> None:
             try:
-                with engine.connect() as connection:
-                    rows = connection.execute(text("SELECT count(*) FROM temoin")).scalar_one()
-            finally:
-                engine.dispose()
-            assert rows == 3
-        finally:
-            with admin.connect() as connection:
-                connection.execute(
-                    text(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                        "WHERE datname = :name AND pid <> pg_backend_pid()"
-                    ),
-                    {"name": taken},
-                )
-                connection.execute(text(f'DROP DATABASE IF EXISTS "{taken}"'))
-            admin.dispose()
+                with owned_witness(admin_url) as witness:
+                    barrier.wait(timeout=60)
+                    with roundtrip.owned_database(admin_url) as ephemeral:
+                        ephemeral_name = make_url(ephemeral).database or ""
+                        barrier.wait(timeout=60)
+                        seen[index] = (witness.name, ephemeral_name, count_sentinels(witness.url))
+                    assert not exists(admin_url, ephemeral_name), "base éphémère résiduelle"
+                    assert count_sentinels(witness.url) == 3, "témoin touché par l'autre run"
+            except BaseException as error:
+                failures.append(error)
+                barrier.abort()
+
+        threads = [threading.Thread(target=run, args=(index,)) for index in (0, 1)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=180)
+
+        assert not failures, failures
+        assert set(seen) == {0, 1}, seen
+        assert seen[0][0] != seen[1][0], "les deux runs ont visé la même base témoin"
+        assert seen[0][1] != seen[1][1], "les deux runs ont visé la même base éphémère"
+        for witness_seen, ephemeral_seen, sentinels in seen.values():
+            assert sentinels == 3
+            assert not exists(admin_url, ephemeral_seen)
+            assert not exists(admin_url, witness_seen), "base témoin résiduelle"
