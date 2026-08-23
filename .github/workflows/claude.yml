@@ -61,6 +61,6 @@ jobs:
           # du dépôt et un fetch non destructif. Pas de shell générique, pas de
           # pull/rebase, pas de commande de suppression.
           claude_args: |
-            --allowedTools "Bash(make install),Bash(make lint),Bash(make types),Bash(make test-domain),Bash(make test-api),Bash(make verify),Bash(pytest:*),Bash(python3 -m pytest:*),Bash(git fetch origin:*)"
+            --allowedTools "Edit,Write,Bash(make install),Bash(make lint),Bash(make types),Bash(make test-domain),Bash(make test-api),Bash(make test-contracts),Bash(make verify),Bash(pytest:*),Bash(python3 -m pytest:*),Bash(git fetch origin:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*)"
             --disallowedTools "TaskOutput,KillTask"
             --max-turns 40
