@@ -1,18 +1,18 @@
 ---
 name: document-analysis
-description: À utiliser pour tout ce qui concerne le TEXTE d'un document de marché dans Metreo (phase 2, non implémenté) — upload de PDF natif ou scanné, DOCX, XLSX, TXT, ZIP, photo, antivirus et SHA-256, détection de type/langue/qualité, OCR page à page, extraction de tableaux, segmentation avec pages et coordonnées, classification du document (CCTP, cahier spécial des charges, clauses administratives, métré, DQE, BPU, étude géotechnique, rapport de pollution, inventaire amiante, planning, addendum), extraction structurée par schéma JSON, citation page-zone, seuil de confiance, file de validation humaine, recherche plein texte ou sémantique, embeddings, RAG, prompt versionné, adaptateur OCR ou LLM, injection de prompt via un fichier importé, ou dès qu'une réponse risque d'écrire en base une donnée extraite sans citation, sans confiance et sans validation humaine. Un plan est classé ici, mais sa géométrie et ses mesures relèvent de cad-bim-takeoff ; le contenu réglementaire d'une clause relève de belgium-regulatory-pack.
+description: À utiliser pour tout ce qui concerne le TEXTE d'un document de marché dans Metreo (phase 2, socle partiel) — upload de PDF natif ou scanné, DOCX, XLSX, TXT, ZIP, photo, antivirus et SHA-256, détection de type/langue/qualité, OCR page à page, extraction de tableaux, segmentation avec pages et coordonnées, classification du document (CCTP, cahier spécial des charges, clauses administratives, métré, DQE, BPU, étude géotechnique, rapport de pollution, inventaire amiante, planning, addendum), extraction structurée par schéma JSON, citation page-zone, seuil de confiance, file de validation humaine, recherche plein texte ou sémantique, embeddings, RAG, prompt versionné, adaptateur OCR ou LLM, injection de prompt via un fichier importé, ou dès qu'une réponse risque d'écrire en base une donnée extraite sans citation, sans confiance et sans validation humaine. Un plan est classé ici, mais sa géométrie et ses mesures relèvent de cad-bim-takeoff ; le contenu réglementaire d'une clause relève de belgium-regulatory-pack.
 ---
 
-# Metreo — pipeline documentaire (phase 2, non implémenté)
+# Metreo — pipeline documentaire (phase 2, socle partiel)
 
-**Aucune ligne de ce pipeline n'existe dans le dépôt.** Pas de table `documents`, pas de
-route d'upload, pas d'OCR, pas d'adaptateur IA : `grep -ri ocr apps packages --include=*.py`
-ne renvoie que le commentaire de `apps/api/src/metreo_api/config.py`. `apps/worker/`,
-`packages/contracts/`, `packages/config/` et `scripts/` ne contiennent qu'un `README.md`,
-**aucun code**. Seule la conception est arrêtée, dans `docs/adr/0003-document-storage.md`
-(statut : accepté). Ce fichier est un cahier des charges à implémenter, pas une description
-de code existant : décrire ces étapes au présent, importer un symbole d'ici ou répondre
-« c'est déjà géré » est bloquant.
+**Seul le socle Phase 2A existe.** Six tables documentaires, leurs contraintes et leur
+migration sont présentes ; `packages/contracts/` expose les sept ports purs.
+`services/documents.py` gère les métadonnées, décisions humaines, numéros de révision et
+états idempotents, toujours par organisation. Il n'existe toujours aucun upload, stockage
+binaire, antivirus, OCR, LLM, embedding, recherche, worker ou écran documentaire.
+L'ADR 0003 reste la conception de référence. Les étapes 1 à 11 ci-dessous demeurent un
+cahier des charges : la présence du schéma ou d'un port n'autorise jamais à répondre que
+le traitement correspondant « est déjà géré ».
 
 Chemins abrégés ci-dessous : `models.py`, `config.py`, `db.py`, `logging_config.py`,
 `schemas.py`, `routers/`, `services/`, `security/` vivent sous `apps/api/src/metreo_api/`.
@@ -140,14 +140,14 @@ Un fichier importé est une **donnée non fiable**, jamais une instruction.
 - Chaque acceptation, correction ou rejet humain passe par `audit.record()`. Une correction
   est conservée pour l'évaluation ; aucun entraînement sur données client sans accord écrit.
 
-## 8. Interfaces à créer
+## 8. Interfaces du socle et implémentations à créer
 
-Sept ports, définis comme `Protocol` Python, sans dépendance à un fournisseur : `OcrPort`,
+Sept ports sont définis comme `Protocol` Python, sans dépendance fournisseur : `OcrPort`,
 `TableExtractionPort`, `ClassifierPort`, `StructuredLlmPort`, `EmbeddingPort`, `SearchPort`,
 plus l'`ObjectStore` imposé par l'ADR 0003 (S3 ou disque local ; aucun code métier ne connaît
-le fournisseur). Emplacement cohérent avec le dépôt : contrats dans `packages/contracts/`,
-implémentations dans un futur `services/documents/`, exécution asynchrone dans `apps/worker/`
-— ces deux dossiers ne contiennent aujourd'hui qu'un `README.md`.
+le fournisseur). Les contrats vivent dans `packages/contracts/`. Les adaptateurs concrets
+et l'exécution asynchrone restent à créer ; `apps/worker/` ne contient qu'un `README.md`.
+Le service API existant ne traite que les métadonnées et les états, jamais le contenu.
 
 - **Implémentation par défaut : un faux fournisseur local et déterministe.**
   `Settings.ai_provider` est un `Literal["null", "local_stub"]` dont le défaut est `"null"` :
@@ -161,9 +161,8 @@ implémentations dans un futur `services/documents/`, exécution asynchrone dans
 - Un fournisseur externe s'ajoute derrière un port existant, sans toucher aux appelants, et
   sans jamais devenir obligatoire (voir **btp-product-rules**, « pas de verrouillage
   fournisseur »).
-- Nouvelles permissions à ajouter dans `security/roles.py` (aucune permission documentaire
-  dans `Permission` ni `ROLE_PERMISSIONS` aujourd'hui) : lecture des documents et validation
-  des extractions, distinctes de `BOQ_APPROVE`.
+- Les permissions `DOCUMENT_READ`, `DOCUMENT_WRITE` et `DOCUMENT_VALIDATE` existent dans
+  `security/roles.py`. Préserver leur séparation de `BOQ_APPROVE` et la matrice 401/403/404.
 
 ## 9. Le RAG ne remplace jamais une requête relationnelle
 
@@ -194,9 +193,9 @@ Fixtures fictives et créées dans le projet, à l'image de `fixtures/imports/` 
 
 ## Signaux d'alerte
 
-- Écrire ou laisser croire que l'upload, l'OCR, la classification ou la recherche existent :
-  ils n'existent pas. Ne jamais citer `services/documents/`, `apps/worker/*.py` ou une table
-  `documents` comme si le fichier était là.
+- Déduire du socle que l'upload, l'OCR, la classification ou la recherche existent : les
+  tables, ports et `services/documents.py` ne traitent encore aucun fichier ni contenu ;
+  `apps/worker/` ne contient aucun exécuteur.
 - Persister une valeur extraite sans `citation` structurée, sans `confidence` ou sans
   `document_revision`.
 - Une citation réduite à « page 12 » ou à un extrait de texte recopié, sans plage de
