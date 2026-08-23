@@ -54,7 +54,7 @@ Ce document n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit contrôlé depuis un clone propre | `c626fe2` |
+| Dernier commit contrôlé depuis un clone propre | `752ec2b` |
 | Procédure | `make install` puis les onze étapes ci-dessous, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
@@ -81,10 +81,10 @@ Aucun n'est écrit de mémoire. Chacun se rejoue.
 
 | | |
 | --- | --- |
-| Commit | `c626fe221e493915d727dba249ffc6cfae4252fa` |
-| Abrégé | `c626fe2` |
-| Fichiers versionnés | 161 |
-| Exécution CI correspondante | [push 32600593476](https://github.com/Hermesprojet/Devis/actions/runs/32600593476) et [pull_request 32600595369](https://github.com/Hermesprojet/Devis/actions/runs/32600595369) — dix jobs verts sur dix, sur les deux déclencheurs |
+| Commit | `752ec2bb026b6a07b118e2777cb52eb72b74d70f` |
+| Abrégé | `752ec2b` |
+| Fichiers versionnés | 162 |
+| Exécution CI correspondante | [push 32606256441](https://github.com/Hermesprojet/Devis/actions/runs/32606256441) et [pull_request 32606258105](https://github.com/Hermesprojet/Devis/actions/runs/32606258105) — dix jobs verts sur dix, sur les deux déclencheurs |
 
 Les commits postérieurs à celui-ci sont couverts par la CI de la tête, pas par
 ce contrôle manuel. Quand l'écart ne porte que sur de la documentation, la CI
@@ -161,10 +161,10 @@ Chaque étape ci-dessous affiche sa commande et s'arrête au premier échec.
 | Format et lint Python | `make lint` | `All checks passed!` | < 1 s |
 | Types — domaine | `mypy packages/domain/src/metreo_domain` | 7 fichiers, aucun problème | ~1 s |
 | Types — API | `mypy apps/api/src/metreo_api` | 30 fichiers, aucun problème | ~2 s |
-| Types — scripts | `mypy scripts` | 5 fichiers, aucun problème | < 1 s |
+| Types — scripts | `mypy scripts` | 6 fichiers, aucun problème | < 1 s |
 | Tests du domaine | `make test-domain` | **127 passed** | < 1 s |
-| Tests API sur SQLite | `make test-api` | **451 passed, 18 ignorés volontaires** | ~107 s |
-| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **469 passed** | ~148 s |
+| Tests API sur SQLite | `make test-api` | **466 passed, 20 ignorés volontaires** | ~109 s |
+| Tests API sur PostgreSQL 16 | `make test-api-postgres` | **486 passed** | ~142 s |
 | Aller-retour des migrations | `make migration-roundtrip-test` | base créée par le run, 20 tables, base supprimée | ~6 s |
 | Jeu de démonstration | `make seed` | `status: seeded` | < 1 s |
 | Installation depuis les manifestes | `make clean-install` | 34 chemins, 51 schémas, 35 distributions, 52 exigences honorées | ~30 s |
@@ -423,13 +423,18 @@ c'est le commit qui verrouille, refuse, et fait foi.
 
 `alembic downgrade base` **n'est pas une procédure de retour arrière**. Sur
 une base peuplée, elle supprime tout le schéma applicatif et les données avec.
-Elle n'apparaît ici que comme test destructif, sur une base jetable.
+Elle n'apparaît ici que comme test destructif, dans une base que le run vient
+de créer. Aucune URL fournie par un appelant n'est acceptée comme cible : les
+paramètres de requête qui déplaceraient la connexion — `dbname`, `database`,
+`host`, `hostaddr`, `port`, `user`, `service`, `passfile` — sont refusés avant
+toute connexion, l'URL éphémère est confrontée à `create_connect_args()`, et
+rien n'est supprimé sans la preuve d'une création réussie.
 
 Quatre choses distinctes, souvent confondues :
 
 | | Quand | Sur quoi |
 | --- | --- | --- |
-| Test `head → base → head` | en CI et dans `make release-gate` | une base **jetable** uniquement — il détruit tout |
+| Test `head → base → head` | en CI et dans `make release-gate` | une base **créée par le run lui-même**, jamais une base préexistante — il détruit tout |
 | Retour d'une révision précise | après une migration fautive, si son `downgrade` est réversible sans perte | `alembic downgrade <révision précédente>` |
 | Restauration depuis une sauvegarde | quand la migration n'est pas réversible sans perte | une sauvegarde **vérifiée**, restaurée d'abord ailleurs |
 | Retour arrière applicatif | quand le schéma peut rester en avance sur le code | redéployer la version précédente de l'application, schéma inchangé |
@@ -601,11 +606,26 @@ permanent qui la retient. Toutes ont été jouées sur le commit nommé en tête
 | `seed` en production | aucun refus, prix fictifs écrivables | `SeedRefused` hors développement et test | refus neutralisé → rouge | `test_seed_safety.py` |
 | `seed --reset` général | supprimait toutes les organisations et tous les utilisateurs | restreint aux organisations semées, nommément | `delete` général rétabli → rouge | idem |
 | Migrations de la base de CI | régression : plus de schéma, seed en échec | étape `upgrade head` séparée de l'aller-retour | étape retirée → rouge | `test_migration_roundtrip.py` |
+| Aller-retour détourné par `?dbname=` | `…/postgres?dbname=metreo_victim_a` : la victime passe de 2 organisations à 0, la base jetable reste vide | refus des paramètres redirecteurs **avant** `create_engine` | refus neutralisé → 9 rouges | `test_migration_roundtrip.py` |
+| URL éphémère encore redirigée | `parsed.set(database=…)` garde la chaîne de requête | URL construite sans ces paramètres, confrontée à `create_connect_args()` | vérification neutralisée → rouge, l'URL rendue ouvre « victime » | idem |
+| Destruction sans preuve de création | collision de nom : `CREATE` échoue, la base préexistante et ses 3 lignes témoins sont supprimées | `created` passé à True après le seul CREATE réussi ; rien n'est terminé ni supprimé sans lui | garde retirée → 2 rouges, dont la preuve sur serveur réel | idem |
+| Listes de paramètres divergentes | le contrôle de nom connaissait `dbname`, pas `database` ; l'aller-retour ni l'un ni l'autre | source unique dans `scripts/_url_safety.py` | seconde définition réintroduite → rouge | idem |
+| Porte semant une base non migrée | clone propre, base `metreo_gate` neuve : `relation "organizations" does not exist` | `upgrade head` avant le seed, URL transportée explicitement | étape retirée → rouge | idem |
 
-Cinq de ces risques n'étaient pas dans la liste demandée : ils sont apparus en
+Huit de ces risques n'étaient pas dans la liste demandée : ils sont apparus en
 traitant les autres. Deux ont été trouvés par un contrôle que le travail
 venait d'ajouter — l'inventaire des enveloppes de verrouillage en a nommé deux
-de plus que celles qui étaient signalées.
+de plus que celles qui étaient signalées. Trois autres sont sortis du dernier
+tour : les deux couches de défense qui manquaient autour de l'URL éphémère, et
+une porte qui semait une base que plus rien ne migrait — celle-là n'était
+visible que depuis un clone propre sur une base réellement neuve, les
+exécutions précédentes profitant du schéma laissé par une commande antérieure.
+
+Les deux derniers bloquants ont la même forme que les trois premiers de la
+série : une commande destructrice qui déduit sa cible d'une URL plutôt que de
+la produire elle-même, et une preuve de propriété qu'on croyait acquise. Le
+correctif ne les rattrape pas au vol : il refuse en amont ce qui est ambigu,
+et n'accorde le droit de détruire qu'au vu d'une création réussie.
 
 ## Limites connues de l'outillage
 
