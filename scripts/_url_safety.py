@@ -195,18 +195,28 @@ def verified_postgresql_dialect(url: str, *, timeout: int = 5) -> str:
     if problem is not None:
         raise NotPostgreSQL(f"{problem} — {redacted(url)}")
 
-    engine = create_engine(url, connect_args={"connect_timeout": timeout}, future=True)
+    # `create_engine` DANS le try : sans le pilote installé — la suite SQLite
+    # n'installe pas psycopg — il lève un `ModuleNotFoundError` nu. Un pilote
+    # absent est une raison de refuser, pas une trace d'appel.
+    engine = None
     try:
+        engine = create_engine(url, connect_args={"connect_timeout": timeout}, future=True)
         with engine.connect() as connection:
             reported = connection.dialect.name
             banner = str(connection.exec_driver_sql("SELECT version()").scalar_one())
+    except ModuleNotFoundError as error:
+        raise NotPostgreSQL(
+            f"pilote absent ({error.name}) : impossible d'ouvrir une connexion, "
+            f"donc impossible de prouver PostgreSQL — {redacted(url)}"
+        ) from None
     except Exception as error:  # remonté sous une forme sans secret
         raise NotPostgreSQL(
             f"serveur injoignable ou refusant la connexion ({type(error).__name__}) "
             f"— {redacted(url)}"
         ) from None
     finally:
-        engine.dispose()
+        if engine is not None:
+            engine.dispose()
 
     if reported != "postgresql" or not banner.startswith("PostgreSQL"):
         raise NotPostgreSQL(

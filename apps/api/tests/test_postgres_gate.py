@@ -111,12 +111,35 @@ class TestNoCredentialEverReachesAMessage:
         assert "localhost" in rendered and "metreo_test" in rendered, rendered
 
     def test_an_unreachable_server_is_refused_without_leaking(self) -> None:
+        """Refusé quoi qu'il arrive, et sans jamais recopier les identifiants.
+
+        Le motif dépend de l'environnement : « injoignable » là où le pilote
+        PostgreSQL est installé, « pilote absent » dans la passe SQLite, qui ne
+        l'installe pas. Les deux sont des refus corrects ; ce qui ne varie pas,
+        c'est qu'aucun identifiant n'en sort.
+        """
         with pytest.raises(safety.NotPostgreSQL) as raised:
             safety.verified_postgresql_dialect(self.URL, timeout=2)
         message = str(raised.value)
-        assert "injoignable" in message, message
+        assert "injoignable" in message or "pilote absent" in message, message
         assert PASSWORD not in message, message
         assert USER not in message, message
+
+    def test_a_missing_driver_is_a_readable_refusal_not_a_traceback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reproduit en CI : `ModuleNotFoundError: No module named 'psycopg'`.
+
+        `create_engine` était appelé hors du bloc protégé ; l'absence de pilote
+        remontait donc nue, à travers un garde censé rendre un motif.
+        """
+
+        def absent(*arguments: object, **keywords: object) -> object:
+            raise ModuleNotFoundError("No module named 'psycopg'", name="psycopg")
+
+        monkeypatch.setattr("sqlalchemy.create_engine", absent, raising=True)
+        with pytest.raises(safety.NotPostgreSQL, match="pilote absent"):
+            safety.verified_postgresql_dialect(self.URL)
 
     def test_an_unreadable_url_reveals_nothing(self) -> None:
         assert safety.redacted("pas une url") == "<URL illisible>"
@@ -190,6 +213,37 @@ class TestTheSuiteGateDependsOnTheVerifiedDialect:
         body = source[source.index("def verified_postgresql_dialect") :]
         assert "engine.connect()" in body, "le second étage doit ouvrir une connexion"
         assert "SELECT version()" in body, "et demander au serveur ce qu'il est"
+
+
+class TestTheCiDatabaseObeysTheSameRule:
+    """La CI n'a pas droit à une exception.
+
+    Régression réellement survenue : la base du service PostgreSQL de la CI
+    s'appelait « metreo », sans jeton de jetabilité. Dès que la suite a exigé
+    une base jetable, les deux jobs API sont tombés à la collecte. La base EST
+    jetable — c'est un conteneur éphémère — mais son nom ne le disait pas.
+
+    La corriger plutôt que d'ouvrir une exception : une règle qui s'applique
+    partout sauf en CI est une règle qui ne s'applique pas.
+    """
+
+    def _workflow_urls(self) -> list[str]:
+        import re
+
+        text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        return re.findall(r"postgresql\+psycopg://[^\s\"']+", text)
+
+    def test_every_postgresql_url_of_the_workflow_names_a_disposable_database(self) -> None:
+        guard = _load("check_disposable_database")
+        urls = self._workflow_urls()
+        assert urls, "aucune URL PostgreSQL trouvée dans le workflow"
+        refused = {url.rsplit("/", 1)[-1]: guard.refusal(url) for url in urls}
+        offenders = {name: why for name, why in refused.items() if why is not None}
+        assert offenders == {}, (
+            f"le workflow vise des bases que la suite refusera : {offenders}. "
+            "La base de CI est éphémère ; son nom doit le dire, comme pour tout "
+            "le monde."
+        )
 
 
 @pytest.mark.skipif(
