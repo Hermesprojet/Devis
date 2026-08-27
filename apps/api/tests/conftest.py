@@ -14,7 +14,9 @@ server-side constraints or transactional DDL.
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -70,9 +72,60 @@ def database_url(tmp_path: Path) -> Iterator[str]:
         admin.dispose()
 
 
+#: Les scripts du dépôt portent la seule définition de « PostgreSQL prouvé » et
+#: de « ressource jetable ». Les redire ici les ferait diverger.
+_SCRIPTS = API_ROOT.parents[1] / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+
+@lru_cache(maxsize=1)
+def _verified_server() -> str | None:
+    """La bannière du serveur PostgreSQL vérifié, ou ``None`` sans URL.
+
+    `bool(METREO_TEST_DATABASE_URL)` ne prouvait qu'une variable non vide.
+    Reproduit : pointer la variable sur `sqlite+pysqlite:///…/metreo_test.sqlite3`
+    faisait *sélectionner* les tests PostgreSQL-only, qui tombaient ensuite en
+    quinze erreurs — un diagnostic tardif sous une étiquette qui affirmait un
+    moteur que rien ne contrôlait.
+
+    Trois étages, dans cet ordre :
+
+    1. pas d'URL → ``None``. C'est le mode SQLite, légitime et silencieux ;
+    2. une URL → elle doit être PostgreSQL, joignable, et le serveur doit le
+       confirmer lui-même. Sinon on **lève** : une URL fournie exprime une
+       intention, et l'ignorer en sautant les tests serait un faux vert ;
+    3. la base visée doit être jetable au sens du dépôt — la suite y crée et
+       y détruit un schéma par test.
+    """
+    from _url_safety import NotPostgreSQL, redacted, verified_postgresql_dialect
+    from check_disposable_database import refusal as disposable_refusal
+
+    if not TEST_DATABASE_URL:
+        return None
+
+    try:
+        banner = verified_postgresql_dialect(TEST_DATABASE_URL)
+    except NotPostgreSQL as error:
+        raise RuntimeError(
+            f"METREO_TEST_DATABASE_URL ne mène pas à PostgreSQL : {error}. "
+            "Retirez la variable pour tourner sur SQLite, ou corrigez-la — "
+            "les tests ne seront pas ignorés en silence."
+        ) from None
+
+    not_disposable = disposable_refusal(TEST_DATABASE_URL)
+    if not_disposable is not None:
+        raise RuntimeError(
+            f"METREO_TEST_DATABASE_URL vise une base que la suite ne doit pas "
+            f"toucher : {not_disposable}. La suite crée et détruit un schéma par "
+            f"test — {redacted(TEST_DATABASE_URL)}"
+        )
+    return banner
+
+
 def running_on_postgresql() -> bool:
-    """For the handful of assertions that only make sense on a real server."""
-    return bool(TEST_DATABASE_URL)
+    """Vrai seulement contre un serveur PostgreSQL **vérifié**, jetable."""
+    return _verified_server() is not None
 
 
 @pytest.fixture()
