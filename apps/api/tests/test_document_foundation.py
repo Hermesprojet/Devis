@@ -253,13 +253,39 @@ def _commit_is_refused(session: Session, row: object) -> None:
 
 
 def test_migration_and_models_have_no_schema_drift(migrated: None) -> None:
+    """Zéro écart sous PostgreSQL ; sous SQLite, exactement l'écart déjà nommé.
+
+    La révision `b4f2c7d81a05` pose une action référentielle sur huit clés
+    composites de la Phase 1, et elle ne le fait **que sur PostgreSQL** :
+    l'analyseur SQLite refuse `ON DELETE SET NULL (colonne)`, et la forme nue y
+    viderait `organization_id`, NOT NULL. Aucune déclaration unique ne convient
+    aux deux moteurs, donc le modèle déclare ce que PostgreSQL porte et SQLite
+    ne le porte pas.
+
+    L'exception n'est pas une règle générique — « ignorer les contraintes
+    `_tenant` » laisserait passer une neuvième relation ou une action changée.
+    C'est la table nominative de `test_referential_action_drift`, avec le nom,
+    le nombre et la clause exacte de chacune ; elle est elle-même confrontée au
+    tableau `RELATIONS` de la révision. Partagée plutôt que recopiée : deux
+    listes divergeraient dès la première correction.
+
+    Tout le reste — les six tables documentaires, leurs colonnes, leurs clés
+    composites, leurs index — est comparé sans aucune indulgence, sur les deux
+    moteurs.
+    """
+    from .test_referential_action_drift import unexpected_sqlite_drift
+
     engine = get_engine()
     with engine.connect() as connection:
         differences = compare_metadata(
             MigrationContext.configure(connection, opts={"compare_type": True}),
             Base.metadata,
         )
-    assert differences == []
+    if engine.dialect.name == "postgresql":
+        assert differences == []
+        return
+    anomalies = unexpected_sqlite_drift(list(differences))
+    assert anomalies == [], "\n".join(anomalies)
 
 
 def test_all_six_tables_and_composite_tenant_keys_exist(migrated: None) -> None:
