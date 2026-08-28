@@ -413,6 +413,17 @@ class CompositePriceRow(TimestampMixin, Base):
     __tablename__ = "composite_prices"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
+        # qu'un parent de SA propre organisation. L'action référentielle reflète
+        # celle de la clé simple que double chaque composite — sans ce reflet, le
+        # résultat d'une suppression dépendrait de l'ordre de création des
+        # contraintes (révision `b4f2c7d81a05`).
+        ForeignKeyConstraint(
+            ["price_book_version_id", "organization_id"],
+            ["price_book_versions.id", "price_book_versions.organization_id"],
+            name="fk_composite_prices_price_book_version_tenant",
+            ondelete="CASCADE",
+        ),
+        # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
         # qu'un parent de SA propre organisation. L'action référentielle de ces
         # clés composites appartient aux migrations et non aux modèles : elle
         # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
@@ -446,6 +457,12 @@ class CompositePriceRow(TimestampMixin, Base):
         back_populates="composite",
         cascade="all, delete-orphan",
         order_by="CompositeComponentRow.sort_index",
+        # Deux chemins de clé relient désormais ces deux tables : la clé simple
+        # `composite_price_id`, et la clé composite qui lui adjoint
+        # `organization_id`. SQLAlchemy refuse de choisir — il lève
+        # `AmbiguousForeignKeysError` — et il a raison de refuser : c'est à
+        # nous de dire lequel porte la relation.
+        foreign_keys="CompositeComponentRow.composite_price_id",
     )
 
 
@@ -460,6 +477,17 @@ class CompositeComponentRow(TimestampMixin, Base):
 
     __tablename__ = "composite_components"
     __table_args__ = (
+        # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
+        # qu'un parent de SA propre organisation. L'action référentielle reflète
+        # celle de la clé simple que double chaque composite — sans ce reflet, le
+        # résultat d'une suppression dépendrait de l'ordre de création des
+        # contraintes (révision `b4f2c7d81a05`).
+        ForeignKeyConstraint(
+            ["composite_price_id", "organization_id"],
+            ["composite_prices.id", "composite_prices.organization_id"],
+            name="fk_composite_components_composite_price_tenant",
+            ondelete="CASCADE",
+        ),
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
         # qu'un parent de SA propre organisation. L'action référentielle de ces
         # clés composites appartient aux migrations et non aux modèles : elle
@@ -525,7 +553,10 @@ class CompositeComponentRow(TimestampMixin, Base):
     # lump sum
     lump_sum_amount: Mapped[Decimal | None] = mapped_column(Amount)
 
-    composite: Mapped[CompositePriceRow] = relationship(back_populates="components")
+    composite: Mapped[CompositePriceRow] = relationship(
+        back_populates="components",
+        foreign_keys="CompositeComponentRow.composite_price_id",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -537,6 +568,19 @@ class ImportBatch(TimestampMixin, Base):
     """A previewed import. Nothing reaches ``price_items`` before ``commit``."""
 
     __tablename__ = "import_batches"
+    __table_args__ = (
+        # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
+        # qu'un parent de SA propre organisation. L'action référentielle reflète
+        # celle de la clé simple que double chaque composite — sans ce reflet, le
+        # résultat d'une suppression dépendrait de l'ordre de création des
+        # contraintes (révision `b4f2c7d81a05`).
+        ForeignKeyConstraint(
+            ["price_book_version_id", "organization_id"],
+            ["price_book_versions.id", "price_book_versions.organization_id"],
+            name="fk_import_batches_price_book_version_tenant",
+            ondelete="CASCADE",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(
@@ -628,6 +672,18 @@ class BoqItem(TimestampMixin, Base):
     __tablename__ = "boq_items"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
+        # qu'un parent de SA propre organisation. L'action référentielle reflète
+        # celle de la clé simple que double chaque composite — sans ce reflet, le
+        # résultat d'une suppression dépendrait de l'ordre de création des
+        # contraintes (révision `b4f2c7d81a05`).
+        UniqueConstraint("id", "organization_id", name="uq_boq_items_id_organization"),
+        ForeignKeyConstraint(
+            ["parent_id", "organization_id"],
+            ["boq_items.id", "boq_items.organization_id"],
+            name="fk_boq_items_parent_tenant",
+            ondelete="CASCADE",
+        ),
+        # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
         # qu'un parent de SA propre organisation. L'action référentielle de ces
         # clés composites appartient aux migrations et non aux modèles : elle
         # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
@@ -711,6 +767,18 @@ class Estimate(TimestampMixin, Base):
     __tablename__ = "estimates"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
+        # qu'un parent de SA propre organisation. L'action référentielle reflète
+        # celle de la clé simple que double chaque composite — sans ce reflet, le
+        # résultat d'une suppression dépendrait de l'ordre de création des
+        # contraintes (révision `b4f2c7d81a05`).
+        UniqueConstraint("id", "organization_id", name="uq_estimates_id_organization"),
+        ForeignKeyConstraint(
+            ["project_id", "organization_id"],
+            ["projects.id", "projects.organization_id"],
+            name="fk_estimates_project_tenant",
+            ondelete="CASCADE",
+        ),
+        # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
         # qu'un parent de SA propre organisation. L'action référentielle de ces
         # clés composites appartient aux migrations et non aux modèles : elle
         # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
@@ -763,6 +831,22 @@ class EstimateVersion(TimestampMixin, Base):
 
     __tablename__ = "estimate_versions"
     __table_args__ = (
+        # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
+        # qu'un parent de SA propre organisation. L'action référentielle reflète
+        # celle de la clé simple que double chaque composite — sans ce reflet, le
+        # résultat d'une suppression dépendrait de l'ordre de création des
+        # contraintes (révision `b4f2c7d81a05`).
+        ForeignKeyConstraint(
+            ["estimate_id", "organization_id"],
+            ["estimates.id", "estimates.organization_id"],
+            name="fk_estimate_versions_estimate_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["price_book_version_id", "organization_id"],
+            ["price_book_versions.id", "price_book_versions.organization_id"],
+            name="fk_estimate_versions_price_book_version_tenant",
+        ),
         UniqueConstraint("estimate_id", "version_number", name="uq_estimateversion_number"),
         CheckConstraint(
             "status IN ('draft','frozen','superseded')", name="ck_estimate_version_status"
