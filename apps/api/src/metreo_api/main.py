@@ -59,12 +59,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     for problem in problems:
         logger.warning("configuration_problem", extra={"problem": problem})
 
+    # Le schéma OpenAPI décrit toute la surface d'API : chemins, paramètres,
+    # formes d'erreur, modèles. Mesuré sur cette application démarrée en
+    # `production` : `/openapi.json` rendait **82 745 octets sans
+    # authentification**, `/docs` et `/redoc` répondaient 200. Ce n'est pas un
+    # secret — les routes sont de toute façon protégées — mais c'est une carte
+    # complète offerte à qui la demande, et elle n'a aucune raison d'être
+    # publiée là où personne ne développe.
+    #
+    # **Trois points d'entrée, pas deux.** `/redoc` est monté par défaut par
+    # FastAPI même sans être nommé ici : il était ouvert lui aussi, et la note
+    # de suivi qui n'en citait que deux sous-estimait l'exposition.
+    #
+    # Le seuil est le même que pour le mode d'authentification et pour le
+    # moteur de base de données : `is_production` couvre `staging` **et**
+    # `production`. Une pré-production est jointe depuis l'extérieur comme une
+    # production ; la traiter autrement ici contredirait le reste du fichier.
+    # Aucun réglage ne permet de rouvrir : un interrupteur se met du mauvais
+    # côté, et c'est précisément la classe d'erreur qu'on retire.
+    #
+    # `app.openapi()` continue de produire le schéma en mémoire — vérifié : le
+    # contrôle d'installation propre et la matrice d'autorisation s'en servent
+    # et ne passent pas par HTTP.
+    documentation_publiee = not settings.is_production
     app = FastAPI(
         title=settings.app_name,
         version=domain_version,
         description=DESCRIPTION,
-        docs_url="/docs",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if documentation_publiee else None,
+        redoc_url="/redoc" if documentation_publiee else None,
+        openapi_url="/openapi.json" if documentation_publiee else None,
     )
 
     app.add_middleware(
