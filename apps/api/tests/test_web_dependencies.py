@@ -26,6 +26,7 @@ lancé.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -193,12 +194,41 @@ class TestTheFourDeclarationsAgree:
     def test_the_package_actually_installed_complies(self, manifest: dict) -> None:
         """Ce qui tourne, et non ce qu'on a demandé.
 
-        Ignoré sur un clone où `npm ci` n'a pas encore été lancé : la suite
-        Python ne doit pas dépendre d'une installation JavaScript.
+        Ce contrôle a besoin d'une installation JavaScript, que la suite Python
+        ne doit pas exiger. Mais un simple `pytest.skip` rendait le décompte de
+        la suite **dépendant de l'état local** : 24 réussites ici, 23 plus un
+        ignoré sur un clone neuf, sans qu'aucune des deux valeurs soit fausse.
+        Un compteur qui change selon la machine ne peut pas servir de preuve.
+
+        Deux états sont donc distingués, et le troisième est une erreur :
+
+        * aucun `node_modules` du tout — rien n'a été installé, l'ignoré est
+          l'état explicite et sa raison le dit ;
+        * `node_modules` présent mais `next` absent — une installation
+          partielle ou cassée : **rouge**, plus jamais un ignoré silencieux ;
+        * `METREO_REQUIRE_WEB_INSTALL` posé — l'appelant affirme avoir installé,
+          donc l'ignoré lui-même devient **rouge**. `make release-gate` le pose :
+          il lance Playwright, il ne peut pas tourner sans installation.
         """
-        installed = WEB / "node_modules" / "next" / "package.json"
-        if not installed.exists():
-            pytest.skip("next n'est pas installé ici ; rien à confronter")
+        exige = os.environ.get("METREO_REQUIRE_WEB_INSTALL") == "1"
+        node_modules = WEB / "node_modules"
+        installed = node_modules / "next" / "package.json"
+
+        if not node_modules.exists():
+            if exige:
+                pytest.fail(
+                    "METREO_REQUIRE_WEB_INSTALL=1 mais apps/web/node_modules "
+                    "n'existe pas : lancez `make install` avant cette porte."
+                )
+            pytest.skip(
+                "aucune installation JavaScript ici (apps/web/node_modules absent) ; "
+                "posez METREO_REQUIRE_WEB_INSTALL=1 pour en faire une erreur"
+            )
+
+        assert installed.exists(), (
+            "apps/web/node_modules existe mais next n'y est pas : installation "
+            "partielle ou interrompue. Ce n'est pas un ignoré, c'est une erreur."
+        )
         version = _json(installed)["version"]
         assert policy_violation(version, source="le paquet installé est en") is None, (
             policy_violation(version, source="le paquet installé est en")
