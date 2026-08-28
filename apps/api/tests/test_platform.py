@@ -336,6 +336,27 @@ class TestTheSqliteTemplateDoesNotWeakenIsolation:
         )
 
 
+def une_base_sqlite_lisible(chemin: Path) -> Path:
+    """Un fichier SQLite authentique, refermé proprement, sans annexe.
+
+    Les tests d'estampille ont besoin d'un gabarit que SEULE l'estampille
+    disqualifie. Un fichier vide ne convient plus : depuis que le gabarit est
+    contrôlé pour lui-même — en-tête, taille, `PRAGMA integrity_check` — il
+    serait refusé avant qu'on ait rien dit de son estampille.
+    """
+    import sqlite3
+
+    connexion = sqlite3.connect(chemin)
+    try:
+        connexion.execute("PRAGMA journal_mode=DELETE")
+        connexion.execute("CREATE TABLE temoin (id INTEGER PRIMARY KEY, texte TEXT)")
+        connexion.execute("INSERT INTO temoin (texte) VALUES ('gabarit')")
+        connexion.commit()
+    finally:
+        connexion.close()
+    return chemin
+
+
 class TestTheSqliteTemplateIsSafeToDependOn:
     """Le gabarit est devenu une infrastructure : six cents tests en dépendent.
 
@@ -388,8 +409,11 @@ class TestTheSqliteTemplateIsSafeToDependOn:
         """
         from .conftest import schema_fingerprint, template_is_current
 
-        template = tmp_path / "template.sqlite3"
-        template.write_bytes(b"")
+        # Un fichier vide servait ici de témoin. Il ne peut plus : le contrôle
+        # d'intégrité le refuserait POUR UNE AUTRE RAISON que l'estampille, et
+        # le test serait vert sans plus rien prouver de la décision. Le témoin
+        # est donc une vraie base lisible, dont seule l'estampille varie.
+        template = une_base_sqlite_lisible(tmp_path / "template.sqlite3")
 
         assert not template_is_current(template), (
             "sans empreinte, un gabarit ne doit jamais être réutilisé"
@@ -433,20 +457,78 @@ class TestTheSqliteTemplateIsSafeToDependOn:
         ]
         assert present == [], present
 
-    def test_the_template_lives_in_the_session_directory_only(
-        self, sqlite_template: Path | None
+    def test_the_template_directory_does_not_survive_the_session(
+        self, sqlite_template: Path | None, tmp_path_factory: pytest.TempPathFactory
     ) -> None:
-        """Rien ne survit d'une exécution à l'autre, et rien ne le doit.
+        """La PROPRIÉTÉ, et non l'orthographe du chemin.
 
-        Un gabarit conservé entre deux exécutions de CI serait un cache : il
-        faudrait alors l'invalider, et une invalidation ratée donnerait des
-        verts qui ne prouvent rien. Le gabarit vit dans le répertoire temporaire
-        de la session pytest, qui n'existe pas avant elle.
+        La première version affirmait que le chemin contient « pytest- ». Elle
+        vérifiait un nom, pas un fait, et rendait un faux rouge dès qu'une CI
+        passait `--basetemp` — une pratique légitime. Ce qui compte est ailleurs :
+        le gabarit vit dans le répertoire de base que pytest s'alloue POUR CETTE
+        SESSION, et pytest efface ce répertoire à chaque démarrage. Il ne peut
+        donc rien y avoir à invalider entre deux exécutions.
+
+        Le contrôle porte donc sur l'appartenance réelle au répertoire de
+        session, quel que soit son nom.
         """
         if sqlite_template is None:
             pytest.skip("pas de gabarit quand la suite tourne sur PostgreSQL")
+        base = tmp_path_factory.getbasetemp()
         assert sqlite_template.is_absolute()
-        parts = set(sqlite_template.parts)
-        assert parts & {"pytest-of-root", "pytest-current"} or "pytest-" in str(sqlite_template), (
-            f"le gabarit doit vivre dans le répertoire de session pytest : {sqlite_template}"
+        assert base in sqlite_template.parents, (
+            f"le gabarit doit vivre sous le répertoire de session pytest {base}, "
+            f"il est en {sqlite_template}"
         )
+
+    def test_a_truncated_template_is_refused(self, tmp_path: Path) -> None:
+        """Une estampille valide ne dit rien de l'intégrité du fichier.
+
+        Défaut réel, mesuré avant correction : un gabarit ramené de 417 792 à
+        8 192 octets, estampille intacte, était recopié sans que rien ne le
+        voie, et le test suivant tombait sur « database disk image is
+        malformed » — très loin de sa cause.
+        """
+        from .conftest import schema_fingerprint, template_is_current, template_is_intact
+
+        gabarit = tmp_path / "template.sqlite3"
+        gabarit.write_bytes(b"SQLite format 3\x00" + b"\x00" * 9000)
+        gabarit.with_suffix(".fingerprint").write_text(schema_fingerprint())
+        assert not template_is_intact(gabarit), "un tronçon n'est pas une base lisible"
+        assert not template_is_current(gabarit), "un gabarit tronqué ne doit jamais être recopié"
+
+    def test_a_sidecar_appearing_after_construction_is_refused(
+        self, sqlite_template: Path | None
+    ) -> None:
+        """Le contrôle des annexes ne tournait qu'à la construction.
+
+        Un `-wal` créé APRÈS n'était pas vu, et la copie partait quand même
+        alors que son contenu ne serait pas copié. Il est maintenant relu avant
+        chaque copie.
+        """
+        from .conftest import sidecars_beside, template_is_current
+
+        if sqlite_template is None:
+            pytest.skip("pas de gabarit quand la suite tourne sur PostgreSQL")
+        assert template_is_current(sqlite_template), "le gabarit réel doit être utilisable"
+        intrus = sqlite_template.with_name(sqlite_template.name + "-wal")
+        intrus.write_bytes(b"")
+        try:
+            assert sidecars_beside(sqlite_template) == ["-wal"]
+            assert not template_is_current(sqlite_template), (
+                "un `-wal` apparu après la construction doit interdire la copie"
+            )
+        finally:
+            intrus.unlink(missing_ok=True)
+        assert template_is_current(sqlite_template), "et le gabarit redevient utilisable"
+
+    def test_a_partial_or_absent_fingerprint_is_refused(self, tmp_path: Path) -> None:
+        """Absente, tronquée ou vide : on ne recopie pas ce qu'on ne peut pas nommer."""
+        from .conftest import schema_fingerprint, template_is_current
+
+        gabarit = tmp_path / "template.sqlite3"
+        gabarit.write_bytes(b"SQLite format 3\x00" + b"\x00" * 9000)
+        assert not template_is_current(gabarit), "sans estampille : refusé"
+        for partielle in ("", "   ", schema_fingerprint()[:32]):
+            gabarit.with_suffix(".fingerprint").write_text(partielle)
+            assert not template_is_current(gabarit), f"estampille partielle {partielle!r} : refusée"
