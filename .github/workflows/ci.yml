@@ -145,7 +145,7 @@ jobs:
           set -o pipefail
           pytest tests/test_version_concurrency.py tests/test_write_contention.py \
             tests/test_audit_concurrency.py tests/test_import_idempotence.py \
-            tests/test_migration_roundtrip.py \
+            tests/test_migration_roundtrip.py tests/test_tenant_concurrency.py \
             -q --no-header | tee /tmp/concurrence.txt
           # `grep '[0-9]+ passed'` acceptait « 2 failed, 3 passed » : le résumé
           # d'un échec partiel contient le mot. On exige donc un résumé SANS

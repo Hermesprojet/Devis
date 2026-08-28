@@ -41,6 +41,12 @@ PARTIALLY_SKIPPED: dict[str, str] = {
     # Ses contrôles de propriété — noms possédés, cible destructive disparue —
     # tournent partout ; seule la classe qui touche un vrai serveur s'ignore.
     "test_migration_roundtrip.py": "seule la classe contre un serveur réel s'ignore",
+    # Cinq scénarios multi-tenant tournent partout — lot mixte, import hors
+    # services, session à deux organisations, les deux moitiés d'un
+    # déplacement. Seules les trois classes qui font réellement se croiser deux
+    # transactions s'ignorent : SQLite sérialise les écritures et les y faire
+    # tourner donnerait du vert sans rien démontrer.
+    "test_tenant_concurrency.py": "seules les trois classes de course s'ignorent",
 }
 
 
@@ -113,4 +119,18 @@ class TestTheInventoryIsExact:
         ]
         assert forgotten == [], (
             f"ces modules orchestrent des fils sans être déclarés PostgreSQL-only : {forgotten}"
+        )
+
+    @pytest.mark.parametrize("name", sorted(PARTIALLY_SKIPPED))
+    def test_a_partially_skipped_module_gates_on_the_verified_engine(self, name: str) -> None:
+        """La garde partielle doit dépendre du moteur réellement vérifié.
+
+        Un module à l'inventaire des ignorés partiels sans aucune garde nommant
+        `running_on_postgresql` ne s'ignore pas du tout : l'entrée mentirait, et
+        des scénarios que SQLite ne peut pas démontrer passeraient pour prouvés.
+        """
+        source = (TESTS / name).read_text(encoding="utf-8")
+        assert "running_on_postgresql" in source, (
+            f"{name} est déclaré partiellement ignoré mais ne porte aucune garde "
+            "conditionnée au moteur réellement vérifié"
         )
