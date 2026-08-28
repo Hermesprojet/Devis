@@ -95,12 +95,30 @@ prix à 1 € ».*
 | --- | --- |
 | Journal append-only, numéroté par organisation, chaîné par SHA-256 | En place |
 | `GET /audit/verify` rejoue la chaîne et localise la première incohérence | En place |
-| Deux tests reproduisent une modification et une suppression, et vérifient la détection | En place |
+| Modification d'un maillon, et suppression au début ou au milieu : détectées | En place |
+| **Suppression des DERNIERS maillons : NON détectée** | Limite, épinglée par un test |
 | Stockage en écriture unique ou export signé hors base | Prévu (phase 5) |
 
 **Formulation honnête :** c'est *tamper-evident*, pas *tamper-proof*. Un
 administrateur de base peut recalculer toute la chaîne. La contrainte
 `uq_audit_org_sequence` empêche seulement l'insertion silencieuse d'un maillon.
+
+**Et la troncature en fin n'est pas détectée du tout.** Ce tableau écrivait
+auparavant « une modification et une suppression, et vérifient la détection ».
+C'était trop large : le test de suppression retire le **premier** événement, ce
+qui crée un trou de séquence. Supprimer les **derniers** laisse une chaîne
+parfaitement cohérente, numérotée de 1 à n. Mesuré sur le journal réel — quatre
+événements, les deux derniers supprimés : `{'valid': True, 'checked': 2}`.
+
+Seuls `checked` et `head_hash` changent, et aucun composant ne conserve leur
+valeur d'une vérification à l'autre. Rien de bon marché ne ferme ce trou à
+l'intérieur de la base : sceller le compte demanderait une ligne qui connaisse
+le total, et cette ligne serait aussi supprimable que les autres. La fermeture
+réelle est l'ancrage hors base déjà porté en phase 5.
+
+La limite est épinglée par `test_audit_truncation_limit.py`, qui affirme le
+comportement actuel. S'il passe au rouge parce que la détection s'est améliorée,
+c'est une bonne nouvelle et cette section doit être réécrite.
 
 ### 8. Exfiltration par un connecteur / envoi au mauvais destinataire
 
