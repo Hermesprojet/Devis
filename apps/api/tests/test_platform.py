@@ -336,6 +336,20 @@ class TestTheSqliteTemplateDoesNotWeakenIsolation:
         )
 
 
+def _organisations_apres_ecriture(nom: str) -> list[str]:
+    """Écrit une organisation témoin et renvoie les noms présents ensuite."""
+    from metreo_api.db import get_session_factory
+    from metreo_api.models import Organization
+
+    session = get_session_factory()()
+    try:
+        session.add(Organization(name=nom))
+        session.commit()
+        return sorted(organisation.name for organisation in session.query(Organization).all())
+    finally:
+        session.close()
+
+
 def une_base_sqlite_lisible(chemin: Path) -> Path:
     """Un fichier SQLite authentique, refermé proprement, sans annexe.
 
@@ -497,6 +511,71 @@ class TestTheSqliteTemplateIsSafeToDependOn:
         assert not template_is_intact(gabarit), "un tronçon n'est pas une base lisible"
         assert not template_is_current(gabarit), "un gabarit tronqué ne doit jamais être recopié"
 
+    def test_a_template_that_opens_but_is_corrupt_is_refused(self, tmp_path: Path) -> None:
+        """Le verdict d'`integrity_check`, et pas seulement le fait qu'il réponde.
+
+        Trouvé par falsification : débrancher la SEULE lecture du verdict —
+        `return bool(verdict) and verdict[0] == "ok"` remplacé par `return
+        True` — laissait la suite entièrement verte. Le gabarit tronqué du test
+        voisin est refusé plus tôt, sur l'exception que SQLite lève à
+        l'ouverture ; aucun test n'atteignait la ligne qui lit le verdict.
+
+        Une base peut pourtant s'ouvrir sans erreur et être fausse : un octet
+        modifié dans une page de données donne « row N missing from index ».
+        Recopier ce gabarit-là produirait des tests qui échouent sur des
+        lignes absentes, très loin de leur cause.
+        """
+        import sqlite3
+
+        from .conftest import schema_fingerprint, template_is_current, template_is_intact
+
+        gabarit = tmp_path / "template.sqlite3"
+        connexion = sqlite3.connect(gabarit)
+        try:
+            connexion.execute("PRAGMA journal_mode=DELETE")
+            connexion.execute("CREATE TABLE temoin (id INTEGER PRIMARY KEY, texte TEXT)")
+            connexion.executemany(
+                "INSERT INTO temoin (texte) VALUES (?)",
+                [(f"ligne {index}" * 20,) for index in range(400)],
+            )
+            connexion.execute("CREATE INDEX ix_temoin_texte ON temoin (texte)")
+            connexion.commit()
+        finally:
+            connexion.close()
+
+        def verdict(chemin: Path) -> str | None:
+            """« ok », le motif du désaccord, ou None si la base ne s'ouvre pas."""
+            lecture = sqlite3.connect(f"file:{chemin}?mode=ro", uri=True)
+            try:
+                return str(lecture.execute("PRAGMA integrity_check").fetchone()[0])
+            except sqlite3.DatabaseError:
+                return None
+            finally:
+                lecture.close()
+
+        assert verdict(gabarit) == "ok", "la base témoin doit partir saine"
+
+        # La plupart des corruptions font lever SQLite à l'ouverture — ce n'est
+        # pas le cas visé ici. On cherche celle qui laisse la base lisible et
+        # le verdict négatif ; l'octet exact dépend de la mise en page, donc on
+        # le cherche au lieu de le supposer.
+        intact = gabarit.read_bytes()
+        atteint = False
+        for page in range(2, len(intact) // 4096):
+            gabarit.write_bytes(intact)
+            with gabarit.open("r+b") as handle:
+                handle.seek(4096 * page + 2000)
+                handle.write(b"\x00")
+            constat = verdict(gabarit)
+            if constat is not None and constat != "ok":
+                atteint = True
+                break
+        assert atteint, "aucune corruption trouvée qui laisse la base ouvrable"
+
+        gabarit.with_suffix(".fingerprint").write_text(schema_fingerprint())
+        assert not template_is_intact(gabarit), f"verdict « {constat} » : ce n'est pas « ok »"
+        assert not template_is_current(gabarit), "un gabarit corrompu ne doit jamais être recopié"
+
     def test_a_sidecar_appearing_after_construction_is_refused(
         self, sqlite_template: Path | None
     ) -> None:
@@ -521,6 +600,21 @@ class TestTheSqliteTemplateIsSafeToDependOn:
         finally:
             intrus.unlink(missing_ok=True)
         assert template_is_current(sqlite_template), "et le gabarit redevient utilisable"
+
+    def test_one_test_never_sees_what_another_wrote(self, migrated: None) -> None:
+        """Recopier un gabarit ne doit pas rendre les bases communes.
+
+        Le gabarit est construit une fois par session. Si la copie manquait —
+        ou si un test se branchait sur le gabarit lui-même — les écritures d'un
+        test apparaîtraient dans le suivant, et l'ordre des tests deviendrait
+        significatif. Ce test et le suivant écrivent chacun leur témoin et
+        exigent d'être seuls ; ils échouent ensemble si l'isolation se perd.
+        """
+        assert _organisations_apres_ecriture("temoin-premier") == ["temoin-premier"]
+
+    def test_and_neither_does_the_next_one(self, migrated: None) -> None:
+        """La moitié qui donne son sens à la précédente."""
+        assert _organisations_apres_ecriture("temoin-second") == ["temoin-second"]
 
     def test_a_partial_or_absent_fingerprint_is_refused(self, tmp_path: Path) -> None:
         """Absente, tronquée ou vide : on ne recopie pas ce qu'on ne peut pas nommer."""
