@@ -54,6 +54,79 @@ NOT_EXPRESSIBLE_IN_SQLITE: frozenset[str] = frozenset(
 )
 
 
+#: **La dérive SQLite, nommée relation par relation, avec l'action exacte.**
+#:
+#: Ce n'est pas une règle générique. « Ignorer toutes les contraintes `_tenant` »
+#: laisserait passer une neuvième relation, une action changée ou une colonne
+#: `organization_id` glissée dans un `SET NULL` — c'est-à-dire précisément ce
+#: contre quoi la révision `b4f2c7d81a05` a été écrite. Chaque nom est ici, avec
+#: la clause que le modèle doit déclarer et que la base SQLite ne portera pas.
+#:
+#: **Pourquoi SQLite ne peut pas les porter.** Son analyseur refuse
+#: `ON DELETE SET NULL (colonne)` — erreur de syntaxe, mesurée — et la forme nue
+#: y viderait aussi `organization_id`, NOT NULL : `NOT NULL constraint failed`.
+#: Aucune déclaration unique ne convient aux deux moteurs, et la révision est
+#: donc un no-op délibéré sous SQLite. Cela n'y change AUCUN comportement :
+#: mesuré, supprimer un livre de prix référencé emporte bien ses versions, SQLite
+#: appliquant les actions avant de vérifier ce qui reste.
+#:
+#: Un test confronte cette table au tableau `RELATIONS` de la révision : elle ne
+#: peut donc ni s'allonger, ni se raccourcir, ni mentir sur une action.
+SQLITE_DRIFT: dict[str, str] = {
+    "fk_bills_of_quantities_project_tenant": "CASCADE",
+    "fk_price_book_versions_price_book_tenant": "CASCADE",
+    "fk_price_items_price_book_version_tenant": "CASCADE",
+    "fk_boq_items_boq_tenant": "CASCADE",
+    "fk_estimates_boq_tenant": "CASCADE",
+    "fk_boq_items_price_item_tenant": "SET NULL (price_item_id)",
+    "fk_boq_items_composite_price_tenant": "SET NULL (composite_price_id)",
+    "fk_composite_components_price_item_tenant": "SET NULL (price_item_id)",
+}
+
+#: Chaque relation dérivée produit un couple `remove_fk` / `add_fk`, jamais un
+#: seul des deux. Le nombre est donc exact, et il est vérifié comme tel.
+SQLITE_DRIFT_OPERATIONS = 2 * len(SQLITE_DRIFT)
+
+
+def unexpected_sqlite_drift(differences: list[object]) -> list[str]:
+    """Ce que `compare_metadata` rend sous SQLite et qu'on ne s'explique pas.
+
+    La liste vide est la seule réussite. Tout le reste est décrit en clair :
+    une opération qui n'est pas un couple de clé étrangère, une contrainte
+    absente de la table, une action différente de celle attendue, une relation
+    attendue qui n'apparaît pas, ou un décompte qui ne tombe pas juste.
+
+    Partagée plutôt que recopiée : le contrôle de dérive de la Phase 2A tourne
+    le même `compare_metadata` et doit borner le même écart. Deux listes
+    divergeraient dès la première correction.
+    """
+    anomalies: list[str] = []
+    vues: dict[str, set[str]] = {nom: set() for nom in SQLITE_DRIFT}
+
+    for operation in differences:
+        if not (isinstance(operation, tuple) and operation[0] in {"remove_fk", "add_fk"}):
+            anomalies.append(f"opération étrangère à la dérive connue : {operation!r}")
+            continue
+        verbe, contrainte = operation[0], operation[1]
+        nom = str(getattr(contrainte, "name", "") or "")
+        if nom not in SQLITE_DRIFT:
+            anomalies.append(f"{verbe} sur « {nom} », qui n'est pas dans la table de dérive")
+            continue
+        attendue = SQLITE_DRIFT[nom] if verbe == "add_fk" else None
+        reelle = getattr(contrainte, "ondelete", None)
+        if reelle != attendue:
+            anomalies.append(f"{verbe} {nom} : action {reelle!r}, attendue {attendue!r}")
+        vues[nom].add(verbe)
+
+    for nom, verbes in sorted(vues.items()):
+        if verbes != {"remove_fk", "add_fk"}:
+            anomalies.append(f"{nom} : {sorted(verbes) or 'aucune opération'}, couple attendu")
+
+    if len(differences) != SQLITE_DRIFT_OPERATIONS:
+        anomalies.append(f"{len(differences)} opérations, {SQLITE_DRIFT_OPERATIONS} attendues")
+    return anomalies
+
+
 def _relations_of(path: Path) -> list[tuple[object, ...]]:
     """Le tableau `RELATIONS` d'une révision, lu sans l'exécuter.
 
@@ -75,6 +148,24 @@ def _relations_of(path: Path) -> list[tuple[object, ...]]:
         if cible == "RELATIONS" and node.value is not None:
             return [tuple(row) for row in ast.literal_eval(node.value)]
     return []
+
+
+def _actions_skipped_under_sqlite() -> dict[str, tuple[str, str | None]]:
+    """Les relations d'une révision qui ne s'applique PAS sous SQLite.
+
+    Une révision qui ne pose que `CASCADE` s'exécute sur les deux moteurs et ne
+    dérive donc pas — c'est le cas de `c9d3a5e71b62`. Seules celles qui portent
+    un `SET NULL` sautent SQLite en entier, et ce sont leurs relations, toutes,
+    qui dérivent.
+    """
+    sautees: dict[str, tuple[str, str | None]] = {}
+    for chemin in revisions_posing_actions():
+        relations = [r for r in _relations_of(chemin) if len(r) == 5]
+        if not any(r[4] == "SET NULL" for r in relations):
+            continue
+        for _child, colonne, _parent, nom, action in relations:
+            sautees[str(nom)] = (str(colonne), None if action is None else str(action))
+    return sautees
 
 
 def revisions_posing_actions() -> list[Path]:
@@ -281,9 +372,8 @@ class TestTheSqliteDriftIsNamedAndBounded:
         running_on_postgresql(),
         reason="la dérive mesurée ici est propre à SQLite ; sur PostgreSQL elle doit être nulle",
     )
-    def test_under_sqlite_the_drift_is_exactly_the_composite_tenant_keys(
-        self, migrated: None
-    ) -> None:
+    def test_under_sqlite_the_drift_is_exactly_the_named_eight(self, migrated: None) -> None:
+        """Huit relations, seize opérations, une action exacte pour chacune."""
         from alembic.autogenerate import compare_metadata
         from alembic.migration import MigrationContext
 
@@ -295,31 +385,35 @@ class TestTheSqliteDriftIsNamedAndBounded:
                 MigrationContext.configure(connection, opts={"compare_type": True}),
                 Base.metadata,
             )
+        anomalies = unexpected_sqlite_drift(list(differences))
+        assert anomalies == [], "\n".join(anomalies)
 
-        hors_sujet = [
-            operation
-            for operation in differences
-            if not (
-                isinstance(operation, tuple)
-                and operation[0] in {"remove_fk", "add_fk"}
-                and getattr(operation[1], "name", "") in migration_actions()
+    def test_the_drift_table_matches_the_revision_it_describes(self) -> None:
+        """La table ne peut ni s'allonger ni mentir : la révision l'arbitre.
+
+        Sans ce contrôle, élargir l'exception suffirait à faire taire une vraie
+        dérive — il suffirait d'ajouter un nom. La table doit valoir exactement
+        les relations que la révision non applicable sous SQLite pose avec une
+        action, rendues sous la forme que le modèle déclare.
+        """
+        posees = {
+            nom: expected_clause(colonne, action)
+            for nom, (colonne, action) in _actions_skipped_under_sqlite().items()
+            if action is not None
+        }
+        assert posees == SQLITE_DRIFT, (
+            "la table de dérive SQLite et la révision divergent : "
+            f"en trop {sorted(set(SQLITE_DRIFT) - set(posees))}, "
+            f"manquantes {sorted(set(posees) - set(SQLITE_DRIFT))}"
+        )
+
+    def test_no_excepted_clause_would_empty_the_organisation_column(self) -> None:
+        """Une exception ne doit jamais couvrir une clause qui viderait le tenant."""
+        for nom, clause in SQLITE_DRIFT.items():
+            assert "organization_id" not in clause, (
+                f"{nom} : la table de dérive accepte « {clause} », qui viderait "
+                "`organization_id`, NOT NULL"
             )
-        ]
-        assert hors_sujet == [], (
-            f"la dérive SQLite doit se limiter aux clés composites tenant ; en trop : {hors_sujet}"
-        )
-
-        concernees = {
-            operation[1].name
-            for operation in differences
-            if isinstance(operation, tuple) and operation[0] == "add_fk"
-        }
-        attendues = {
-            name for name, (_column, action) in migration_actions().items() if action is not None
-        }
-        assert concernees <= attendues, (
-            f"des clés sans action posée dérivent quand même : {sorted(concernees - attendues)}"
-        )
 
     @pytest.mark.skipif(
         not running_on_postgresql(),

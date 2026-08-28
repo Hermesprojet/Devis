@@ -170,10 +170,31 @@ reste. SQLite applique les actions référentielles avant de vérifier ce qui
 reste ; une composite sans action n'y bloque donc pas la cascade de la clé
 simple qu'elle double.
 
-Ce qui est tenu, c'est la **borne** : sous SQLite, la dérive doit valoir
-exactement les clés composites tenant et rien d'autre. Une colonne ajoutée aux
-modèles sans révision, ou un index rendu unique, met le contrôle au rouge —
-falsifié dans les deux cas. Sous PostgreSQL, le même contrôle exige zéro écart.
+Ce qui est tenu, c'est la **borne**, et elle est nominative — pas une règle
+générique du type « ignorer les contraintes `_tenant` », qui laisserait passer
+une neuvième relation ou une action changée. Huit noms, seize opérations, une
+clause exacte pour chacun :
+
+| Contrainte | Clause déclarée par le modèle, absente sous SQLite |
+| --- | --- |
+| `fk_bills_of_quantities_project_tenant` | `CASCADE` |
+| `fk_price_book_versions_price_book_tenant` | `CASCADE` |
+| `fk_price_items_price_book_version_tenant` | `CASCADE` |
+| `fk_boq_items_boq_tenant` | `CASCADE` |
+| `fk_estimates_boq_tenant` | `CASCADE` |
+| `fk_boq_items_price_item_tenant` | `SET NULL (price_item_id)` |
+| `fk_boq_items_composite_price_tenant` | `SET NULL (composite_price_id)` |
+| `fk_composite_components_price_item_tenant` | `SET NULL (price_item_id)` |
+
+La révision `c9d3a5e71b62` n'y figure pas : elle ne pose que des `CASCADE`, que
+SQLite sait porter, et sa migration les pose donc sur les deux moteurs.
+
+Cette table ne peut pas s'allonger en silence : un contrôle la confronte au
+tableau `RELATIONS` de la révision, et un autre refuse toute clause contenant
+`organization_id`. Six falsifications la tiennent — contrainte retirée,
+contrainte ajoutée, action modifiée, `organization_id` glissé dans un
+`SET NULL`, différence non tenant, liste élargie d'un seul nom : rouge à chaque
+fois. Sous PostgreSQL, le même contrôle exige zéro écart.
 
 `test_migration_and_models_have_no_schema_drift`, porté par la Phase 2A, compare
 sans cette borne : il tombera au rouge sous SQLite à l'intégration tant qu'il
