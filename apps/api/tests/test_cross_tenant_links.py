@@ -175,11 +175,20 @@ class TestTheDebtIsNamedAndBounded:
     """
 
     #: Tables de la Phase 1 dont au moins une relation est tenue par la base.
+    #:
+    #: Seconde tranche : `CompositePriceRow`, `EstimateVersion` et `ImportBatch`
+    #: rejoignent la liste. Les seize relations couvertes le sont désormais
+    #: toutes ; les sept qui restent hors de cette liste pointent `users`, et
+    #: font l'objet d'une note de décision séparée — elles ne recevront pas de
+    #: clé composite vers `users`, qui n'a pas d'organisation.
     COVERED: ClassVar[set[str]] = {
         "BillOfQuantities",
         "BoqItem",
         "CompositeComponentRow",
+        "CompositePriceRow",
         "Estimate",
+        "EstimateVersion",
+        "ImportBatch",
         "PriceBookVersion",
         "PriceItem",
     }
