@@ -204,6 +204,15 @@ web-dev: ## Le front en rechargement, branché sur l'API locale
 
 # -- la porte -------------------------------------------------------------
 
+.PHONY: schema-drift
+schema-drift: ## Le schéma migré correspond-il aux modèles ? (base créée par ce run)
+	@if [ -z "$(METREO_ADMIN_DATABASE_URL)" ]; then \
+		echo "IGNORÉ : METREO_ADMIN_DATABASE_URL n'est pas défini." >&2; \
+		echo "  make schema-drift METREO_ADMIN_DATABASE_URL=postgresql+psycopg://metreo:metreo@localhost:5432/postgres" >&2; \
+		exit 1; \
+	fi
+	$(PY) scripts/schema_drift_gate.py --admin-url "$(METREO_ADMIN_DATABASE_URL)"
+
 .PHONY: verify
 verify: ## Tout vérifier, dans l'ordre de la CI, sans rien masquer
 	@$(MAKE) --no-print-directory lint
@@ -241,12 +250,22 @@ release-gate: ## La porte stricte : rien d'ignoré, PostgreSQL jetable obligatoi
 	@# aucun `downgrade base` : l'aller-retour a sa propre base.
 	@$(PY) scripts/check_disposable_database.py \
 		"$(METREO_TEST_DATABASE_URL)" --label "make release-gate"
-	@$(MAKE) --no-print-directory verify METREO_TEST_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+	@# METREO_REQUIRE_WEB_INSTALL : cette porte lance Playwright, elle ne peut
+	@# donc pas tourner sans installation JavaScript. Le contrôle « le paquet
+	@# next réellement posé est conforme » n'a alors plus le droit de s'ignorer,
+	@# et le décompte de la suite cesse de dépendre de l'état de la machine.
+	@$(MAKE) --no-print-directory verify METREO_TEST_DATABASE_URL="$(METREO_TEST_DATABASE_URL)" \
+		METREO_REQUIRE_WEB_INSTALL=1
 	@# L'aller-retour des migrations ne touche PAS la base fournie : le script
 	@# crée la sienne sur le même serveur, et ne détruit que celle-là. Un nom
 	@# rassurant n'est pas une preuve qu'une base est jetable — « metreo_gate »
 	@# peut parfaitement désigner une base qui compte.
 	@$(MAKE) --no-print-directory migration-roundtrip-test \
+		METREO_ADMIN_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+	@# Même principe : la porte de dérive crée SA base, la migre, refuse deux
+	@# têtes et refuse toute opération proposée par `alembic check`, puis la
+	@# détruit. Elle ne touche pas la base fournie.
+	@$(MAKE) --no-print-directory schema-drift \
 		METREO_ADMIN_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
 	@# Le seed écrit dans la base fournie : il faut donc qu'elle porte le
 	@# schéma. L'aller-retour ne le pose plus — il travaille dans la sienne —

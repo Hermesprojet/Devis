@@ -171,7 +171,11 @@ def create_item(
     data = payload.model_dump()
     data["unit_code"] = _canonical_unit(data["unit_code"])
     if data.get("sort_index") is None:
-        existing = session.scalars(select(BoqItem.sort_index).where(BoqItem.boq_id == boq_id)).all()
+        existing = session.scalars(
+            select(BoqItem.sort_index).where(
+                BoqItem.organization_id == context.organization_id, BoqItem.boq_id == boq_id
+            )
+        ).all()
         data["sort_index"] = (max(existing) + 10) if existing else 0
 
     item = BoqItem(organization_id=context.organization_id, boq_id=boq_id, **data)
@@ -215,7 +219,11 @@ def bulk_create_items(
 ) -> list[BoqItem]:
     get_owned(session, BillOfQuantities, context.organization_id, boq_id, label="Bordereau")
     created: list[BoqItem] = []
-    existing = session.scalars(select(BoqItem.sort_index).where(BoqItem.boq_id == boq_id)).all()
+    existing = session.scalars(
+        select(BoqItem.sort_index).where(
+            BoqItem.organization_id == context.organization_id, BoqItem.boq_id == boq_id
+        )
+    ).all()
     next_index = (max(existing) + 10) if existing else 0
     for offset, entry in enumerate(payload.items):
         _refuse_two_price_sources(entry.price_item_id, entry.composite_price_id)

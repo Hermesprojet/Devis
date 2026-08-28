@@ -25,20 +25,25 @@ décrète.
 | Aucune anomalie bloquante connue | ✅ à ce commit |
 | `release-gate` verte depuis un clone vide | ✅ voir « Ce qui fait foi » |
 
-### `DEPLOYABLE` — **non atteint**
+### `DEPLOYABLE` — atteint au commit `070afe7`
 
 | Critère | État |
 | --- | --- |
 | `FUNCTIONALLY_COMPLETE` | ✅ |
-| Aucune vulnérabilité bloquante connue dans les dépendances | ❌ **correctif Next.js 15.5.24 attendu** |
+| Aucune vulnérabilité bloquante connue dans les dépendances | ✅ **Next.js 15.5.24 installé**, les deux RCE critiques du 25 août 2026 couvertes |
 | Configuration de déploiement viable | ✅ images Docker non-root, points de santé |
 | Installation et construction reproductibles | ✅ verrou et manifestes confrontés aux versions posées |
+
+Ce statut porte sur ce qui se vérifie mécaniquement : rien de connu ne manque
+dans les dépendances, l'application se construit et se lance. Il ne dit **pas**
+que le produit doit partir en production — c'est `PRODUCTION_READY` qui le
+dirait, et il reste non atteint.
 
 ### `PRODUCTION_READY` — **non atteint**
 
 | Critère | État |
 | --- | --- |
-| `DEPLOYABLE` | ❌ |
+| `DEPLOYABLE` | ✅ |
 | Authentification réelle | ❌ mode développement uniquement |
 | Gestion des secrets | ❌ variables d'environnement seules |
 | Sauvegardes et restauration **testées** | ❌ aucune configurée |
@@ -46,7 +51,7 @@ décrète.
 | Politique d'incidents | ❌ |
 | Validation juridique des packs régionaux | ❌ tous en `draft` ou `planned` |
 
-Ce document n'atteste que le premier.
+Ce document atteste les deux premiers, pas le troisième.
 
 ## Ce qui fait foi
 
@@ -54,9 +59,9 @@ Ce document n'atteste que le premier.
 | --- | --- |
 | Règle | les contrôles requis doivent être verts sur le **dernier SHA de la PR** |
 | Tête de la PR | [#1](https://github.com/Hermesprojet/Devis/pull/1) — voir l'onglet Checks |
-| Dernier commit de **code** contrôlé | `6d05eb449ed520baacdfdf0b45f15f5a176537ae` |
-| CI indépendante de ce code | [run 32664182873](https://github.com/Hermesprojet/Devis/actions/runs/32664182873) — **10 jobs sur 10 verts** |
-| Dernier commit contrôlé depuis un clone propre | `eaf6090` — voir la distinction ci-dessous |
+| Dernier commit de **code** contrôlé | `070afe7efc4b18f72cdf209b37d73531ab637c7f` — montée de Next.js à 15.5.24 |
+| CI indépendante de ce code | [push 33012064509](https://github.com/Hermesprojet/Devis/actions/runs/33012064509) et [pull_request 33012069125](https://github.com/Hermesprojet/Devis/actions/runs/33012069125) — **10 jobs sur 10 verts, sur les deux déclencheurs** |
+| Dernier commit contrôlé depuis un clone propre | `070afe7` — `release-gate` complète, base de porte créée vide juste avant |
 | Procédure | `make install` puis les onze étapes ci-dessous, depuis un clone vide |
 | Branche | `claude/new-session-jdj11s` |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
@@ -109,9 +114,9 @@ Ce run Claude prouve le canal et les permissions Bash, **pas** la suite API.
 La preuve API reste le workflow CI normal ci-dessus, dont le checkout contient
 les huit skills et qui rend 480/25 sur SQLite puis 505/0 sur PostgreSQL.
 
-`DEPLOYABLE` reste **non atteint** : le correctif Next.js attendu doit être
-publié, installé et toute la porte de validation rejouée avant que ce statut
-puisse changer.
+`DEPLOYABLE` est **atteint** depuis `070afe7` : le correctif Next.js a été
+publié, installé, et toute la porte de validation rejouée sur la tête qui le
+porte — clone vide compris.
 
 ## Comment chaque chiffre de ce document est obtenu
 
@@ -326,12 +331,12 @@ L'état de départ était : une critique et deux hautes. Traitement :
 
 | Paquet | Avant | Après | Avis levés |
 | --- | --- | --- | --- |
-| `next` | 15.5.4 | **15.5.23** | tous les avis propres à Next, dont la RCE critique du protocole flight |
+| `next` | 15.5.4 | **15.5.24** | tous les avis propres à Next : la RCE critique du protocole flight, puis GHSA-2xp9-vwfh-vxw4 et GHSA-p293-qw3h-jr36 |
 | `postcss` | 8.4.31 | **8.5.26** | GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849, GHSA-fxqj-rqcc-2cmp, GHSA-qx2v-qp2m-jg93 |
 | `sharp` | 0.34.5 | **0.35.3** | GHSA-f88m-g3jw-g9cj (CVE-2026-33327, -33328, -35590, -35591 dans libvips) |
 
 Montée sur la branche de maintenance 15.5, pas de migration vers Next 16 :
-le tag npm `backport` pointe 15.5.23. React reste en 19.1.0, que cette
+le tag npm `backport` pointe 15.5.24. React reste en 19.1.0, que cette
 version accepte (`peer ^19.0.0`). `postcss` et `sharp` sont des dépendances
 transitives de Next, relevées par des `overrides` ciblés dans
 `apps/web/package.json`.
@@ -339,27 +344,38 @@ transitives de Next, relevées par des `overrides` ciblés dans
 Une migration majeure vers Next 16 reste une tranche à part, avec analyse des
 changements incompatibles — elle n'est plus imposée par la sécurité.
 
-**Déploiement bloqué jusqu'à 15.5.24.** Un correctif critique annoncé pour le
-26 août 2026 n'est pas encore publié : au jour de cette vérification, le tag
-npm `backport` pointe toujours 15.5.23 (`npm view next dist-tags`).
+**Blocage levé au commit `070afe7`.** `next@15.5.24` est publié : `npm view
+next dist-tags` donne `backport: 15.5.24`, et la version existe au registre.
+Deux avis critiques du 25 août 2026 sont couverts — GHSA-2xp9-vwfh-vxw4,
+exécution de code à distance non authentifiée dans l'API d'optimisation
+d'images sur fichiers AVIF, et GHSA-p293-qw3h-jr36, exécution de code à
+distance non authentifiée sur les serveurs hébergés sous Windows.
 
-Quand il paraîtra, dans cet ordre, sans raccourci :
+Les onze étapes de la procédure ont été exécutées dans l'ordre, sans raccourci :
 
-1. lire l'avis de sécurité officiel, et vérifier quelles versions et quelles
-   fonctionnalités sont réellement affectées ;
-2. vérifier l'existence de `next@15.5.24` au registre ;
-3. mettre à jour `package.json` et le lockfile par l'outil du projet ;
-4. `npm ci`, puis `npm audit --audit-level=high` sans exception générale ;
-5. vérifier le diff des dépendances transitives et des `overrides` ;
-6. typage, construction, parcours Playwright ;
-7. reconstruire les images Docker ;
-8. `release-gate` complète sur base éphémère ;
-9. clone vide sur le SHA exact qui porte la nouvelle dépendance ;
-10. CI push et pull request, SHA et liens publiés ;
-11. seulement alors, requalifier `DEPLOYABLE`.
+| | Étape | Résultat |
+| --- | --- | --- |
+| 1 | avis officiels lus, versions et fonctionnalités affectées vérifiées | deux avis critiques ; leurs surfaces sont confrontées au code sous « Exposition réellement mesurée » |
+| 2 | existence de `next@15.5.24` au registre | `version = '15.5.24'` |
+| 3 | manifeste et verrou régénérés par l'outil du projet | `npm --prefix apps/web install --package-lock-only --ignore-scripts --save-exact next@15.5.24` |
+| 4 | `make install`, puis `npm audit --audit-level=high` | `found 0 vulnerabilities`, code de sortie 0 |
+| 5 | diff des dépendances transitives et des `overrides` | seuls `next` et `@next/*` bougent ; aucun paquet ajouté ni retiré ; `overrides` inchangés |
+| 6 | typage, construction, parcours Playwright | `tsc --noEmit` propre, 9 routes construites, **15 passed** |
+| 7 | images Docker reconstruites | job « Images Docker » vert en CI |
+| 8 | `release-gate` complète | `tout est passé, rien n'a été ignoré.` |
+| 9 | clone vide sur le SHA portant la dépendance | `070afe7`, `next` posé en 15.5.24 sur disque |
+| 10 | CI push et pull request | [33012064509](https://github.com/Hermesprojet/Devis/actions/runs/33012064509) et [33012069125](https://github.com/Hermesprojet/Devis/actions/runs/33012069125), 10/10 |
+| 11 | requalification de `DEPLOYABLE` | faite, ci-dessus |
 
-Aucun passage à Next 16, à une version canary ou à une autre branche pour
-contourner l'attente.
+Aucun passage à Next 16, à une version canary ou à une autre branche.
+
+**Ce que l'audit ne prouve pas.** `npm audit` rendait déjà zéro **avant** la
+montée de version : ces deux avis n'étaient pas encore dans sa base. Un audit
+vert n'est donc pas ici la preuve du correctif — la preuve est la version
+réellement posée sur disque, `next 15.5.24`, relevée par `npm ls` et par la
+lecture directe du `package.json` installé. C'était la réserve que ce document
+posait avant la publication ; elle valait, et elle vaut encore pour l'avis
+suivant, quel qu'il soit.
 
 ### Exposition réellement mesurée
 
@@ -369,6 +385,20 @@ Vérifiée dans le code avant de trancher, et non supposée : App Router, mais
 middleware, ni `next/image` ; `output: 'standalone'`. `postcss` ne traite que
 la feuille de style du dépôt, à la construction. L'exposition était donc
 faible — pas nulle — et elle est close plutôt que documentée.
+
+Confrontée aux deux avis critiques du 25 août 2026, la même lecture donne :
+GHSA-2xp9-vwfh-vxw4 vise l'API d'optimisation d'images, que ce front n'utilise
+pas — `next/image` est absent et aucune route d'image n'est montée ;
+GHSA-p293-qw3h-jr36 vise les serveurs hébergés sous Windows, alors que les
+images Docker du dépôt sont Linux. L'exposition mesurée est donc nulle sur ces
+deux avis précis.
+
+Cela ne change rien à la décision : la version est montée quand même. Une
+exposition nulle se mesure sur la configuration d'aujourd'hui, pas sur celle
+de la phase 2 — qui accepte des fichiers, donc des images — et une lecture de
+code n'est pas un audit du correctif. Rester sur une version portant deux RCE
+critiques connues parce qu'on croit ne pas toucher la surface concernée est un
+pari, pas une analyse.
 
 ## Concurrence
 

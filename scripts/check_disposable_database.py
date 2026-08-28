@@ -40,6 +40,7 @@ from _url_safety import (
     REDIRECTING_PARAMETERS,
     UnknownDialect,
     effective_database,
+    postgresql_refusal,
     redirecting_parameters,
 )
 
@@ -69,7 +70,16 @@ def refusal(url: str) -> str | None:
     try:
         parsed = make_url(url)
     except (ArgumentError, ValueError) as exc:
-        return f"URL illisible ({exc})"
+        return f"URL illisible ({type(exc).__name__})"
+
+    # Le dialecte d'abord. Une URL SQLite passait ce contrôle — son nom de
+    # fichier « metreo_test.sqlite3 » porte le jeton « test » — et la porte
+    # annonçait alors « PostgreSQL réel » sur un fichier local. Ce qu'on
+    # valide doit être ce qui sera ouvert, et ici seul PostgreSQL prouve
+    # quelque chose.
+    wrong_engine = postgresql_refusal(url)
+    if wrong_engine is not None:
+        return wrong_engine
 
     # Un paramètre de requête qui déplace la connexion rend le contrôle
     # inopérant : ce qui est validé n'est plus ce qui est ouvert. Plutôt que de

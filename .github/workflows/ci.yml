@@ -81,13 +81,13 @@ jobs:
         env:
           POSTGRES_USER: metreo
           POSTGRES_PASSWORD: metreo
-          POSTGRES_DB: metreo
+          POSTGRES_DB: metreo_ci
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U metreo -d metreo"
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+      METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
       METREO_ENVIRONMENT: test
       METREO_JWT_SECRET: ci-secret-not-used-anywhere-else-0123456789
     steps:
@@ -106,7 +106,7 @@ jobs:
         # ne peut donc atteindre aucune base préexistante, ici comme ailleurs.
         run: |
           python scripts/migration_roundtrip.py \
-            --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo --seed
+            --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci --seed
       - name: Appliquer les migrations sur la base du job
         working-directory: apps/api
         # `upgrade head` seul, non destructif. Séparé de l'aller-retour, qui
@@ -114,12 +114,30 @@ jobs:
         # n'aurait plus de schéma — c'est exactement ce que cette CI a
         # attrapé quand l'aller-retour a été déplacé.
         env:
-          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
         run: PYTHONPATH=src alembic -c alembic.ini upgrade head
+      - name: Le schéma migré correspond aux modèles
+        # `alembic check` seul, contre une base arbitraire, ne prouve rien : il
+        # faut d'abord une base DONT CE RUN EST PROPRIÉTAIRE. Le script crée la
+        # sienne — le `CREATE DATABASE` est la preuve, PostgreSQL le refuse si le
+        # nom existe — la migre, refuse deux têtes, refuse la moindre opération
+        # proposée, puis la détruit dans un `finally`, succès ou échec.
+        #
+        # PostgreSQL obligatoire, et ce n'est pas un confort : trois clés
+        # composites portent `ON DELETE SET NULL (colonne)`, que SQLite refuse
+        # d'analyser et dont la forme nue échouerait sur `organization_id`,
+        # NOT NULL. Une porte qui accepterait SQLite laisserait passer
+        # exactement la dérive qu'elle ferme.
+        #
+        # Aucun identifiant ne sort : les URL ne paraissent que redigées.
+        run: >-
+          python scripts/schema_drift_gate.py
+          --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+
       - name: Jeu de démonstration
         working-directory: apps/api
         env:
-          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
         run: PYTHONPATH=src python -m metreo_api.seed
       - name: Suite complète sur PostgreSQL réel
         working-directory: apps/api
@@ -128,7 +146,7 @@ jobs:
         # job ne prouverait rien sur NUMERIC, les contraintes ou le DDL
         # transactionnel.
         env:
-          METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+          METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
         run: pytest -q
       - name: Les tests PostgreSQL-only ont réellement tourné
         working-directory: apps/api
@@ -144,12 +162,13 @@ jobs:
         # ne voyait donc jamais un échec de pytest, seulement un skip.
         shell: bash
         env:
-          METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo
+          METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
         run: |
           set -o pipefail
           pytest tests/test_version_concurrency.py tests/test_write_contention.py \
             tests/test_audit_concurrency.py tests/test_import_idempotence.py \
-            tests/test_migration_roundtrip.py \
+            tests/test_migration_roundtrip.py tests/test_tenant_concurrency.py \
+            tests/test_deletion_determinism.py \
             -q --no-header | tee /tmp/concurrence.txt
           # `grep '[0-9]+ passed'` acceptait « 2 failed, 3 passed » : le résumé
           # d'un échec partiel contient le mot. On exige donc un résumé SANS
