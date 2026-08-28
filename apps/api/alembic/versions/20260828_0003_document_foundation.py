@@ -1,5 +1,30 @@
 """Fondations relationnelles du pipeline documentaire.
 
+**Cette révision a changé d'identifiant, et c'est délibéré.** Elle portait
+`4d7c9a2e6f10` et descendait de `e2be18fcac1b`, ce qui créait une seconde tête
+Alembic à côté de la chaîne multi-tenant : `alembic upgrade head` refusait de
+choisir. Elle descend maintenant de `c9d3a5e71b62`, la dernière révision
+multi-tenant.
+
+Rechaîner en gardant l'ancien identifiant aurait été pire que la fourche.
+Mesuré : une base ayant appliqué `4d7c9a2e6f10` était alors considérée à jour,
+`upgrade head` rendait 0 révision appliquée et le code 0, et il lui manquait
+**seize clés composites tenant** sans qu'aucun message ne le dise. Avec le
+nouvel identifiant, la même base échoue bruyamment sur « Can't locate revision
+identified by '4d7c9a2e6f10' ».
+
+Conséquence assumée : **toute base ayant déjà appliqué l'ancienne révision doit
+être recréée.** Aucune n'existe en production — la Phase 2A n'a jamais été
+fusionnée — et les bases de développement se refont par `make migrate`.
+
+L'unicité `uq_project_org_id (organization_id, id)` que posait cette révision a
+été retirée : `uq_projects_id_organization (id, organization_id)`, posée par la
+chaîne multi-tenant, couvre exactement le même besoin. PostgreSQL rattache une
+clé étrangère à l'unicité par l'ENSEMBLE de ses colonnes, pas par leur ordre ;
+en garder deux ne changeait rien au refus inter-tenant et rendait seulement
+« laquelle est supprimable » dépendant de l'ordre des migrations — mesuré : la
+clé étrangère s'appuie sur celle créée en premier.
+
 Les six tables de cette migration ne traitent aucun fichier et n'appellent
 aucun fournisseur. Elles rendent persistables les références, citations,
 propositions et décisions humaines, avec isolation inter-tenant dans chaque
@@ -7,8 +32,8 @@ clé étrangère. Les deux invariants qui nécessitent l'état précédent d'une
 ligne sont portés par des triggers : une révision publiée est immuable et une
 décision humaine est append-only.
 
-Revision ID: 4d7c9a2e6f10
-Revises: e2be18fcac1b
+Revision ID: a7e5c04b93f8
+Revises: c9d3a5e71b62
 """
 
 from __future__ import annotations
@@ -20,8 +45,8 @@ from alembic import op
 
 import metreo_api.db
 
-revision: str = "4d7c9a2e6f10"
-down_revision: str | None = "e2be18fcac1b"
+revision: str = "a7e5c04b93f8"
+down_revision: str | None = "c9d3a5e71b62"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -144,9 +169,6 @@ def _drop_immutability_triggers() -> None:
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("projects", schema=None) as batch_op:
-        batch_op.create_unique_constraint("uq_project_org_id", ["organization_id", "id"])
-
     op.create_table(
         "documents",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -478,5 +500,3 @@ def downgrade() -> None:
     op.drop_index("ix_documents_org_project", table_name="documents")
     op.drop_index("ix_documents_organization_id", table_name="documents")
     op.drop_table("documents")
-    with op.batch_alter_table("projects", schema=None) as batch_op:
-        batch_op.drop_constraint("uq_project_org_id", type_="unique")
