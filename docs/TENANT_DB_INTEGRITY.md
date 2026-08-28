@@ -150,6 +150,36 @@ sont **nommées** dans `test_referential_action_drift.py`, et un contrôle véri
 que cette liste vaut exactement les relations `SET NULL` : une exception qui
 s'allonge sans que personne ne le voie cesse d'en être une.
 
+### La contrepartie sous SQLite, et pourquoi elle est acceptée
+
+Aligner les modèles a une conséquence qu'aucune passe PostgreSQL ne pouvait
+montrer, et qui n'a été trouvée qu'en **simulant l'intégration** : sous SQLite,
+`compare_metadata` rend seize opérations — huit couples `remove_fk` / `add_fk`,
+un par action posée. Le modèle déclare `CASCADE` ou `SET NULL (colonne)`, la
+base SQLite ne porte rien, puisque la révision y est un no-op.
+
+Cet écart n'est pas réductible par un choix d'écriture. Un modèle SQLAlchemy
+porte **une** déclaration ; PostgreSQL a besoin de la liste de colonnes, sans
+quoi il vide `organization_id`, NOT NULL ; SQLite ne sait pas l'analyser.
+Aucune déclaration unique ne satisfait les deux moteurs.
+
+Il est acceptable parce qu'il est **sans effet mesurable**. Vérifié de bout en
+bout sous SQLite, clé composite sans action : supprimer un livre de prix
+référencé emporte bien ses versions, la suppression est acceptée, zéro ligne
+reste. SQLite applique les actions référentielles avant de vérifier ce qui
+reste ; une composite sans action n'y bloque donc pas la cascade de la clé
+simple qu'elle double.
+
+Ce qui est tenu, c'est la **borne** : sous SQLite, la dérive doit valoir
+exactement les clés composites tenant et rien d'autre. Une colonne ajoutée aux
+modèles sans révision, ou un index rendu unique, met le contrôle au rouge —
+falsifié dans les deux cas. Sous PostgreSQL, le même contrôle exige zéro écart.
+
+`test_migration_and_models_have_no_schema_drift`, porté par la Phase 2A, compare
+sans cette borne : il tombera au rouge sous SQLite à l'intégration tant qu'il
+n'exclut pas les clés dont le nom se termine par `_tenant`. C'est une
+modification de la PR Phase 2A, pas de celle-ci.
+
 ### Ce qui est vérifié
 
 `alembic check` rend « No new upgrade operations detected », code 0 — après la

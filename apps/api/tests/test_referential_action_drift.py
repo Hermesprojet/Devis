@@ -29,7 +29,6 @@ un test vérifie que cette liste ne s'allonge pas en silence.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -38,7 +37,7 @@ from sqlalchemy import ForeignKeyConstraint, text
 from .conftest import running_on_postgresql
 
 API_ROOT = Path(__file__).resolve().parents[1]
-REVISION = API_ROOT / "alembic" / "versions" / "20260828_0001_deterministic_deletes.py"
+VERSIONS = API_ROOT / "alembic" / "versions"
 
 #: Les relations dont l'action n'est PAS représentable sous SQLite, et pourquoi.
 #:
@@ -55,23 +54,69 @@ NOT_EXPRESSIBLE_IN_SQLITE: frozenset[str] = frozenset(
 )
 
 
-def migration_actions() -> dict[str, tuple[str, str | None]]:
-    """Ce que la révision pose, lu dans son propre tableau `RELATIONS`.
+def _relations_of(path: Path) -> list[tuple[object, ...]]:
+    """Le tableau `RELATIONS` d'une révision, lu sans l'exécuter.
 
     Lu et non recopié : une table de vérité dupliquée dans un test cesse d'être
-    une vérification dès la première divergence.
+    une vérification dès la première divergence. `ast.literal_eval` la lit sans
+    importer la révision, donc sans dépendre de son état d'application.
     """
-    source = REVISION.read_text(encoding="utf-8")
-    block = source[source.index("RELATIONS:") : source.index("\ndef _clause")]
-    rows = re.findall(
-        r'\(\s*"([a-z_]+)",\s*"([a-z_]+)",\s*"([a-z_]+)",\s*"(fk_[a-z_]+)",\s*(None|"[A-Z ]+")\s*,?\s*\)',
-        block,
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        cible: str | None = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            cible = node.target.id
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            cible = node.targets[0].id
+        if cible == "RELATIONS" and node.value is not None:
+            return [tuple(row) for row in ast.literal_eval(node.value)]
+    return []
+
+
+def revisions_posing_actions() -> list[Path]:
+    """Toute révision qui déclare des actions, et pas une seule d'entre elles.
+
+    Trouvé en simulant l'intégration : ce module ne lisait qu'un fichier. Une
+    fois PR #8 fusionnée dans PR #9, les modèles portaient seize clés composites
+    et la table lue n'en décrivait que neuf — le contrôle tombait au rouge sur
+    une branche que personne n'avait touchée. La liste se découvre donc.
+    """
+    return sorted(
+        chemin
+        for chemin in VERSIONS.glob("*.py")
+        if any(len(relation) == 5 for relation in _relations_of(chemin))
     )
-    assert rows, "le tableau RELATIONS de la révision n'a pas pu être lu"
-    return {
-        name: (column, None if action == "None" else action.strip('"'))
-        for _child, column, _parent, name, action in rows
-    }
+
+
+def migration_actions() -> dict[str, tuple[str, str | None]]:
+    """Ce que les révisions posent, fusionné sur l'ensemble de la chaîne."""
+    posees: dict[str, tuple[str, str | None]] = {}
+    origines: dict[str, Path] = {}
+    for chemin in revisions_posing_actions():
+        for relation in _relations_of(chemin):
+            if len(relation) != 5:
+                continue
+            _child, column, _parent, name, action = (
+                str(x) if x is not None else None for x in relation
+            )
+            assert name is not None and column is not None
+            if name in posees and posees[name] != (column, action):
+                # Deux révisions qui posent des actions différentes sur la même
+                # contrainte demandent de savoir laquelle passe en dernier. Tant
+                # que le cas ne s'est pas présenté, on refuse de le deviner.
+                raise AssertionError(
+                    f"{name} reçoit deux actions différentes : "
+                    f"{origines[name].name} pose {posees[name]}, "
+                    f"{chemin.name} pose {(column, action)}"
+                )
+            posees[name] = (column, action)
+            origines[name] = chemin
+    assert posees, "aucun tableau RELATIONS porteur d'actions n'a pu être lu"
+    return posees
 
 
 def model_actions() -> dict[str, str | None]:
@@ -210,6 +255,92 @@ class TestTheCatalogueAgreesWithTheModels:
         assert list(fautives) == [], fautives
 
 
+class TestTheSqliteDriftIsNamedAndBounded:
+    """Sous SQLite, la révision ne pose rien — donc les modèles y dérivent.
+
+    Trouvé en simulant l'intégration, pas en lisant le code : PR #6 porte un
+    contrôle de dérive qui tourne `compare_metadata` sur le moteur de la suite.
+    Sous SQLite il rendait **seize opérations** dès que PR #8 arrivait — huit
+    couples `remove_fk` / `add_fk`, un par action posée. La porte de CI de PR #8
+    est PostgreSQL-only : elle ne pouvait pas le voir.
+
+    Cette dérive n'est pas un défaut à corriger mais une conséquence à nommer.
+    Un modèle SQLAlchemy porte UNE déclaration ; PostgreSQL a besoin de
+    `SET NULL (colonne)` — sans quoi il vide `organization_id`, NOT NULL — et
+    SQLite ne sait pas l'analyser. Aucune déclaration unique ne satisfait les
+    deux. Mesuré par ailleurs : l'absence d'action sur la composite ne change
+    RIEN au comportement de SQLite — supprimer un livre de prix emporte bien
+    ses versions — parce que SQLite applique les actions avant de vérifier ce
+    qui reste.
+
+    Ce qui se vérifie ici, c'est donc que la dérive reste EXACTEMENT celle-là :
+    les clés composites tenant, et rien d'autre.
+    """
+
+    @pytest.mark.skipif(
+        running_on_postgresql(),
+        reason="la dérive mesurée ici est propre à SQLite ; sur PostgreSQL elle doit être nulle",
+    )
+    def test_under_sqlite_the_drift_is_exactly_the_composite_tenant_keys(
+        self, migrated: None
+    ) -> None:
+        from alembic.autogenerate import compare_metadata
+        from alembic.migration import MigrationContext
+
+        from metreo_api.db import get_engine
+        from metreo_api.models import Base
+
+        with get_engine().connect() as connection:
+            differences = compare_metadata(
+                MigrationContext.configure(connection, opts={"compare_type": True}),
+                Base.metadata,
+            )
+
+        hors_sujet = [
+            operation
+            for operation in differences
+            if not (
+                isinstance(operation, tuple)
+                and operation[0] in {"remove_fk", "add_fk"}
+                and getattr(operation[1], "name", "") in migration_actions()
+            )
+        ]
+        assert hors_sujet == [], (
+            f"la dérive SQLite doit se limiter aux clés composites tenant ; en trop : {hors_sujet}"
+        )
+
+        concernees = {
+            operation[1].name
+            for operation in differences
+            if isinstance(operation, tuple) and operation[0] == "add_fk"
+        }
+        attendues = {
+            name for name, (_column, action) in migration_actions().items() if action is not None
+        }
+        assert concernees <= attendues, (
+            f"des clés sans action posée dérivent quand même : {sorted(concernees - attendues)}"
+        )
+
+    @pytest.mark.skipif(
+        not running_on_postgresql(),
+        reason="l'absence de dérive n'a de sens que là où la révision s'applique vraiment",
+    )
+    def test_under_postgresql_there_is_no_drift_at_all(self, migrated: None) -> None:
+        """Le pendant : là où la révision s'applique, l'écart doit être nul."""
+        from alembic.autogenerate import compare_metadata
+        from alembic.migration import MigrationContext
+
+        from metreo_api.db import get_engine
+        from metreo_api.models import Base
+
+        with get_engine().connect() as connection:
+            differences = compare_metadata(
+                MigrationContext.configure(connection, opts={"compare_type": True}),
+                Base.metadata,
+            )
+        assert differences == [], differences
+
+
 class TestTheSqliteExceptionIsNamedAndBounded:
     """Trois relations, pas une de plus, et la raison écrite.
 
@@ -227,16 +358,29 @@ class TestTheSqliteExceptionIsNamedAndBounded:
         )
 
     def test_the_revision_really_skips_sqlite(self) -> None:
-        """Et la révision doit bien ne rien faire sous SQLite, pas le prétendre."""
-        tree = ast.parse(REVISION.read_text(encoding="utf-8"))
-        gardes = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Compare)
-            and "dialect" in ast.unparse(node)
-            and "postgresql" in ast.unparse(node)
-        ]
-        assert gardes, (
-            "la révision doit tester le dialecte avant d'émettre du DDL "
-            "PostgreSQL-only ; aucun garde trouvé"
-        )
+        """Et la révision doit bien ne rien faire sous SQLite, pas le prétendre.
+
+        Seules les révisions qui posent une action non représentable sous
+        SQLite ont besoin de ce garde : celles qui ne posent que `CASCADE`
+        s'appliquent aux deux moteurs, et c'est ce que fait `c9d3a5e71b62`.
+        """
+        for chemin in revisions_posing_actions():
+            actions = {
+                str(relation[4])
+                for relation in _relations_of(chemin)
+                if len(relation) == 5 and relation[4] is not None
+            }
+            if "SET NULL" not in actions:
+                continue
+            tree = ast.parse(chemin.read_text(encoding="utf-8"))
+            gardes = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Compare)
+                and "dialect" in ast.unparse(node)
+                and "postgresql" in ast.unparse(node)
+            ]
+            assert gardes, (
+                f"{chemin.name} doit tester le dialecte avant d'émettre du DDL "
+                "PostgreSQL-only ; aucun garde trouvé"
+            )
