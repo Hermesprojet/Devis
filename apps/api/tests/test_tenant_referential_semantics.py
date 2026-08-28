@@ -333,6 +333,28 @@ COMPOSITE_KEYS_HERE = (
 )
 
 
+def declared_tenant_keys() -> set[str]:
+    """Les clés composites que les MODÈLES déclarent, quel qu'en soit le nombre.
+
+    Ce décompte était écrit en dur — neuf — et la seconde tranche en a posé
+    seize. Un nombre recopié à la main est une constante que l'on met à jour
+    après coup, pas un contrôle. La liste est donc lue dans les modèles : le
+    catalogue doit porter exactement ce qu'ils déclarent, ni plus, ni moins.
+    """
+    from sqlalchemy import ForeignKeyConstraint
+
+    from metreo_api.models import Base
+
+    return {
+        constraint.name
+        for table in Base.metadata.tables.values()
+        for constraint in table.constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+        and constraint.name
+        and constraint.name.endswith("_tenant")
+    }
+
+
 def _shifted_search_path(database_url: str) -> str:
     """La même URL, avec un schéma inexistant AVANT le schéma réel.
 
@@ -376,7 +398,9 @@ class TestTheCatalogueMatchesTheIntent:
             pytest.skip("`pg_catalog` n'existe que sur PostgreSQL")
         with engine.connect() as connection:
             rows = connection.execute(text(COMPOSITE_KEYS_HERE)).all()
-        assert len(rows) == 9, [row[0] for row in rows]
+        assert {row[0] for row in rows} == declared_tenant_keys(), (
+            "le catalogue et les modèles doivent porter exactement les mêmes clés"
+        )
         for name, _on_delete, on_update, validated, deferrable in rows:
             assert on_update == "a", f"{name} propage une mise à jour au lieu de la refuser"
             assert validated, f"{name} n'est pas validée"
@@ -403,7 +427,7 @@ class TestTheCatalogueMatchesTheIntent:
                 text("SELECT count(*) FROM pg_constraint WHERE conname LIKE 'fk\\_%\\_tenant'")
             ).scalar_one()
             here = len(connection.execute(text(COMPOSITE_KEYS_HERE)).all())
-        assert here == 9
+        assert here == len(declared_tenant_keys())
         assert everywhere >= here, "le compte global ne peut pas être inférieur au local"
 
     def test_the_filter_holds_when_the_schema_is_not_first_in_the_search_path(
@@ -434,7 +458,7 @@ class TestTheCatalogueMatchesTheIntent:
             shifted.dispose()
 
         assert path.startswith("schema_qui_nexiste_pas,"), path
-        assert len(rows) == 9, [row[0] for row in rows]
+        assert {row[0] for row in rows} == declared_tenant_keys(), [row[0] for row in rows]
 
     def test_the_simple_keys_keep_their_actions(self, migrated: None) -> None:
         """Retirer la clé simple ferait perdre le `SET NULL` portable."""
