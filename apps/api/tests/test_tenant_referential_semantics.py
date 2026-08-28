@@ -317,10 +317,19 @@ class TestTheCatalogueMatchesTheIntent:
         if engine.dialect.name != "postgresql":
             pytest.skip("`pg_catalog` n'existe que sur PostgreSQL")
         with engine.connect() as connection:
+            # Restreint au schéma que ce test possède. `pg_constraint` couvre
+            # toute la BASE : en CI, le schéma `public` porte déjà le schéma
+            # migré de l'étape de seed, et compter sans filtrer donnait 18 pour
+            # 9 contraintes réelles. Le nombre attendu n'est juste que si l'on
+            # regarde exactement un schéma.
             rows = connection.execute(
                 text(
-                    "SELECT conname, confdeltype, confupdtype, convalidated, condeferrable "
-                    "FROM pg_constraint WHERE conname LIKE 'fk\\_%\\_tenant'"
+                    "SELECT c.conname, c.confdeltype, c.confupdtype, "
+                    "       c.convalidated, c.condeferrable "
+                    "FROM pg_constraint c "
+                    "JOIN pg_class t ON t.oid = c.conrelid "
+                    "WHERE c.conname LIKE 'fk\\_%\\_tenant' "
+                    "  AND t.relnamespace = current_schema()::regnamespace"
                 )
             ).all()
         assert len(rows) == 9, [row[0] for row in rows]
