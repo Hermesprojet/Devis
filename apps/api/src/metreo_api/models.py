@@ -218,8 +218,15 @@ class Project(TimestampMixin, Base):
     __tablename__ = "projects"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         UniqueConstraint("id", "organization_id", name="uq_projects_id_organization"),
         UniqueConstraint("organization_id", "reference", name="uq_project_org_reference"),
         Index("ix_projects_org_status", "organization_id", "status"),
@@ -260,8 +267,15 @@ class PriceBook(TimestampMixin, Base):
     __tablename__ = "price_books"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         UniqueConstraint("id", "organization_id", name="uq_price_books_id_organization"),
         UniqueConstraint("organization_id", "name", name="uq_pricebook_org_name"),
     )
@@ -283,8 +297,15 @@ class PriceBookVersion(TimestampMixin, Base):
     __tablename__ = "price_book_versions"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         UniqueConstraint("id", "organization_id", name="uq_price_book_versions_id_organization"),
         ForeignKeyConstraint(
             ["price_book_id", "organization_id"],
@@ -312,8 +333,15 @@ class PriceItem(TimestampMixin, Base):
     __tablename__ = "price_items"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         UniqueConstraint("id", "organization_id", name="uq_price_items_id_organization"),
         ForeignKeyConstraint(
             ["price_book_version_id", "organization_id"],
@@ -383,8 +411,15 @@ class CompositePriceRow(TimestampMixin, Base):
     __tablename__ = "composite_prices"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         UniqueConstraint("id", "organization_id", name="uq_composite_prices_id_organization"),
         UniqueConstraint("price_book_version_id", "code", name="uq_composite_version_code"),
     )
@@ -424,8 +459,15 @@ class CompositeComponentRow(TimestampMixin, Base):
     __tablename__ = "composite_components"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         ForeignKeyConstraint(
             ["price_item_id", "organization_id"],
             ["price_items.id", "price_items.organization_id"],
@@ -547,8 +589,15 @@ class BillOfQuantities(TimestampMixin, Base):
     __tablename__ = "bills_of_quantities"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         UniqueConstraint("id", "organization_id", name="uq_bills_of_quantities_id_organization"),
         ForeignKeyConstraint(
             ["project_id", "organization_id"],
@@ -575,8 +624,15 @@ class BoqItem(TimestampMixin, Base):
     __tablename__ = "boq_items"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         ForeignKeyConstraint(
             ["boq_id", "organization_id"],
             ["bills_of_quantities.id", "bills_of_quantities.organization_id"],
@@ -648,8 +704,15 @@ class Estimate(TimestampMixin, Base):
     __tablename__ = "estimates"
     __table_args__ = (
         # Frontière multi-tenant tenue par la base : l'enfant ne peut pointer
-        # qu'un parent de SA propre organisation. Sans action référentielle —
-        # un `SET NULL` composite viderait aussi `organization_id`, NOT NULL.
+        # qu'un parent de SA propre organisation. L'action référentielle de ces
+        # clés composites appartient aux migrations et non aux modèles : elle
+        # diffère d'un moteur à l'autre. Sur PostgreSQL, la révision
+        # `b4f2c7d81a05` fait refléter à chaque composite l'action de la clé
+        # simple qu'elle double — `SET NULL (colonne_enfant)` plutôt qu'un
+        # `SET NULL` nu, qui viderait aussi `organization_id`, NOT NULL — afin
+        # que le résultat d'une suppression ne dépende plus de l'ordre de
+        # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
+        # ordres y donnent le même résultat.
         ForeignKeyConstraint(
             ["boq_id", "organization_id"],
             ["bills_of_quantities.id", "bills_of_quantities.organization_id"],

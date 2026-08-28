@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
@@ -310,13 +312,141 @@ class TestTheSqliteTemplateDoesNotWeakenIsolation:
         assert leaked == 0, "une écriture d'un autre test a atteint cette base"
 
     def test_the_template_carries_the_full_migration_chain(self, migrated: None) -> None:
-        """Le gabarit porte la tête d'Alembic, pas un schéma construit à la main."""
+        """Le gabarit porte la tête d'Alembic, pas un schéma construit à la main.
+
+        La tête était écrite en dur ici. Elle a fait tomber ce test à la
+        première révision suivante — une fausse alerte, et surtout un contrôle
+        qui aurait pu être « corrigé » en recopiant la nouvelle valeur sans
+        rien vérifier. La tête est désormais **lue dans les scripts de
+        migration** : le contrôle compare deux choses qui doivent coïncider au
+        lieu de comparer à une constante que l'on met à jour à la main.
+        """
         from sqlalchemy import text
 
         from metreo_api.db import get_engine
+
+        from .conftest import alembic_head
 
         with get_engine().connect() as connection:
             version = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert version == "7c1e4a9b2d30", version
+        assert version == alembic_head(), (
+            f"le gabarit porte {version} alors que la tête des migrations est {alembic_head()}"
+        )
+
+
+class TestTheSqliteTemplateIsSafeToDependOn:
+    """Le gabarit est devenu une infrastructure : six cents tests en dépendent.
+
+    Ce qui suit ne mesure pas sa vitesse — il en existe déjà une mesure — mais
+    ce qui pourrait le rendre faux sans que rien ne le dise.
+    """
+
+    def test_the_fingerprint_covers_the_head_and_the_models(self) -> None:
+        """La tête seule ne suffirait pas.
+
+        Une colonne ajoutée aux modèles sans révision laisse la tête
+        inchangée. L'empreinte doit bouger quand même, sinon un gabarit
+        périmé serait recopié et les échecs qui s'ensuivraient seraient
+        illisibles.
+        """
+        from sqlalchemy import Column, String
+
+        from metreo_api.models import Base
+
+        from .conftest import schema_fingerprint
+
+        before = schema_fingerprint()
+        assert before == schema_fingerprint(), "l'empreinte doit être stable"
+
+        table = Base.metadata.tables["projects"]
+        intruder = Column("colonne_de_passage", String(8))
+        table.append_column(intruder)
+        try:
+            assert schema_fingerprint() != before, (
+                "une colonne ajoutée aux modèles doit changer l'empreinte"
+            )
+        finally:
+            table._columns.remove(intruder)
+        assert schema_fingerprint() == before, "l'empreinte doit revenir à sa valeur"
+
+    def test_the_head_is_read_from_the_scripts_not_hard_coded(self) -> None:
+        """Et il n'y a qu'une tête : une chaîne fourchue casserait le gabarit."""
+        from .conftest import alembic_head
+
+        head = alembic_head()
+        assert head and head.isalnum(), head
+
+    def test_a_stale_template_is_refused_rather_than_copied(self, tmp_path: Path) -> None:
+        """La décision elle-même, et non un chemin qui la contourne.
+
+        La première version de ce test appelait la migration directement et
+        restait verte quand on débranchait la décision : elle ne prouvait rien.
+        La décision est maintenant une fonction, et c'est elle qu'on éprouve —
+        empreinte fausse, empreinte absente, empreinte juste.
+        """
+        from .conftest import schema_fingerprint, template_is_current
+
+        template = tmp_path / "template.sqlite3"
+        template.write_bytes(b"")
+
+        assert not template_is_current(template), (
+            "sans empreinte, un gabarit ne doit jamais être réutilisé"
+        )
+
+        template.with_suffix(".fingerprint").write_text("empreinte-qui-ne-correspond-pas")
+        assert not template_is_current(template), "une empreinte fausse doit refuser le gabarit"
+
+        template.with_suffix(".fingerprint").write_text(schema_fingerprint())
+        assert template_is_current(template), "une empreinte juste doit l'accepter"
+
+    def test_the_copy_really_depends_on_that_decision(self) -> None:
+        """Et la fixture doit s'y référer, sinon la décision ne sert à rien."""
+        import inspect as inspect_module
+
+        from . import conftest
+
+        source = inspect_module.getsource(conftest.migrated)
+        assert "template_is_current(" in source, (
+            "la fixture `migrated` doit interroger `template_is_current` avant de copier"
+        )
+        assert source.index("template_is_current(") < source.index("shutil.copyfile"), (
+            "la décision doit précéder la copie"
+        )
+
+    def test_the_template_leaves_no_sidecar_files(self, sqlite_template: Path | None) -> None:
+        """`-wal`, `-shm`, `-journal` : leur contenu ne serait pas copié.
+
+        Une connexion laissée ouverte sur le gabarit produirait un `-wal` dont
+        `shutil.copyfile` ne sait rien. La copie serait un schéma tronqué, et
+        l'erreur apparaîtrait très loin de sa cause.
+        """
+        from .conftest import SQLITE_SIDECARS
+
+        if sqlite_template is None:
+            pytest.skip("pas de gabarit quand la suite tourne sur PostgreSQL")
+        present = [
+            suffix
+            for suffix in SQLITE_SIDECARS
+            if sqlite_template.with_name(sqlite_template.name + suffix).exists()
+        ]
+        assert present == [], present
+
+    def test_the_template_lives_in_the_session_directory_only(
+        self, sqlite_template: Path | None
+    ) -> None:
+        """Rien ne survit d'une exécution à l'autre, et rien ne le doit.
+
+        Un gabarit conservé entre deux exécutions de CI serait un cache : il
+        faudrait alors l'invalider, et une invalidation ratée donnerait des
+        verts qui ne prouvent rien. Le gabarit vit dans le répertoire temporaire
+        de la session pytest, qui n'existe pas avant elle.
+        """
+        if sqlite_template is None:
+            pytest.skip("pas de gabarit quand la suite tourne sur PostgreSQL")
+        assert sqlite_template.is_absolute()
+        parts = set(sqlite_template.parts)
+        assert parts & {"pytest-of-root", "pytest-current"} or "pytest-" in str(sqlite_template), (
+            f"le gabarit doit vivre dans le répertoire de session pytest : {sqlite_template}"
+        )

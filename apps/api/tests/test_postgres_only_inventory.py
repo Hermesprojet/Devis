@@ -47,6 +47,11 @@ PARTIALLY_SKIPPED: dict[str, str] = {
     # transactions s'ignorent : SQLite sérialise les écritures et les y faire
     # tourner donnerait du vert sans rien démontrer.
     "test_tenant_concurrency.py": "seules les trois classes de course s'ignorent",
+    # Les contrôles de catalogue et l'ordre des déclencheurs sont propres à
+    # PostgreSQL ; les trois qui portent sur le RÉSULTAT d'une suppression
+    # tournent partout, et c'est le point : la correction ne devait rien
+    # changer au comportement observable.
+    "test_deletion_determinism.py": "seuls les contrôles de catalogue s'ignorent",
 }
 
 

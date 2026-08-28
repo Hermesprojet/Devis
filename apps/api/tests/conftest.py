@@ -13,6 +13,7 @@ server-side constraints or transactional DDL.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import sys
@@ -164,6 +165,65 @@ def _upgrade(database_url: str) -> None:
             os.environ.pop("METREO_DATABASE_URL", None)
 
 
+def alembic_head() -> str:
+    """La tête de la chaîne, lue dans les scripts de migration.
+
+    Écrite en dur quelque part, elle devient une constante que l'on recopie à
+    la main à chaque révision — un contrôle qui ne contrôle plus rien. Lue ici,
+    elle laisse les tests comparer deux choses qui doivent coïncider.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(str(API_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(API_ROOT / "alembic"))
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+    assert len(heads) == 1, f"la chaîne des migrations a {len(heads)} têtes : {heads}"
+    return heads[0]
+
+
+def schema_fingerprint() -> str:
+    """Ce qui doit invalider un gabarit : la tête ET la forme des modèles.
+
+    La tête seule ne suffit pas. Modifier une colonne dans les modèles sans
+    écrire de révision laisse la tête inchangée ; un gabarit conservé serait
+    alors en avance ou en retard sur ce que les tests croient interroger. Le
+    contrôle qui confronte migrations et modèles existe, mais il tournerait
+    CONTRE un gabarit périmé, et son diagnostic serait illisible.
+
+    L'empreinte couvre donc les deux : la révision de tête, et la liste
+    ordonnée des tables et de leurs colonnes telle que les modèles la
+    déclarent.
+    """
+    from metreo_api.models import Base
+
+    shape = ";".join(
+        f"{name}:{','.join(sorted(column.name for column in table.columns))}"
+        for name, table in sorted(Base.metadata.tables.items())
+    )
+    return hashlib.sha256(f"{alembic_head()}|{shape}".encode()).hexdigest()
+
+
+def template_is_current(template: Path) -> bool:
+    """Ce gabarit correspond-il encore à la tête et aux modèles ?
+
+    Extraite pour être éprouvable. Restée en ligne dans la fixture, la décision
+    ne se testait qu'indirectement, et un test qui prétendait la couvrir
+    restait vert quand on la débranchait. Une empreinte absente ou illisible
+    vaut « périmé » : on ne recopie jamais un gabarit dont on ne peut pas dire
+    à quoi il correspond.
+    """
+    stamp = template.with_suffix(".fingerprint")
+    try:
+        return stamp.read_text(encoding="utf-8").strip() == schema_fingerprint()
+    except OSError:
+        return False
+
+
+#: Les fichiers annexes que SQLite laisse à côté d'une base ouverte.
+SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
+
+
 @pytest.fixture(scope="session")
 def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
     """Un fichier SQLite migré **une fois**, recopié pour chaque test.
@@ -177,6 +237,23 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
     L'isolation ne bouge pas : chaque test reçoit sa **copie**, un fichier
     distinct dans son propre répertoire temporaire, jamais un fichier partagé.
 
+    **Ce que le gabarit doit garantir avant d'être copié**, parce qu'il est
+    devenu une infrastructure dont dépendent six cents tests :
+
+    * plus aucune connexion ouverte dessus — sinon la copie peut attraper une
+      transaction en cours ;
+    * aucun fichier annexe `-wal`, `-shm` ou `-journal` à côté — leur contenu
+      ne serait pas copié, et la copie serait un schéma tronqué ;
+    * une empreinte qui couvre la tête d'Alembic **et** la forme des modèles,
+      écrite à côté du gabarit et revérifiée : un gabarit qui ne correspond
+      plus est refusé, jamais réutilisé en silence.
+
+    Le gabarit vit dans le répertoire temporaire de la SESSION pytest. Il n'y a
+    donc rien à invalider entre deux exécutions de CI : chacune repart d'un
+    répertoire vide. L'empreinte protège d'un gabarit périmé À L'INTÉRIEUR
+    d'une exécution, pas d'un cache entre exécutions — il n'y en a pas, et il
+    ne doit pas y en avoir.
+
     Sans URL PostgreSQL seulement : sur PostgreSQL, chaque test a déjà son
     schéma, créé et détruit par lui.
     """
@@ -184,6 +261,21 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
         return None
     path = tmp_path_factory.mktemp("gabarit") / "template.sqlite3"
     _upgrade(f"sqlite+pysqlite:///{path}")
+
+    # `_upgrade` passe par Alembic, qui ouvre son propre moteur. Le disposer
+    # explicitement : une connexion encore ouverte laisserait un `-wal`.
+    from metreo_api import db
+
+    db.reset_engine()
+
+    leftovers = [
+        suffix for suffix in SQLITE_SIDECARS if path.with_name(path.name + suffix).exists()
+    ]
+    assert not leftovers, (
+        f"le gabarit laisse {leftovers} à côté de lui : une connexion est restée "
+        "ouverte, et la copie ne verrait pas ce que ces fichiers contiennent"
+    )
+    path.with_suffix(".fingerprint").write_text(schema_fingerprint(), encoding="utf-8")
     return path
 
 
@@ -193,7 +285,13 @@ def migrated(app_env: None, database_url: str, sqlite_template: Path | None) -> 
         # `database_url` pointe sur un fichier que ce test possède seul :
         # le remplacer par une copie du gabarit revient au même schéma, sans
         # rejouer la chaîne.
-        shutil.copyfile(sqlite_template, database_url.split("///", 1)[1])
+        if template_is_current(sqlite_template):
+            shutil.copyfile(sqlite_template, database_url.split("///", 1)[1])
+        else:
+            # Rejouer la chaîne plutôt que copier : un gabarit périmé donnerait
+            # un schéma qui ne correspond ni aux migrations ni aux modèles, et
+            # les échecs qui en découleraient seraient illisibles.
+            _upgrade(database_url)
     else:
         _upgrade(database_url)
     yield
