@@ -15,7 +15,7 @@ qu'une fois** : les autres skills y renvoient par son nom en gras.
 | **multitenant-security** | il faut décider qui accède à quoi : `organization_id`, jetons, permissions, 404 vs 403, masquage des coûts, secrets, journal d'audit | implémenté (phase 1) |
 | **definition-of-done** | une tranche approche de sa fin : série de vérifications, CI, compte rendu d'itération, ce qui peut être dit « terminé » | implémenté (phase 1) |
 | **belgium-regulatory-pack** | une variation par pays ou région entre en jeu : `RegionProfile`, terminologie locale, locales, TVA datée, identifiants légaux, mentions de devis | partiellement implémenté — table et packs `draft` / `planned` semés, aucune règle validée juridiquement (phases 5-6) |
-| **document-analysis** | le **texte** d'un document de marché est en cause : upload, OCR, extraction structurée, citations, seuils de confiance, validation humaine | cahier des charges — phase 2, aucun code |
+| **document-analysis** | le **texte** d'un document de marché est en cause : upload, OCR, extraction structurée, citations, seuils de confiance, validation humaine | phase 2A : socle relationnel/contrats/API ; pipeline absent |
 | **cad-bim-takeoff** | la **géométrie** d'un plan ou d'un fichier CAO/BIM est en cause : échelle, feuilles, calques, IFC/DXF/DWG, mesure traçable, rapprochement plan ↔ bordereau | cahier des charges — phase 3, aucun code |
 | **supplier-rfq** | un tiers externe entre en jeu : annuaire fournisseurs, demande de prix, envoi confirmé par un humain, connecteurs, comparatif d'offres | cahier des charges — phase 4, aucun code |
 

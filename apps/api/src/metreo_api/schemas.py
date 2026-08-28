@@ -282,6 +282,78 @@ class ProjectPage(BaseModel):
     page: Page
 
 
+# -- documents -------------------------------------------------------------
+
+
+def document_length(column: str) -> int:
+    """Longueur d'une colonne documentaire, lue sur le modèle."""
+    from .models import Document
+
+    length = getattr(Document.__table__.columns[column].type, "length", None)
+    if length is None:
+        raise KeyError(f"La colonne {column} ne porte pas de longueur.")
+    return int(length)
+
+
+class DocumentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: NonBlank = Field(max_length=document_length("title"))
+
+
+class DocumentOut(ApiModel):
+    id: str
+    project_id: str
+    title: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class DocumentRevisionOut(ApiModel):
+    """Métadonnées sûres : aucune clé de stockage ni chemin utilisateur."""
+
+    id: str
+    document_id: str
+    revision_number: int
+    sha256: str
+    byte_size: int
+    media_type: str
+    status: str
+    published_at: datetime | None
+    created_at: datetime
+
+
+class ValidationDecisionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["accepted", "corrected", "rejected"]
+    reason: NonBlank = Field(max_length=2000)
+    before_value: dict[str, Any] | None = None
+    after_value: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _correction_payload_matches_decision(self) -> ValidationDecisionCreate:
+        has_before = self.before_value is not None
+        has_after = self.after_value is not None
+        if self.decision == "corrected":
+            if not has_before or not has_after:
+                raise ValueError("Une correction doit conserver les valeurs avant et après.")
+        elif has_before or has_after:
+            raise ValueError("Les valeurs avant/après sont réservées à une correction.")
+        return self
+
+
+class ValidationDecisionOut(ApiModel):
+    """Accusé de décision sans répéter les valeurs documentaires sensibles."""
+
+    id: str
+    proposal_id: str
+    actor_user_id: str
+    decision: str
+    created_at: datetime
+
+
 # -- price library ---------------------------------------------------------
 
 

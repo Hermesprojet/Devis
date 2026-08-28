@@ -17,11 +17,15 @@ breaks the suite.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
+from metreo_api.db import get_session_factory
+from metreo_api.models import DocumentRevision, ExtractionProposal, SourceCitation
 from metreo_api.security.roles import ROLE_PERMISSIONS, Permission, Role
 
 from .conftest import login
@@ -104,6 +108,7 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
     """
     bodies: dict[str, dict[str, Any]] = {
         "POST /api/v1/projects": {"reference": "X-001", "name": "Projet"},
+        "POST /api/v1/projects/{project_id}/documents": {"title": "Cahier des charges"},
         "PATCH /api/v1/projects/{project_id}": {"name": "Renommé"},
         "POST /api/v1/projects/{project_id}/boqs": {"name": "Bordereau"},
         "POST /api/v1/boqs/{boq_id}/items": {
@@ -159,6 +164,10 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
         "POST /api/v1/estimates/{estimate_id}/versions": {"label": "v1"},
         "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/freeze": {"confirm": True},
         "PATCH /api/v1/organization/settings": {"rounding_scale": 2},
+        "POST /api/v1/extraction-proposals/{proposal_id}/decisions": {
+            "decision": "accepted",
+            "reason": "Vérification humaine.",
+        },
     }
     return bodies.get(key)
 
@@ -175,6 +184,72 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
     )
     assert project.status_code == 201, project.text
     project_id = project.json()["id"]
+
+    document = client.post(
+        f"/api/v1/projects/{project_id}/documents",
+        headers=headers,
+        json={"title": "Cahier des charges"},
+    )
+    assert document.status_code == 201, document.text
+    document_id = document.json()["id"]
+
+    identity = client.get("/api/v1/auth/me", headers=headers)
+    assert identity.status_code == 200, identity.text
+    organization_id = identity.json()["organization_id"]
+    user_id = identity.json()["user_id"]
+    revision_id = str(uuid4())
+    citation_id = str(uuid4())
+    proposal_id = str(uuid4())
+    session = get_session_factory()()
+    try:
+        revision = DocumentRevision(
+            id=revision_id,
+            organization_id=organization_id,
+            document_id=document_id,
+            revision_number=1,
+            sha256="a" * 64,
+            byte_size=128,
+            media_type="application/pdf",
+            storage_key=f"tenant/{organization_id}/matrix.pdf",
+            original_filename="matrix.pdf",
+            created_by=user_id,
+        )
+        session.add(revision)
+        session.flush()
+        citation = SourceCitation(
+            id=citation_id,
+            organization_id=organization_id,
+            revision_id=revision_id,
+            page=1,
+            char_start=0,
+            char_end=10,
+            x0=Decimal("0.1"),
+            y0=Decimal("0.1"),
+            x1=Decimal("0.9"),
+            y1=Decimal("0.9"),
+            extractor="matrix-fixture",
+            confidence=Decimal("0.9"),
+        )
+        session.add(citation)
+        session.flush()
+        session.add(
+            ExtractionProposal(
+                id=proposal_id,
+                organization_id=organization_id,
+                revision_id=revision_id,
+                citation_id=citation_id,
+                schema_name="matrix",
+                schema_version="1",
+                value={"fixture": True},
+                confidence=Decimal("0.9"),
+                pipeline_version="matrix-1",
+                prompt_version="matrix-1",
+                model_version="matrix-1",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
 
     boq = client.post(
         f"/api/v1/projects/{project_id}/boqs", headers=headers, json={"name": "Bordereau"}
@@ -238,6 +313,8 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
 
     return {
         "project": project_id,
+        "document": document_id,
+        "proposal": proposal_id,
         "boq": boq_id,
         "boq_item": item_id,
         "price_book": book_id,
@@ -270,6 +347,8 @@ def graph_b(seeded_client: TestClient, admin_b: dict[str, str]) -> dict[str, str
 
 _PARAM_TO_KEY = {
     "project_id": "project",
+    "document_id": "document",
+    "proposal_id": "proposal",
     "boq_id": "boq",
     "item_id": "boq_item",
     "price_book_id": "price_book",
@@ -409,6 +488,7 @@ def test_permissions_held_by_every_role_are_declared(seeded_client: TestClient) 
     }
     assert universal == {
         Permission.PROJECT_READ,
+        Permission.DOCUMENT_READ,
         Permission.BOQ_READ,
         Permission.ESTIMATE_READ,
     }, f"Permissions détenues par tous les rôles : {sorted(p.value for p in universal)}"
@@ -461,6 +541,9 @@ def test_the_same_routes_succeed_for_their_owner(
     """The 404 sweep would also pass against identifiers that simply do not work."""
     reads = [
         f"/api/v1/projects/{graph_a['project']}",
+        f"/api/v1/projects/{graph_a['project']}/documents",
+        f"/api/v1/documents/{graph_a['document']}",
+        f"/api/v1/documents/{graph_a['document']}/revisions",
         f"/api/v1/projects/{graph_a['project']}/boqs",
         f"/api/v1/boqs/{graph_a['boq']}/items",
         f"/api/v1/price-books/{graph_a['price_book']}/versions",

@@ -259,6 +259,301 @@ class Project(TimestampMixin, Base):
 
 
 # --------------------------------------------------------------------------
+# Documents and human-reviewed extraction
+# --------------------------------------------------------------------------
+
+
+class Document(TimestampMixin, Base):
+    """Logical document owned by exactly one project and organisation."""
+
+    __tablename__ = "documents"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "project_id"],
+            ["projects.organization_id", "projects.id"],
+            name="fk_documents_org_project",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("organization_id", "id", name="uq_document_org_id"),
+        CheckConstraint("status IN ('active','archived')", name="ck_document_status"),
+        CheckConstraint("length(trim(title)) > 0", name="ck_document_title_nonempty"),
+        Index("ix_documents_org_project", "organization_id", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class DocumentRevision(TimestampMixin, Base):
+    """Immutable original once ``published_at`` is set.
+
+    Database triggers installed by the migration enforce the immutability for
+    direct SQL as well as ORM writes. Pipeline progress lives in
+    :class:`DocumentStepRun`, never in this row.
+    """
+
+    __tablename__ = "document_revisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "document_id"],
+            ["documents.organization_id", "documents.id"],
+            name="fk_document_revisions_org_document",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "document_id",
+            "revision_number",
+            name="uq_document_revision_number",
+        ),
+        UniqueConstraint("organization_id", "id", name="uq_document_revision_org_id"),
+        CheckConstraint("revision_number > 0", name="ck_document_revision_number_positive"),
+        CheckConstraint("byte_size > 0", name="ck_document_revision_byte_size_positive"),
+        CheckConstraint("length(sha256) = 64", name="ck_document_revision_sha256_length"),
+        CheckConstraint(
+            "length(trim(media_type)) > 0 AND length(trim(storage_key)) > 0 "
+            "AND length(trim(original_filename)) > 0",
+            name="ck_document_revision_required_text",
+        ),
+        CheckConstraint("status IN ('draft','published')", name="ck_document_revision_status"),
+        CheckConstraint(
+            "(status != 'draft' OR published_at IS NULL) AND "
+            "(status != 'published' OR published_at IS NOT NULL)",
+            name="ck_document_revision_publication",
+        ),
+        Index("ix_document_revisions_org_document", "organization_id", "document_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    document_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+
+
+class DocumentStepRun(TimestampMixin, Base):
+    """Idempotent state of one pipeline step for one immutable revision."""
+
+    __tablename__ = "document_step_runs"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "revision_id"],
+            ["document_revisions.organization_id", "document_revisions.id"],
+            name="fk_document_step_runs_org_revision",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "revision_id",
+            "step",
+            "pipeline_version",
+            "prompt_version",
+            "model_version",
+            name="uq_document_step_run_idempotence",
+        ),
+        CheckConstraint(
+            "step IN ('receive_security','detection','native_text','ocr','tables',"
+            "'segmentation','classification','structured_extraction','indexing',"
+            "'consistency','human_review')",
+            name="ck_document_step_run_step",
+        ),
+        CheckConstraint(
+            "status IN ('pending','running','succeeded','failed')",
+            name="ck_document_step_run_status",
+        ),
+        CheckConstraint("attempt >= 1", name="ck_document_step_run_attempt"),
+        CheckConstraint(
+            "duration_ms IS NULL OR duration_ms >= 0",
+            name="ck_document_step_run_duration",
+        ),
+        CheckConstraint(
+            "status != 'failed' OR (error_code IS NOT NULL AND length(trim(error_code)) > 0)",
+            name="ck_document_step_run_failure_code",
+        ),
+        CheckConstraint(
+            "length(trim(pipeline_version)) > 0 AND length(trim(prompt_version)) > 0 "
+            "AND length(trim(model_version)) > 0",
+            name="ck_document_step_run_versions_nonempty",
+        ),
+        Index("ix_document_step_runs_org_revision", "organization_id", "revision_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    step: Mapped[str] = mapped_column(String(40), nullable=False)
+    pipeline_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False, default="none")
+    model_version: Mapped[str] = mapped_column(String(80), nullable=False, default="none")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_summary: Mapped[str | None] = mapped_column(String(255))
+
+
+class SourceCitation(TimestampMixin, Base):
+    """Resolvable source location; never a free-form “see page” string."""
+
+    __tablename__ = "source_citations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "revision_id"],
+            ["document_revisions.organization_id", "document_revisions.id"],
+            name="fk_source_citations_org_revision",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "organization_id",
+            "revision_id",
+            "id",
+            name="uq_source_citation_org_revision_id",
+        ),
+        CheckConstraint("page >= 1", name="ck_source_citation_page"),
+        CheckConstraint("char_start >= 0", name="ck_source_citation_char_start"),
+        CheckConstraint("char_end > char_start", name="ck_source_citation_char_range"),
+        CheckConstraint(
+            "x0 >= 0 AND x0 <= 1 AND y0 >= 0 AND y0 <= 1 AND "
+            "x1 >= 0 AND x1 <= 1 AND y1 >= 0 AND y1 <= 1 AND "
+            "x0 < x1 AND y0 < y1",
+            name="ck_source_citation_bbox",
+        ),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_source_citation_confidence",
+        ),
+        CheckConstraint(
+            "length(trim(extractor)) > 0",
+            name="ck_source_citation_extractor_nonempty",
+        ),
+        Index("ix_source_citations_org_revision", "organization_id", "revision_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+    char_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    char_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    x0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    y0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    x1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    y1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    sheet: Mapped[str | None] = mapped_column(String(120))
+    layer: Mapped[str | None] = mapped_column(String(120))
+    object_id: Mapped[str | None] = mapped_column(String(120))
+    extractor: Mapped[str] = mapped_column(String(120), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+
+
+class ExtractionProposal(TimestampMixin, Base):
+    """Machine output awaiting a separate append-only human decision."""
+
+    __tablename__ = "extraction_proposals"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "revision_id", "citation_id"],
+            [
+                "source_citations.organization_id",
+                "source_citations.revision_id",
+                "source_citations.id",
+            ],
+            name="fk_extraction_proposals_org_revision_citation",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("organization_id", "id", name="uq_extraction_proposal_org_id"),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name="ck_extraction_proposal_confidence",
+        ),
+        CheckConstraint(
+            "status IN ('proposed','accepted','corrected','rejected')",
+            name="ck_extraction_proposal_status",
+        ),
+        CheckConstraint(
+            "length(trim(schema_name)) > 0 AND length(trim(schema_version)) > 0 "
+            "AND length(trim(pipeline_version)) > 0 "
+            "AND length(trim(prompt_version)) > 0 "
+            "AND length(trim(model_version)) > 0",
+            name="ck_extraction_proposal_versions_nonempty",
+        ),
+        Index("ix_extraction_proposals_org_revision", "organization_id", "revision_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    citation_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    schema_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    value: Mapped[dict] = mapped_column(SAJSON, nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    pipeline_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="proposed")
+
+
+class ValidationDecision(Base):
+    """Append-only record of one human acceptance, correction or rejection."""
+
+    __tablename__ = "validation_decisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "proposal_id"],
+            ["extraction_proposals.organization_id", "extraction_proposals.id"],
+            name="fk_validation_decisions_org_proposal",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["actor_user_id", "organization_id"],
+            ["memberships.user_id", "memberships.organization_id"],
+            name="fk_validation_decisions_actor_membership",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "decision IN ('accepted','corrected','rejected')",
+            name="ck_validation_decision_value",
+        ),
+        CheckConstraint(
+            "length(trim(reason)) > 0",
+            name="ck_validation_decision_reason",
+        ),
+        CheckConstraint(
+            "(decision != 'corrected' OR (before_value IS NOT NULL AND after_value IS NOT NULL)) "
+            "AND (decision NOT IN ('accepted','rejected') OR "
+            "(before_value IS NULL AND after_value IS NULL))",
+            name="ck_validation_decision_correction_payload",
+        ),
+        Index("ix_validation_decisions_org_proposal", "organization_id", "proposal_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    proposal_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    actor_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    decision: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    before_value: Mapped[dict | None] = mapped_column(SAJSON(none_as_null=True))
+    after_value: Mapped[dict | None] = mapped_column(SAJSON(none_as_null=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+
+# --------------------------------------------------------------------------
 # Price library
 # --------------------------------------------------------------------------
 

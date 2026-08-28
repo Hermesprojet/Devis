@@ -14,6 +14,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 ROUTERS = Path(__file__).resolve().parents[1] / "src" / "metreo_api" / "routers"
 
 #: Les appels qui prennent un verrou de ligne métier, et la ligne qu'ils
@@ -26,6 +28,11 @@ LOCK_CALLS: dict[str, str] = {
     "_version_open_for_writing": "PriceBookVersion",
     "estimating.next_version_number": "Estimate",
     "pricebook_versions.next_version_number": "PriceBook",
+    "documents.next_revision_number": "Document",
+    "documents.claim_step_run": "DocumentRevision",
+    "documents.succeed_step_run": "DocumentStepRun",
+    "documents.fail_step_run": "DocumentStepRun",
+    "documents.retry_failed_step_run": "DocumentStepRun",
     "_locked_item": "BoqItem",
     # Trouvées par le contrôle d'enveloppes lui-même, au-delà des trois
     # signalées : `transition_item` verrouille pour `approve_item`, et
@@ -112,6 +119,34 @@ class TestLockOrder:
             "Organization est verrouillée en dernier par audit.record ; "
             "la rendre verrouillable ici inviterait à inverser l'ordre."
         )
+        assert "Document" in locking.LOCKABLE
+        assert "DocumentRevision" in locking.LOCKABLE
+        assert "DocumentStepRun" in locking.LOCKABLE
+
+    def test_document_numbering_locks_its_parent(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "src" / "metreo_api" / "services" / "documents.py"
+        )
+        function = next(item for item in _functions(source) if item.name == "next_revision_number")
+        assert [model for _, model in _locks_taken(function)] == ["Document"]
+
+    @pytest.mark.parametrize(
+        ("function_name", "model"),
+        (
+            ("claim_step_run", "DocumentRevision"),
+            ("succeed_step_run", "DocumentStepRun"),
+            ("fail_step_run", "DocumentStepRun"),
+            ("retry_failed_step_run", "DocumentStepRun"),
+        ),
+    )
+    def test_document_step_services_lock_the_row_they_decide(
+        self, function_name: str, model: str
+    ) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "src" / "metreo_api" / "services" / "documents.py"
+        )
+        function = next(item for item in _functions(source) if item.name == function_name)
+        assert [locked for _, locked in _locks_taken(function)] == [model]
 
     def test_every_wrapper_of_the_primitive_is_declared(self) -> None:
         """Une nouvelle enveloppe de `lock_owned` ne doit pas passer inaperçue.

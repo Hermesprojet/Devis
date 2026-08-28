@@ -19,7 +19,7 @@ env:
 
 jobs:
   domain:
-    name: Domaine (calculs déterministes)
+    name: Domaine et contrats purs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -29,15 +29,19 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain pytest ruff mypy
+          pip install -c constraints/api.txt ./packages/domain ./packages/contracts pytest ruff mypy
       - name: Format et lint
         run: |
-          ruff format --check packages/domain
-          ruff check packages/domain
+          ruff format --check packages/domain packages/contracts
+          ruff check packages/domain packages/contracts
       - name: Typage
-        run: mypy packages/domain/src/metreo_domain
-      - name: Tests
+        run: |
+          mypy packages/domain/src/metreo_domain
+          mypy packages/contracts/src/metreo_contracts packages/contracts/tests
+      - name: Tests du domaine
         run: pytest packages/domain/tests -q
+      - name: Tests des contrats
+        run: pytest packages/contracts/tests -q
 
   api-sqlite:
     name: API (SQLite, sans service)
