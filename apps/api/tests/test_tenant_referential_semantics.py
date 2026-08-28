@@ -349,7 +349,26 @@ def _shifted_search_path(database_url: str) -> str:
 class TestTheCatalogueMatchesTheIntent:
     """Ce que la base porte réellement, relu à chaque exécution."""
 
-    def test_composite_keys_carry_no_referential_action(self, migrated: None) -> None:
+    def test_the_nine_keys_are_validated_immediate_and_never_move_on_update(
+        self, migrated: None
+    ) -> None:
+        """Ce qui reste vrai des neuf clés, quelles que soient leurs actions.
+
+        Ce test exigeait « aucune action de suppression ». La révision
+        `b4f2c7d81a05` en pose délibérément — chaque composite reflète l'action
+        de la clé simple qu'elle double, faute de quoi le résultat d'une
+        suppression dépend de l'ordre de création des contraintes. Ce que
+        chaque composite porte est vérifié relation par relation dans
+        `test_deletion_determinism.py` ; ici restent les trois propriétés qui
+        ne doivent bouger pour aucune d'entre elles.
+
+        `ON UPDATE` reste NO ACTION partout : déplacer un parent référencé vers
+        une autre organisation doit être refusé, jamais propagé en silence.
+        Aucune ne doit être différable — le report ferait remonter une
+        violation inter-tenant au commit seulement, trop tard pour un service
+        qui branche sur l'erreur. Aucune ne doit rester non validée : une clé
+        `NOT VALID` laisserait passer les lignes déjà en base.
+        """
         from metreo_api.db import get_engine
 
         engine = get_engine()
@@ -358,9 +377,8 @@ class TestTheCatalogueMatchesTheIntent:
         with engine.connect() as connection:
             rows = connection.execute(text(COMPOSITE_KEYS_HERE)).all()
         assert len(rows) == 9, [row[0] for row in rows]
-        for name, on_delete, on_update, validated, deferrable in rows:
-            assert on_delete == "a", f"{name} porte une action de suppression"
-            assert on_update == "a", f"{name} porte une action de mise à jour"
+        for name, _on_delete, on_update, validated, deferrable in rows:
+            assert on_update == "a", f"{name} propage une mise à jour au lieu de la refuser"
             assert validated, f"{name} n'est pas validée"
             assert not deferrable, f"{name} est différable"
 
