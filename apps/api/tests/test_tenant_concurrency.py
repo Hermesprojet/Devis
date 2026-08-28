@@ -137,6 +137,12 @@ class Ran:
     def __init__(self) -> None:
         self.error: BaseException | None = None
         self.finished = threading.Event()
+        #: Le PID serveur de SA connexion, publié dès qu'elle est ouverte.
+        #: C'est lui qui rend l'observation du blocage exacte : on ne demande
+        #: pas « quelqu'un attend-il un verrou ? » mais « CETTE connexion-ci
+        #: attend-elle un verrou ? ».
+        self.pid: int | None = None
+        self.connected = threading.Event()
 
     @property
     def failure(self) -> str:
@@ -156,38 +162,71 @@ def _in_its_own_connection(database_url: str, work: Callable[[Any], None]) -> Ra
         engine = create_engine(database_url, future=True)
         try:
             with engine.connect() as connection:
+                ran.pid = int(connection.exec_driver_sql("SELECT pg_backend_pid()").scalar_one())
+                # Cette lecture ouvre une transaction implicite ; la refermer
+                # tout de suite, sinon le `begin()` explicite du scénario échoue.
+                connection.rollback()
+                ran.connected.set()
                 work(connection)
         except BaseException as error:  # rapporté au test, pas avalé
             ran.error = error
         finally:
             engine.dispose()
+            ran.connected.set()
             ran.finished.set()
 
     threading.Thread(target=target, daemon=True).start()
     return ran
 
 
-def _blocked_writers(session: Any) -> int:
-    """Combien de transactions attendent un verrou, vu depuis `pg_locks`."""
-    return int(
-        session.execute(text("SELECT count(*) FROM pg_locks WHERE NOT granted")).scalar_one()
-    )
+#: Cette connexion précise attend-elle un verrou ?
+#:
+#: La première version comptait `pg_locks WHERE NOT granted` sans rien filtrer.
+#: C'était prendre l'attente de n'importe quelle transaction du serveur pour la
+#: preuve que NOTRE écrivain est bloqué. Mesuré : deux schémas migrés dans une
+#: même base, un blocage fabriqué dans le premier — un observateur travaillant
+#: dans le second comptait « 1 verrou en attente » et repartait, sans que rien
+#: ne le bloque. La suite est séquentielle aujourd'hui, donc le défaut ne s'est
+#: jamais manifesté ; il aurait rendu ces trois courses vertes pour la mauvaise
+#: raison dès la première exécution parallèle. Même classe de défaut que celui
+#: rattrapé par la CI sur `pg_constraint` : une interrogation de catalogue à
+#: portée globale invoquée pour prouver quelque chose de local.
+#:
+#: Filtrer `pg_locks` par schéma ne suffisait pas non plus, et le mesurer l'a
+#: montré : une transaction qui attend la ligne verrouillée par une autre
+#: n'attend pas sur la RELATION mais sur le `transactionid` de sa bloqueuse, et
+#: `pg_locks.relation` y est NULL. La jointure sur `pg_class` la faisait
+#: disparaître, et les deux courses tombaient.
+#:
+#: Le PID serveur tranche : il désigne exactement la connexion dont ce test
+#: attend le blocage, quels que soient le schéma, le type de verrou et ce que
+#: fait le reste du serveur.
+WAITING_ON_A_LOCK = (
+    "SELECT count(*) FROM pg_stat_activity WHERE pid = :pid AND wait_event_type = 'Lock'"
+)
 
 
-def _wait_until_blocked(session: Any, *, timeout: float = 30.0) -> None:
-    """Attend qu'une transaction soit réellement en attente d'un verrou.
+def _wait_until_blocked(session: Any, ran: Ran, *, timeout: float = 30.0) -> None:
+    """Attend que `ran` soit réellement en attente d'un verrou.
 
     Sondage du catalogue plutôt qu'un `sleep` d'une durée choisie au jugé : le
     test ne dépend d'aucune temporisation, et il échoue franchement si le
     blocage attendu ne se produit jamais.
     """
+    assert ran.connected.wait(timeout=timeout), "la connexion concurrente ne s'est pas ouverte"
+    assert ran.pid is not None, "le PID serveur n'a pas été publié"
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         session.rollback()
-        if _blocked_writers(session) > 0:
+        waiting = session.execute(text(WAITING_ON_A_LOCK), {"pid": ran.pid}).scalar_one()
+        if waiting:
             return
+        if ran.finished.is_set():
+            raise AssertionError(
+                "l'écriture concurrente s'est terminée sans jamais attendre de verrou"
+            )
     raise AssertionError(
-        "aucune transaction n'attend de verrou : l'écriture concurrente n'a pas été bloquée"
+        "la transaction concurrente n'attend aucun verrou : elle n'a pas été bloquée"
     )
 
 
@@ -304,7 +343,7 @@ class TestMovingTheParentWhileAChildArrives:
 
         mover = _in_its_own_connection(database_url, move)
 
-        _wait_until_blocked(session)
+        _wait_until_blocked(session, mover)
         assert not mover.finished.is_set(), "le déplacement aurait dû attendre l'enfant"
         release.set()
 
@@ -372,7 +411,7 @@ class TestDeletingTheParentWhileAChildArrives:
 
         deleter = _in_its_own_connection(database_url, delete)
 
-        _wait_until_blocked(session)
+        _wait_until_blocked(session, deleter)
         assert not deleter.finished.is_set(), "la suppression aurait dû attendre l'enfant"
         release.set()
 

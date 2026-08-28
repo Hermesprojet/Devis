@@ -307,6 +307,45 @@ class TestTheOrmAgreesWithRawSql:
         assert models.CompositePriceRow.components is not None
 
 
+#: Les clés composites du schéma **où vivent réellement les tables interrogées**.
+#:
+#: `pg_constraint` couvre toute la base, et les noms se répètent d'un schéma à
+#: l'autre : en CI, `public` porte déjà le schéma migré par l'étape de seed
+#: quand la suite crée le sien, et compter sans filtrer donnait 18 pour 9
+#: contraintes réelles. Un nombre attendu n'a de sens que si l'on dit sur quoi
+#: on compte.
+#:
+#: Le filtre résout `'boq_items'::regclass` plutôt que d'appeler
+#: `current_schema()`. Les deux coïncident dans tous les cas réalistes —
+#: mesuré sur trois schémas migrés dans une même base, y compris quand le
+#: schéma courant n'est pas la première entrée du `search_path`. Ils divergent
+#: dans un cas : `search_path=pg_catalog,s1` fait rendre `pg_catalog` à
+#: `current_schema()`, et le compte tombe à zéro. `regclass` pose la bonne
+#: question — « le schéma de la table que j'interroge vraiment » — au lieu de
+#: « la première entrée du chemin ».
+COMPOSITE_KEYS_HERE = (
+    "SELECT c.conname, c.confdeltype, c.confupdtype, c.convalidated, c.condeferrable "
+    "FROM pg_constraint c "
+    "JOIN pg_class t ON t.oid = c.conrelid "
+    "WHERE c.conname LIKE 'fk\\_%\\_tenant' "
+    "  AND t.relnamespace = ("
+    "        SELECT relnamespace FROM pg_class WHERE oid = 'boq_items'::regclass)"
+)
+
+
+def _shifted_search_path(database_url: str) -> str:
+    """La même URL, avec un schéma inexistant AVANT le schéma réel.
+
+    PostgreSQL ignore une entrée qui ne désigne rien : le schéma courant
+    devient alors la deuxième entrée du chemin. C'est la configuration où un
+    filtre qui raisonnerait sur « la première entrée » se tromperait.
+    """
+    marker = "options=-csearch_path="
+    assert marker in database_url, database_url
+    head, schema = database_url.split(marker, 1)
+    return f"{head}{marker}schema_qui_nexiste_pas,{schema}"
+
+
 class TestTheCatalogueMatchesTheIntent:
     """Ce que la base porte réellement, relu à chaque exécution."""
 
@@ -317,27 +356,67 @@ class TestTheCatalogueMatchesTheIntent:
         if engine.dialect.name != "postgresql":
             pytest.skip("`pg_catalog` n'existe que sur PostgreSQL")
         with engine.connect() as connection:
-            # Restreint au schéma que ce test possède. `pg_constraint` couvre
-            # toute la BASE : en CI, le schéma `public` porte déjà le schéma
-            # migré de l'étape de seed, et compter sans filtrer donnait 18 pour
-            # 9 contraintes réelles. Le nombre attendu n'est juste que si l'on
-            # regarde exactement un schéma.
-            rows = connection.execute(
-                text(
-                    "SELECT c.conname, c.confdeltype, c.confupdtype, "
-                    "       c.convalidated, c.condeferrable "
-                    "FROM pg_constraint c "
-                    "JOIN pg_class t ON t.oid = c.conrelid "
-                    "WHERE c.conname LIKE 'fk\\_%\\_tenant' "
-                    "  AND t.relnamespace = current_schema()::regnamespace"
-                )
-            ).all()
+            rows = connection.execute(text(COMPOSITE_KEYS_HERE)).all()
         assert len(rows) == 9, [row[0] for row in rows]
         for name, on_delete, on_update, validated, deferrable in rows:
             assert on_delete == "a", f"{name} porte une action de suppression"
             assert on_update == "a", f"{name} porte une action de mise à jour"
             assert validated, f"{name} n'est pas validée"
             assert not deferrable, f"{name} est différable"
+
+    def test_the_count_ignores_the_other_schemas_of_the_same_database(
+        self, migrated: None, database_url: str
+    ) -> None:
+        """Le décompte doit valoir POUR CE SCHÉMA, pas pour la base entière.
+
+        C'est le défaut que la CI a rattrapé : sans filtre, le job PostgreSQL
+        comptait dix-huit clés là où neuf existent, parce que `public` portait
+        déjà le schéma migré. Ce test le tient à l'endroit exact : la requête
+        sans filtre doit voir strictement plus que la requête filtrée dès qu'un
+        autre schéma migré existe, et la filtrée doit rester à neuf.
+        """
+        from metreo_api.db import get_engine
+
+        engine = get_engine()
+        if engine.dialect.name != "postgresql":
+            pytest.skip("un seul schéma sous SQLite")
+        with engine.connect() as connection:
+            everywhere = connection.execute(
+                text("SELECT count(*) FROM pg_constraint WHERE conname LIKE 'fk\\_%\\_tenant'")
+            ).scalar_one()
+            here = len(connection.execute(text(COMPOSITE_KEYS_HERE)).all())
+        assert here == 9
+        assert everywhere >= here, "le compte global ne peut pas être inférieur au local"
+
+    def test_the_filter_holds_when_the_schema_is_not_first_in_the_search_path(
+        self, migrated: None, database_url: str
+    ) -> None:
+        """Le schéma courant n'est pas toujours la première entrée du chemin.
+
+        Un schéma inexistant placé devant est ignoré par PostgreSQL : le schéma
+        réel devient la deuxième entrée. Un filtre qui supposerait « la première
+        entrée du `search_path` » compterait alors les mauvaises contraintes, ou
+        zéro. Mesuré : avec `pg_catalog` en tête, `current_schema()` rend
+        `pg_catalog` et le compte tombe à zéro — la résolution `regclass`, elle,
+        reste juste.
+        """
+        from sqlalchemy import create_engine
+
+        from metreo_api.db import get_engine
+
+        if get_engine().dialect.name != "postgresql":
+            pytest.skip("le `search_path` n'existe que sur PostgreSQL")
+
+        shifted = create_engine(_shifted_search_path(database_url), future=True)
+        try:
+            with shifted.connect() as connection:
+                path = connection.execute(text("SHOW search_path")).scalar_one()
+                rows = connection.execute(text(COMPOSITE_KEYS_HERE)).all()
+        finally:
+            shifted.dispose()
+
+        assert path.startswith("schema_qui_nexiste_pas,"), path
+        assert len(rows) == 9, [row[0] for row in rows]
 
     def test_the_simple_keys_keep_their_actions(self, migrated: None) -> None:
         """Retirer la clé simple ferait perdre le `SET NULL` portable."""
