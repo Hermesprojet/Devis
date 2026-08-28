@@ -75,9 +75,17 @@ Un test interdit `UPDATE`, `DELETE`, `INSERT` et `op.execute` dans la révision.
 
 ## Actions référentielles — le piège
 
+> **Périmé depuis la révision `b4f2c7d81a05`.** Ce qui suit décrivait l'état
+> initial, où les clés composites ne portaient aucune action. Elles en portent
+> une désormais — celle de la clé simple qu'elles doublent — parce que sans ce
+> reflet le résultat d'une suppression dépendait de l'ordre de création des
+> contraintes. La section « Une action, deux déclarations » plus bas dit l'état
+> réel. Le passage est conservé parce qu'il explique le piège, toujours valable.
+
 Un `ON DELETE SET NULL` composite tenterait de vider aussi `organization_id`,
-qui est NOT NULL : la suppression échouerait. Les clés composites ne portent
-donc **aucune** action référentielle. Les clés simples gardent les leurs : elles
+qui est NOT NULL : la suppression échouerait. Les clés composites ne portaient
+donc, **à l'origine**, aucune action référentielle. Les clés simples gardent les
+leurs : elles
 posent NULL sur le parent, puis la clé composite — `MATCH SIMPLE` — ne vérifie
 plus rien, une colonne étant NULL.
 
@@ -102,6 +110,57 @@ ACTION` — **refuse** la suppression du prix : `update or delete on table
 "price_items" violates foreign key constraint "fk_boq_items_price_item_tenant"`.
 Une relation optionnelle deviendrait bloquante. La coexistence des deux clés est
 la conception, pas un reste.
+
+## Une action, deux déclarations
+
+Les modèles déclarent désormais l'action que la migration pose. Ils ne la
+déclaraient pas, et un commentaire disait qu'elle « appartient aux migrations ».
+
+Ce n'était pas un choix de style. `alembic check` sur une base à jour rendait
+**seize opérations** — huit couples `remove_fk` / `add_fk` — parce qu'il voit,
+sous un même nom, une contrainte définie autrement en base et dans les modèles.
+Tant que rien ne lançait `alembic check`, la dérive restait invisible.
+
+| Contrainte | Action |
+| --- | --- |
+| `fk_bills_of_quantities_project_tenant` | `CASCADE` |
+| `fk_price_book_versions_price_book_tenant` | `CASCADE` |
+| `fk_price_items_price_book_version_tenant` | `CASCADE` |
+| `fk_boq_items_boq_tenant` | `CASCADE` |
+| `fk_estimates_boq_tenant` | `CASCADE` |
+| `fk_boq_items_price_item_tenant` | `SET NULL (price_item_id)` |
+| `fk_boq_items_composite_price_tenant` | `SET NULL (composite_price_id)` |
+| `fk_composite_components_price_item_tenant` | `SET NULL (price_item_id)` |
+| `fk_estimates_price_book_version_tenant` | **aucune** — sa clé simple n'en porte pas |
+
+Aucune action n'a été modifiée : les huit clauses sont recopiées du tableau
+`RELATIONS` de la révision, et un test les relit là plutôt que d'en tenir une
+copie.
+
+### Pourquoi la vérification est PostgreSQL-only
+
+SQLite refuse d'analyser `ON DELETE SET NULL (colonne)` — erreur de syntaxe — et
+la forme nue y échoue sur `NOT NULL constraint failed: organization_id`,
+exactement le piège que la liste de colonnes évite. La révision est donc un
+no-op délibéré sous SQLite, où les deux ordres de déclaration donnent de toute
+façon le même résultat.
+
+Trois relations ne sont donc pas représentables fidèlement sous SQLite. Elles
+sont **nommées** dans `test_referential_action_drift.py`, et un contrôle vérifie
+que cette liste vaut exactement les relations `SET NULL` : une exception qui
+s'allonge sans que personne ne le voie cesse d'en être une.
+
+### Ce qui est vérifié
+
+`alembic check` rend « No new upgrade operations detected », code 0 — après la
+montée, après un downgrade complet suivi d'une remontée, et après un export
+`pg_dump` restauré dans une base neuve. Dans cette dernière, la clé simple
+renommée pour trier **après** la composite, la suppression d'un prix met la
+référence à NULL et laisse `organization_id` intact.
+
+Confronté au catalogue, neuf contraintes, zéro écart entre le modèle et
+`pg_get_constraintdef`, et zéro liste `SET NULL` contenant `organization_id` —
+relu dans `confdelsetcols`, pas dans le texte de la définition.
 
 ## Verrous attendus
 
