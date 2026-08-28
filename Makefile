@@ -243,7 +243,12 @@ release-gate: ## La porte stricte : rien d'ignoré, PostgreSQL jetable obligatoi
 	@# aucun `downgrade base` : l'aller-retour a sa propre base.
 	@$(PY) scripts/check_disposable_database.py \
 		"$(METREO_TEST_DATABASE_URL)" --label "make release-gate"
-	@$(MAKE) --no-print-directory verify METREO_TEST_DATABASE_URL="$(METREO_TEST_DATABASE_URL)"
+	@# METREO_REQUIRE_WEB_INSTALL : cette porte lance Playwright, elle ne peut
+	@# donc pas tourner sans installation JavaScript. Le contrôle « le paquet
+	@# next réellement posé est conforme » n'a alors plus le droit de s'ignorer,
+	@# et le décompte de la suite cesse de dépendre de l'état de la machine.
+	@$(MAKE) --no-print-directory verify METREO_TEST_DATABASE_URL="$(METREO_TEST_DATABASE_URL)" \
+		METREO_REQUIRE_WEB_INSTALL=1
 	@# L'aller-retour des migrations ne touche PAS la base fournie : le script
 	@# crée la sienne sur le même serveur, et ne détruit que celle-là. Un nom
 	@# rassurant n'est pas une preuve qu'une base est jetable — « metreo_gate »
