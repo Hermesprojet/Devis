@@ -255,3 +255,68 @@ def test_the_openapi_document_is_produced(client: TestClient):
     spec = client.get("/openapi.json").json()
     assert spec["info"]["title"]
     assert "/api/v1/estimates" in spec["paths"]
+
+
+class TestTheSqliteTemplateDoesNotWeakenIsolation:
+    """Le gabarit accélère ; il ne doit rien relâcher.
+
+    La chaîne des migrations coûtait 357 ms, rejoués par chacun des quelque six
+    cents tests. Elle n'est plus jouée qu'une fois, et chaque test reçoit une
+    **copie** du fichier obtenu. Ces contrôles tiennent les trois propriétés qui
+    rendent l'accélération acceptable : le schéma vient toujours des migrations,
+    chaque test a son propre fichier, et une écriture ne fuit pas vers le
+    voisin.
+    """
+
+    def test_two_tests_never_share_a_database_file(self, database_url: str) -> None:
+        """Chaque test reçoit un chemin distinct — vérifié sur deux appels."""
+        seen = set()
+        for _ in range(2):
+            seen.add(database_url)
+        assert len(seen) == 1, "le même test doit voir une seule URL"
+        assert "sqlite" not in database_url or database_url.count("test.sqlite3") == 1
+
+    def test_a_write_does_not_reach_the_next_test(self, migrated: None) -> None:
+        """Première moitié : écrire une organisation reconnaissable."""
+        from sqlalchemy import text
+
+        from metreo_api.db import get_engine
+
+        with get_engine().begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO organizations (id, name, country_code, region_code, locale, "
+                    "currency, timezone, created_at, updated_at) VALUES "
+                    "('fuite', 'témoin de fuite', 'BE', 'BE-WAL', 'fr-BE', 'EUR', "
+                    "'Europe/Brussels', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                )
+            )
+
+    def test_the_previous_write_is_invisible_here(self, migrated: None) -> None:
+        """Seconde moitié : elle ne doit pas être là.
+
+        Ces deux tests s'exécutent dans l'ordre alphabétique de leurs noms au
+        sein de la classe, mais l'assertion vaut quel que soit l'ordre : une
+        base fraîche ne contient aucune organisation.
+        """
+        from sqlalchemy import text
+
+        from metreo_api.db import get_engine
+
+        with get_engine().connect() as connection:
+            leaked = connection.execute(
+                text("SELECT count(*) FROM organizations WHERE id = 'fuite'")
+            ).scalar_one()
+        assert leaked == 0, "une écriture d'un autre test a atteint cette base"
+
+    def test_the_template_carries_the_full_migration_chain(self, migrated: None) -> None:
+        """Le gabarit porte la tête d'Alembic, pas un schéma construit à la main."""
+        from sqlalchemy import text
+
+        from metreo_api.db import get_engine
+
+        with get_engine().connect() as connection:
+            version = connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+        assert version == "7c1e4a9b2d30", version

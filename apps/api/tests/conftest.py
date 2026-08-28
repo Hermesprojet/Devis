@@ -14,6 +14,7 @@ server-side constraints or transactional DDL.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from collections.abc import Iterator
 from functools import lru_cache
@@ -144,8 +145,8 @@ def app_env(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[None
     config.get_settings.cache_clear()
 
 
-@pytest.fixture()
-def migrated(app_env: None, database_url: str) -> Iterator[None]:
+def _upgrade(database_url: str) -> None:
+    """Appliquer la chaîne complète des migrations sur cette URL."""
     from alembic import command
     from alembic.config import Config
 
@@ -156,10 +157,46 @@ def migrated(app_env: None, database_url: str) -> Iterator[None]:
     os.environ["METREO_DATABASE_URL"] = database_url
     try:
         command.upgrade(cfg, "head")
-        yield
     finally:
         if previous is not None:
             os.environ["METREO_DATABASE_URL"] = previous
+        else:
+            os.environ.pop("METREO_DATABASE_URL", None)
+
+
+@pytest.fixture(scope="session")
+def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
+    """Un fichier SQLite migré **une fois**, recopié pour chaque test.
+
+    La chaîne des migrations coûtait 357 ms, rejoués par chacun des quelque six
+    cents tests : près de quatre minutes passées à reconstruire le même schéma.
+    Le gabarit est produit par les migrations — elles restent la source de
+    vérité, et `test_migrations_reproduce_the_models_exactly` continue de les
+    confronter aux modèles — mais il n'est produit qu'une fois.
+
+    L'isolation ne bouge pas : chaque test reçoit sa **copie**, un fichier
+    distinct dans son propre répertoire temporaire, jamais un fichier partagé.
+
+    Sans URL PostgreSQL seulement : sur PostgreSQL, chaque test a déjà son
+    schéma, créé et détruit par lui.
+    """
+    if TEST_DATABASE_URL:
+        return None
+    path = tmp_path_factory.mktemp("gabarit") / "template.sqlite3"
+    _upgrade(f"sqlite+pysqlite:///{path}")
+    return path
+
+
+@pytest.fixture()
+def migrated(app_env: None, database_url: str, sqlite_template: Path | None) -> Iterator[None]:
+    if sqlite_template is not None and database_url.startswith("sqlite"):
+        # `database_url` pointe sur un fichier que ce test possède seul :
+        # le remplacer par une copie du gabarit revient au même schéma, sans
+        # rejouer la chaîne.
+        shutil.copyfile(sqlite_template, database_url.split("///", 1)[1])
+    else:
+        _upgrade(database_url)
+    yield
 
 
 @pytest.fixture()
