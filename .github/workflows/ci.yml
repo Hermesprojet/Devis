@@ -112,6 +112,24 @@ jobs:
         env:
           METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
         run: PYTHONPATH=src alembic -c alembic.ini upgrade head
+      - name: Le schéma migré correspond aux modèles
+        # `alembic check` seul, contre une base arbitraire, ne prouve rien : il
+        # faut d'abord une base DONT CE RUN EST PROPRIÉTAIRE. Le script crée la
+        # sienne — le `CREATE DATABASE` est la preuve, PostgreSQL le refuse si le
+        # nom existe — la migre, refuse deux têtes, refuse la moindre opération
+        # proposée, puis la détruit dans un `finally`, succès ou échec.
+        #
+        # PostgreSQL obligatoire, et ce n'est pas un confort : trois clés
+        # composites portent `ON DELETE SET NULL (colonne)`, que SQLite refuse
+        # d'analyser et dont la forme nue échouerait sur `organization_id`,
+        # NOT NULL. Une porte qui accepterait SQLite laisserait passer
+        # exactement la dérive qu'elle ferme.
+        #
+        # Aucun identifiant ne sort : les URL ne paraissent que redigées.
+        run: >-
+          python scripts/schema_drift_gate.py
+          --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+
       - name: Jeu de démonstration
         working-directory: apps/api
         env:
