@@ -1,0 +1,347 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Aucun job de cette CI n'écrit sur le dépôt : elle ne lit que le code.
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "22"
+
+jobs:
+  domain:
+    name: Domaine (calculs déterministes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Installer
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints/api.txt ./packages/domain pytest ruff mypy
+      - name: Format et lint
+        run: |
+          ruff format --check packages/domain
+          ruff check packages/domain
+      - name: Typage
+        run: mypy packages/domain/src/metreo_domain
+      - name: Tests
+        run: pytest packages/domain/tests -q
+
+  api-sqlite:
+    name: API (SQLite, sans service)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Installer
+        run: |
+          python -m pip install --upgrade pip
+          # Le paquet déclare ses dépendances : les installer par lui, et non
+          # par une liste parallèle qui masquerait un manque dans pyproject.toml.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev]"
+      - name: Format et lint
+        # scripts/ y est joint : il porte désormais de la logique — le
+        # contrôle d'installation propre et celui des skills — et non plus
+        # de simples README.
+        run: |
+          ruff format --check apps/api/src apps/api/tests scripts
+          ruff check apps/api/src apps/api/tests scripts
+      - name: Typage
+        run: |
+          mypy apps/api/src/metreo_api
+          mypy scripts
+      - name: Tests
+        working-directory: apps/api
+        run: pytest -q
+
+  api-postgres:
+    name: API (PostgreSQL + PostGIS)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: metreo
+          POSTGRES_PASSWORD: metreo
+          POSTGRES_DB: metreo_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U metreo -d metreo"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+      METREO_ENVIRONMENT: test
+      METREO_JWT_SECRET: ci-secret-not-used-anywhere-else-0123456789
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Installer
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
+      - name: Aller-retour des migrations, dans une base créée par ce run
+        # Le service PostgreSQL est éphémère — il meurt avec le job — mais
+        # l'aller-retour ne s'appuie pas là-dessus : il crée sa propre base au
+        # nom tiré au hasard et ne détruit que celle-là. Un `downgrade base`
+        # ne peut donc atteindre aucune base préexistante, ici comme ailleurs.
+        run: |
+          python scripts/migration_roundtrip.py \
+            --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci --seed
+      - name: Appliquer les migrations sur la base du job
+        working-directory: apps/api
+        # `upgrade head` seul, non destructif. Séparé de l'aller-retour, qui
+        # travaille dans sa propre base : sans cette étape, la base du job
+        # n'aurait plus de schéma — c'est exactement ce que cette CI a
+        # attrapé quand l'aller-retour a été déplacé.
+        env:
+          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+        run: PYTHONPATH=src alembic -c alembic.ini upgrade head
+      - name: Jeu de démonstration
+        working-directory: apps/api
+        env:
+          METREO_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+        run: PYTHONPATH=src python -m metreo_api.seed
+      - name: Suite complète sur PostgreSQL réel
+        working-directory: apps/api
+        # METREO_TEST_DATABASE_URL fait tourner chaque test dans son propre
+        # schéma sur le serveur ; sans lui la conftest retombe sur SQLite et ce
+        # job ne prouverait rien sur NUMERIC, les contraintes ou le DDL
+        # transactionnel.
+        env:
+          METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+        run: pytest -q
+      - name: Les tests PostgreSQL-only ont réellement tourné
+        working-directory: apps/api
+        # Ils s'ignorent d'eux-mêmes hors PostgreSQL, ce qui est correct — mais
+        # une variable mal orthographiée les ignorerait ici aussi, en silence,
+        # et ce job resterait vert sans avoir vérifié une seule course. Le
+        # contrôle porte donc sur le fait qu'ils ont tourné, pas seulement
+        # qu'ils n'ont pas échoué.
+        #
+        # `shell: bash` ajoute `-o pipefail` au défaut `bash -e {0}` de GitHub
+        # Actions. Sans lui, le code de sortie d'un pipeline est celui de sa
+        # DERNIÈRE commande : la première version écrivait « pytest | tee » et
+        # ne voyait donc jamais un échec de pytest, seulement un skip.
+        shell: bash
+        env:
+          METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+        run: |
+          set -o pipefail
+          pytest tests/test_version_concurrency.py tests/test_write_contention.py \
+            tests/test_audit_concurrency.py tests/test_import_idempotence.py \
+            tests/test_migration_roundtrip.py \
+            -q --no-header | tee /tmp/concurrence.txt
+          # `grep '[0-9]+ passed'` acceptait « 2 failed, 3 passed » : le résumé
+          # d'un échec partiel contient le mot. On exige donc un résumé SANS
+          # échec ni ignoré, en plus du code de sortie.
+          if grep -qE '[0-9]+ (failed|error)' /tmp/concurrence.txt; then
+            echo "Des tests de concurrence ont échoué." >&2
+            exit 1
+          fi
+          if grep -qE '[0-9]+ skipped|no tests ran' /tmp/concurrence.txt; then
+            echo "Les tests de concurrence ont été ignorés sur le job PostgreSQL." >&2
+            exit 1
+          fi
+          grep -qE '^[0-9]+ passed' /tmp/concurrence.txt
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Installer (verrouillé)
+        run: npm ci
+      - name: Typage
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  e2e:
+    name: Parcours web (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Installer l'API
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints/api.txt ./packages/domain ./apps/api
+      - name: Installer le web (verrouillé)
+        working-directory: apps/web
+        run: npm ci
+      - name: Installer Chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Parcours de bout en bout
+        working-directory: apps/web
+        # La configuration migre et sème une base jetable, construit le front
+        # avec l'URL de l'API de test — NEXT_PUBLIC_* est inliné à la
+        # compilation — puis démarre les deux serveurs.
+        env:
+          METREO_PYTHON: python
+        run: npx playwright test
+      - name: Rapport en cas d'échec
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-traces
+          path: apps/web/test-results/
+          retention-days: 7
+
+  skills:
+    name: Skills du dépôt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Historique complet : le contrôle ci-dessous vérifie que le commit
+          # cité par docs/PHASE1_VERIFICATION.md existe réellement.
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Frontmatter, chemins cités, données volatiles
+        run: python scripts/check_skills.py
+      - name: Le dossier de vérification décrit un commit réel
+        # docs/PHASE1_VERIFICATION.md porte des compteurs volontairement figés.
+        # Ils n'ont de sens que rattachés à un commit qui existe.
+        run: |
+          commit=$(grep -oE '\b[0-9a-f]{40}\b' docs/PHASE1_VERIFICATION.md | head -1)
+          if [ -z "$commit" ]; then
+            echo "Aucun commit complet cité dans docs/PHASE1_VERIFICATION.md." >&2
+            exit 1
+          fi
+          git cat-file -e "$commit^{commit}" 2>/dev/null \
+            || { echo "Le commit $commit cité n'existe pas dans ce dépôt." >&2; exit 1; }
+          echo "Dossier de vérification rattaché à $commit"
+
+
+  clean-install:
+    name: Installation depuis les manifestes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Un environnement vierge démarre-t-il, et sur quelles versions ?
+        # Rien n'est préinstallé ici : le script crée son propre venv et
+        # n'installe que packages/domain et apps/api. Un extra oublié dans un
+        # pyproject.toml échoue ici, et non chez le premier développeur.
+        #
+        # Démarrer ne suffit pas : le script relève ensuite les versions
+        # réellement posées, les confronte au verrou dans les deux sens, et
+        # parcourt la clôture des exigences déclarées, extras compris.
+        run: python scripts/check_clean_install.py --constraints constraints/api.txt
+
+  containers:
+    name: Images Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Composition valide
+        run: docker compose -f infra/docker-compose.yml config
+      - name: Construire l'image de l'API
+        run: docker build -f infra/api.Dockerfile -t metreo-api:ci .
+      - name: Construire l'image du front
+        run: docker build -f infra/web.Dockerfile -t metreo-web:ci .
+      - name: L'API ne tourne pas en root
+        # Le point du contrôle : une image qui traitera en phase 2 des fichiers
+        # venant de tiers ne doit pas exécuter son processus en uid 0.
+        run: |
+          uid=$(docker run --rm --entrypoint id metreo-api:ci -u)
+          echo "uid effectif de l'API : $uid"
+          test "$uid" != "0"
+      - name: Le front ne tourne pas en root
+        run: |
+          uid=$(docker run --rm --entrypoint id metreo-web:ci -u)
+          echo "uid effectif du front : $uid"
+          test "$uid" != "0"
+      - name: Les images déclarent un point de santé
+        run: |
+          for image in metreo-api:ci metreo-web:ci; do
+            test "$(docker inspect -f '{{if .Config.Healthcheck}}oui{{else}}non{{end}}' "$image")" = "oui"
+            echo "$image : point de santé déclaré"
+          done
+
+  audit:
+    name: Vulnérabilités des dépendances
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Dépendances Python
+        run: |
+          python -m pip install --upgrade pip pip-audit
+          # Bloquant. Un rapport consigné mais non bloquant laisse une
+          # vulnérabilité critique passer avec une CI verte : la seule
+          # différence entre « surveillé » et « ignoré » est le code de sortie.
+          pip-audit -r constraints/api.txt --progress-spinner off
+      - name: Dépendances JavaScript
+        working-directory: apps/web
+        run: |
+          npm ci
+          # `--audit-level=high` ne fait échouer que sur haute et critique : les
+          # avis modérés sont affichés sans bloquer une livraison.
+          npm audit --audit-level=high
+      - name: Exceptions en vigueur
+        run: |
+          # Aucune exception aujourd'hui. Si une correction devient impossible
+          # à court terme, l'exception se déclare ici avec son identifiant
+          # d'avis, sa justification, son responsable et sa date d'expiration —
+          # jamais par un `|| true` qui vaut pour toutes les vulnérabilités,
+          # y compris celles qui n'existent pas encore.
+          echo "Aucune exception de vulnérabilité en vigueur."
+
+  secrets:
+    name: Aucun secret commité
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Refuser un .env versionné
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "Un fichier .env est versionné." >&2
+            exit 1
+          fi
+      - name: Motifs de secrets évidents
+        run: |
+          if git grep -nEI '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})' \
+               -- . ':!.github/workflows/ci.yml'; then
+            echo "Motif de secret détecté." >&2
+            exit 1
+          fi

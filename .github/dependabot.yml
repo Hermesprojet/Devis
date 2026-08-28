@@ -1,0 +1,40 @@
+# Surveillance modérée des dépendances. Hebdomadaire, sans fusion automatique :
+# une montée de version se relit et se teste comme n'importe quel changement.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dépendances", "javascript"]
+    groups:
+      # Next et son écosystème montent ensemble ou pas du tout : les séparer
+      # produit des combinaisons que personne n'a testées.
+      next:
+        patterns: ["next", "react", "react-dom", "@types/react", "@types/react-dom"]
+
+  - package-ecosystem: pip
+    directory: /apps/api
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dépendances", "python"]
+
+  - package-ecosystem: pip
+    directory: /packages/domain
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: ["dépendances", "python"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: ["dépendances", "ci"]

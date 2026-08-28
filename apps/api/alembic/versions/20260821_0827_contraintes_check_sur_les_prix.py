@@ -1,0 +1,94 @@
+"""Contraintes CHECK sur les prix — dernier rempart
+
+Le contrat applicatif (`services/price_contract.py`) produit les erreurs
+lisibles ; ces contraintes protègent ce qui ne passe pas par lui : scripts
+d'exploitation, migrations futures, correctifs appliqués à la main, et
+défauts applicatifs à venir.
+
+Elles sont volontairement grossières. Une contrainte SQL ne remplace pas une
+validation métier — elle ne sait pas dire *pourquoi* — mais elle rend
+impossible une écriture qu'aucun humain n'a voulue.
+
+Les lignes existantes sont **inspectées avant** la création des
+contraintes. Sans cela, une base déjà peuplée s'arrête sur une
+`IntegrityError` brute — rencontrée réellement sur une base de
+développement antérieure au correctif du jeu de démonstration — qui nomme
+la contrainte mais ni la ligne ni la valeur fautives. Corriger devient une
+enquête là où la migration connaît déjà la réponse.
+
+Revision ID: 105f11dede7e
+Revises: c6526f663ff3
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+
+revision: str = "105f11dede7e"
+down_revision: str | None = "c6526f663ff3"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+#: Écrites en SQL portable : ni ENUM PostgreSQL, ni fonction propre à SQLite.
+CONSTRAINTS = (
+    (
+        "ck_price_item_resource_kind",
+        "resource_kind IN ('material','labor','equipment','transport',"
+        "'disposal','subcontract','other')",
+    ),
+    (
+        "ck_price_item_status",
+        "status IN ('active','draft','archived','superseded')",
+    ),
+    (
+        "ck_price_item_confidence",
+        "confidence IN ('declared','quoted','contracted','estimated')",
+    ),
+    (
+        # Les deux dates sont facultatives ; la contrainte ne mord que si les
+        # deux existent.
+        "ck_price_item_validity_range",
+        "valid_from IS NULL OR valid_to IS NULL OR valid_to >= valid_from",
+    ),
+    (
+        "ck_price_item_lead_time",
+        "lead_time_days IS NULL OR (lead_time_days >= 0 AND lead_time_days <= 3650)",
+    ),
+)
+
+
+def upgrade() -> None:
+    connection = op.get_bind()
+    offending: list[str] = []
+    for name, condition in CONSTRAINTS:
+        rows = connection.execute(
+            sa.text(f"SELECT id FROM price_items WHERE NOT ({condition})")  # noqa: S608
+        ).scalars()
+        identifiers = [str(identifier) for identifier in rows]
+        if identifiers:
+            shown = ", ".join(identifiers[:10])
+            more = f" (et {len(identifiers) - 10} autres)" if len(identifiers) > 10 else ""
+            offending.append(f"{name} : {shown}{more}")
+    if offending:
+        raise RuntimeError(
+            "Des prix existants violent les contraintes que cette migration "
+            "installe :\n  " + "\n  ".join(offending) + "\n"
+            "Corriger ces lignes avant de rejouer la migration. Choisir une "
+            "valeur de remplacement engage un prix, donc un devis : le choix "
+            "revient à un humain, pas à une migration."
+        )
+
+    # batch_alter_table : SQLite ne sait pas ajouter une contrainte à une table
+    # existante, Alembic la recrée donc.
+    with op.batch_alter_table("price_items", schema=None) as batch_op:
+        for name, condition in CONSTRAINTS:
+            batch_op.create_check_constraint(name, condition)
+
+
+def downgrade() -> None:
+    with op.batch_alter_table("price_items", schema=None) as batch_op:
+        for name, _ in reversed(CONSTRAINTS):
+            batch_op.drop_constraint(name, type_="check")

@@ -1,0 +1,6 @@
+code;libelle;famille;type;unite;prix_unitaire;devise;fournisseur;region;valide_du;source
+MAT-SAB-001;Sable stabilisé 0/4;Matériaux;materiau;m3;41,50;EUR;Carrière fictive Bel-Air;BE-WAL;2026-01-01;Donnée fictive de démonstration
+MAT-GEO-001;Géotextile non tissé 200 g/m²;Matériaux;materiau;m2;2,15;EUR;Négoce fictif Delta;BE-WAL;2026-01-01;Donnée fictive de démonstration
+MO-CHF-001;Chef d'équipe voirie (coût horaire chargé);Main-d'œuvre;main-d'oeuvre;h;52,80;EUR;;BE-WAL;2026-01-01;Donnée fictive de démonstration
+ENG-NIV-001;Niveleuse avec opérateur;Engins;engins;h;104,00;EUR;Loueur fictif Sud;BE-WAL;2026-01-01;Donnée fictive de démonstration
+EVA-BET-001;Traitement gravats de béton;Évacuation;evacuation;t;9,80;EUR;Centre fictif Recyval;BE-WAL;2026-01-01;Donnée fictive de démonstration
