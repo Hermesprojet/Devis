@@ -234,3 +234,146 @@ class TestTheReferentialActionsStillWork:
             text("SELECT count(*) FROM boq_items WHERE id = :i"), {"i": item_id}
         ).scalar_one()
         assert remaining == 0, "la cascade doit emporter la ligne"
+
+
+# --------------------------------------------------------------------------
+# Le préflight est-il seulement branché ?
+# --------------------------------------------------------------------------
+
+
+def _foreign_key_names(database_url: str, table: str) -> set[str]:
+    """Les noms de clés étrangères d'une table, sur les deux moteurs.
+
+    Passer par l'inspecteur plutôt que par un catalogue : `pg_constraint`
+    n'existe pas sous SQLite, et `sqlite_master` ne rend que du SQL à analyser.
+    """
+    from sqlalchemy import create_engine, inspect
+
+    engine = create_engine(database_url, future=True)
+    try:
+        return {key["name"] for key in inspect(engine).get_foreign_keys(table) if key.get("name")}
+    finally:
+        engine.dispose()
+
+
+def _upgrade_to(database_url: str, target: str) -> None:
+    """Jouer la chaîne jusqu'à une révision précise, sur cette URL."""
+    import os
+
+    from alembic import command
+    from alembic.config import Config
+
+    root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", database_url)
+    previous = os.environ.get("METREO_DATABASE_URL")
+    os.environ["METREO_DATABASE_URL"] = database_url
+    try:
+        command.upgrade(cfg, target)
+    finally:
+        if previous is not None:
+            os.environ["METREO_DATABASE_URL"] = previous
+        else:
+            os.environ.pop("METREO_DATABASE_URL", None)
+
+
+@pytest.fixture()
+def halfway(app_env: None, database_url: str) -> Any:
+    """Une base arrêtée **juste avant** la révision qui pose les clés composites.
+
+    Pas de `migrated` ici : c'est tout l'objet du test. La chaîne s'arrête à
+    `e2be18fcac1b`, où aucune contrainte composite n'existe encore — l'état
+    exact d'une base de production le jour du déploiement. Rien n'a besoin
+    d'être neutralisé pour y écrire une ligne croisée : la base l'accepte, et
+    c'est précisément le problème que la migration doit voir venir.
+    """
+    from metreo_api import models
+    from metreo_api.db import get_session_factory
+
+    _upgrade_to(database_url, revision.down_revision)
+    session = get_session_factory()()
+    try:
+        yield session, models, database_url
+    finally:
+        session.rollback()
+        session.close()
+
+
+class TestTheMigrationActuallyRunsThePreflight:
+    """Trouvé par falsification, et non par la revue.
+
+    Le préflight était éprouvé fonction par fonction : `inconsistencies` compte
+    juste, `_refuse` dit ce qu'il faut. Aucun test ne vérifiait qu'`upgrade`
+    l'appelle. Retirer l'appel de la révision laissait la suite **entièrement
+    verte** — dix tests sur dix — pendant que la migration posait ses
+    contraintes sans avoir rien regardé.
+
+    Un garde qu'on peut débrancher sans qu'un seul test bronche n'est pas un
+    garde. Ce test joue la vraie migration sur une vraie base incohérente.
+    """
+
+    def test_the_upgrade_halts_on_an_inconsistent_database(self, halfway: Any) -> None:
+        session, models, database_url = halfway
+        alpha, beta = _two_graphs(session, models)
+        session.add(
+            models.BillOfQuantities(
+                organization_id=alpha["org"], project_id=beta["project"], name="croisé"
+            )
+        )
+        session.commit()
+        session.close()
+
+        with pytest.raises(RuntimeError) as raised:
+            _upgrade_to(database_url, "head")
+
+        message = str(raised.value)
+        assert "fk_bills_of_quantities_project_tenant" in message, message
+        assert "1" in message, "le refus doit donner le nombre de lignes en cause"
+        assert "Aucune donnée n'a été modifiée" in message, message
+
+    def test_nothing_was_written_before_the_refusal(self, halfway: Any) -> None:
+        session, models, database_url = halfway
+        alpha, beta = _two_graphs(session, models)
+        session.add(
+            models.BillOfQuantities(
+                organization_id=alpha["org"], project_id=beta["project"], name="croisé"
+            )
+        )
+        session.commit()
+        before = session.execute(text("SELECT count(*) FROM bills_of_quantities")).scalar_one()
+        session.close()
+
+        with pytest.raises(RuntimeError):
+            _upgrade_to(database_url, "head")
+
+        from metreo_api.db import get_session_factory
+
+        after_session = get_session_factory()()
+        try:
+            after = after_session.execute(
+                text("SELECT count(*) FROM bills_of_quantities")
+            ).scalar_one()
+            assert after == before, "la migration refusée ne doit rien avoir supprimé"
+        finally:
+            after_session.close()
+
+        names = _foreign_key_names(database_url, "bills_of_quantities")
+        assert "fk_bills_of_quantities_project_tenant" not in names, (
+            "aucune contrainte composite ne doit avoir été posée après le refus"
+        )
+
+    def test_a_clean_database_at_the_same_point_migrates_through(self, halfway: Any) -> None:
+        """Le pendant indispensable : le préflight ne bloque pas une base saine.
+
+        Sans lui, le test précédent serait satisfait par une migration qui
+        refuse toujours.
+        """
+        session, models, database_url = halfway
+        _two_graphs(session, models)
+        session.close()
+
+        _upgrade_to(database_url, "head")
+
+        names = _foreign_key_names(database_url, "bills_of_quantities")
+        assert "fk_bills_of_quantities_project_tenant" in names

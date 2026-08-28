@@ -60,6 +60,14 @@ nommant la relation et le nombre de lignes, et donne la procédure. Rien d'autre
 que des compteurs ne sort : ni identifiant, ni référence de projet, ni nom de
 client n'atteint un journal de migration.
 
+Ce qu'il achète, mesuré en le débranchant. Sans lui, PostgreSQL échoue au milieu
+de la migration sur un `ForeignKeyViolation` qui ne nomme qu'une contrainte —
+l'opérateur ignore combien de lignes, lesquelles des neuf relations, et quoi
+faire. Sous SQLite, pire : `batch_alter_table` recopie la table sans vérifier, et
+la migration **réussit silencieusement** en posant des contraintes par-dessus des
+lignes qui les violent. Le préflight rend les deux moteurs lisibles et
+identiques.
+
 Réattribuer une ligne à une autre organisation ou la rattacher à un autre
 parent change un montant de devis. C'est une décision d'exploitation.
 
@@ -75,6 +83,25 @@ plus rien, une colonne étant NULL.
 
 Les deux chemins sont couverts : supprimer un prix met la référence à NULL sans
 vider l'organisation ; supprimer un bordereau emporte bien ses lignes.
+
+Mesuré, et plus subtil que la phrase ci-dessus. Un `SET NULL` posé sur la clé
+composite **seule** échoue bien : `null value in column "organization_id" of
+relation "boq_items" violates not-null constraint`. Mais si la clé simple existe
+encore et que son déclencheur passe **avant**, elle a déjà mis `price_item_id` à
+NULL ; le déclencheur composite ne trouve alors plus aucune ligne à modifier, et
+la suppression réussit. L'ordre des déclencheurs `RI_` dépend de l'ordre de
+création des contraintes, pas de leur nature.
+
+Autrement dit : l'action référentielle composite n'est pas toujours fatale, elle
+est **fatale ou inoffensive selon un ordre que personne ne contrôle**. C'est une
+raison de plus de n'en poser aucune, pas une raison d'en poser une.
+
+Symétriquement, la clé simple porte réellement quelque chose. Retirée,
+`boq_items_price_item_id_fkey` ne pose plus NULL, et la clé composite — `NO
+ACTION` — **refuse** la suppression du prix : `update or delete on table
+"price_items" violates foreign key constraint "fk_boq_items_price_item_tenant"`.
+Une relation optionnelle deviendrait bloquante. La coexistence des deux clés est
+la conception, pas un reste.
 
 ## Verrous attendus
 
