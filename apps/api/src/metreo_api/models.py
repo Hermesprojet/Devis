@@ -311,6 +311,7 @@ class PriceBookVersion(TimestampMixin, Base):
             ["price_book_id", "organization_id"],
             ["price_books.id", "price_books.organization_id"],
             name="fk_price_book_versions_price_book_tenant",
+            ondelete="CASCADE",
         ),
         UniqueConstraint("price_book_id", "version_number", name="uq_pbv_book_number"),
     )
@@ -347,6 +348,7 @@ class PriceItem(TimestampMixin, Base):
             ["price_book_version_id", "organization_id"],
             ["price_book_versions.id", "price_book_versions.organization_id"],
             name="fk_price_items_price_book_version_tenant",
+            ondelete="CASCADE",
         ),
         CheckConstraint(
             "resource_kind IN ('material','labor','equipment','transport',"
@@ -500,6 +502,7 @@ class CompositeComponentRow(TimestampMixin, Base):
             ["price_item_id", "organization_id"],
             ["price_items.id", "price_items.organization_id"],
             name="fk_composite_components_price_item_tenant",
+            ondelete="SET NULL (price_item_id)",
         ),
         CheckConstraint(
             "component_type IN ('consumption','output_rate','rotation','lump_sum')",
@@ -647,6 +650,7 @@ class BillOfQuantities(TimestampMixin, Base):
             ["project_id", "organization_id"],
             ["projects.id", "projects.organization_id"],
             name="fk_bills_of_quantities_project_tenant",
+            ondelete="CASCADE",
         ),
     )
 
@@ -693,16 +697,19 @@ class BoqItem(TimestampMixin, Base):
             ["boq_id", "organization_id"],
             ["bills_of_quantities.id", "bills_of_quantities.organization_id"],
             name="fk_boq_items_boq_tenant",
+            ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             ["price_item_id", "organization_id"],
             ["price_items.id", "price_items.organization_id"],
             name="fk_boq_items_price_item_tenant",
+            ondelete="SET NULL (price_item_id)",
         ),
         ForeignKeyConstraint(
             ["composite_price_id", "organization_id"],
             ["composite_prices.id", "composite_prices.organization_id"],
             name="fk_boq_items_composite_price_tenant",
+            ondelete="SET NULL (composite_price_id)",
         ),
         CheckConstraint(
             "price_item_id IS NULL OR composite_price_id IS NULL",
@@ -785,6 +792,7 @@ class Estimate(TimestampMixin, Base):
             ["boq_id", "organization_id"],
             ["bills_of_quantities.id", "bills_of_quantities.organization_id"],
             name="fk_estimates_boq_tenant",
+            ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             ["price_book_version_id", "organization_id"],

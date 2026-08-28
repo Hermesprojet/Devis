@@ -13,6 +13,7 @@ server-side constraints or transactional DDL.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
 import shutil
@@ -20,6 +21,7 @@ import sys
 from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -183,41 +185,132 @@ def alembic_head() -> str:
 
 
 def schema_fingerprint() -> str:
-    """Ce qui doit invalider un gabarit : la tête ET la forme des modèles.
+    """Ce qui doit invalider un gabarit : la tête ET la STRUCTURE des modèles.
 
-    La tête seule ne suffit pas. Modifier une colonne dans les modèles sans
-    écrire de révision laisse la tête inchangée ; un gabarit conservé serait
-    alors en avance ou en retard sur ce que les tests croient interroger. Le
-    contrôle qui confronte migrations et modèles existe, mais il tournerait
-    CONTRE un gabarit périmé, et son diagnostic serait illisible.
+    La tête seule ne suffit pas : une colonne modifiée sans révision la laisse
+    inchangée. Mais la liste des NOMS ne suffisait pas non plus, et c'était un
+    défaut réel de la première version — mesuré : changer `String(60)` en
+    `String(600)`, passer `nullable=False` à `True` et ajouter une
+    `UniqueConstraint` laissait l'empreinte strictement identique. Elle
+    prétendait couvrir « la forme des modèles » et ne couvrait que leurs noms.
 
-    L'empreinte couvre donc les deux : la révision de tête, et la liste
-    ordonnée des tables et de leurs colonnes telle que les modèles la
-    déclarent.
+    Elle couvre maintenant, pour chaque table : le type rendu en chaîne, la
+    nullabilité, la valeur par défaut, la clé primaire, et les contraintes de
+    table — unicités, clés étrangères avec leurs actions référentielles,
+    contraintes CHECK — puis les index. Plus la révision de tête.
     """
     from metreo_api.models import Base
 
-    shape = ";".join(
-        f"{name}:{','.join(sorted(column.name for column in table.columns))}"
-        for name, table in sorted(Base.metadata.tables.items())
-    )
-    return hashlib.sha256(f"{alembic_head()}|{shape}".encode()).hexdigest()
+    def colonne(column: Any) -> str:
+        defaut = column.server_default
+        rendu_defaut = str(getattr(defaut, "arg", defaut)) if defaut is not None else ""
+        return (
+            f"{column.name}|{column.type!s}|null={column.nullable:d}"
+            f"|pk={column.primary_key:d}|def={rendu_defaut}"
+        )
+
+    def contrainte(c: Any) -> str:
+        from sqlalchemy import (
+            CheckConstraint,
+            ForeignKeyConstraint,
+            PrimaryKeyConstraint,
+            UniqueConstraint,
+        )
+
+        colonnes = ",".join(sorted(col.name for col in getattr(c, "columns", [])))
+        if isinstance(c, ForeignKeyConstraint):
+            cibles = ",".join(sorted(str(fk.target_fullname) for fk in c.elements))
+            return f"FK:{c.name}:{colonnes}->{cibles}:del={c.ondelete}:upd={c.onupdate}"
+        if isinstance(c, UniqueConstraint):
+            return f"UQ:{c.name}:{colonnes}"
+        if isinstance(c, PrimaryKeyConstraint):
+            return f"PK:{c.name}:{colonnes}"
+        if isinstance(c, CheckConstraint):
+            return f"CK:{c.name}:{c.sqltext!s}"
+        return f"??:{type(c).__name__}:{c.name}:{colonnes}"
+
+    parts = []
+    for name, table in sorted(Base.metadata.tables.items()):
+        colonnes = ",".join(colonne(c) for c in sorted(table.columns, key=lambda c: c.name))
+        contraintes = ",".join(sorted(contrainte(c) for c in table.constraints))
+        index = ",".join(
+            sorted(
+                f"{i.name}:{','.join(sorted(col.name for col in i.columns))}:u={i.unique:d}"
+                for i in table.indexes
+            )
+        )
+        parts.append(f"{name}[{colonnes}][{contraintes}][{index}]")
+    return hashlib.sha256(f"{alembic_head()}|{';'.join(parts)}".encode()).hexdigest()
+
+
+#: Un fichier SQLite valide commence par ces seize octets, et un fichier plus
+#: court que sa page d'en-tête ne peut pas être une base.
+SQLITE_MAGIC = b"SQLite format 3\x00"
+SQLITE_MINIMUM_BYTES = 4096
+
+
+def template_is_intact(template: Path) -> bool:
+    """Le fichier est-il une base SQLite lisible, et pas un tronçon ?
+
+    L'estampille disait à quoi le gabarit correspond, jamais s'il est entier.
+    Mesuré : un gabarit ramené de 417 792 à 8 192 octets, estampille intacte,
+    était recopié sans que rien ne le voie, et le test suivant tombait sur
+    « database disk image is malformed » — très loin de sa cause.
+
+    Trois contrôles, du moins cher au plus cher : la taille, les seize octets
+    d'en-tête, puis `PRAGMA integrity_check` qui lit réellement les pages.
+    """
+    import sqlite3
+
+    try:
+        if template.stat().st_size < SQLITE_MINIMUM_BYTES:
+            return False
+        with template.open("rb") as handle:
+            if handle.read(len(SQLITE_MAGIC)) != SQLITE_MAGIC:
+                return False
+    except OSError:
+        return False
+
+    connection = sqlite3.connect(f"file:{template}?mode=ro", uri=True)
+    try:
+        verdict = connection.execute("PRAGMA integrity_check").fetchone()
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        connection.close()
+    return bool(verdict) and verdict[0] == "ok"
+
+
+def sidecars_beside(template: Path) -> list[str]:
+    """Les fichiers annexes présents à côté de ce gabarit, s'il y en a."""
+    return [
+        suffix for suffix in SQLITE_SIDECARS if template.with_name(template.name + suffix).exists()
+    ]
 
 
 def template_is_current(template: Path) -> bool:
-    """Ce gabarit correspond-il encore à la tête et aux modèles ?
+    """Ce gabarit peut-il être recopié tel quel ?
 
-    Extraite pour être éprouvable. Restée en ligne dans la fixture, la décision
-    ne se testait qu'indirectement, et un test qui prétendait la couvrir
-    restait vert quand on la débranchait. Une empreinte absente ou illisible
-    vaut « périmé » : on ne recopie jamais un gabarit dont on ne peut pas dire
-    à quoi il correspond.
+    Trois questions, et il faut trois oui. Correspond-il à la tête et à la
+    structure des modèles — c'est l'estampille. Est-il entier — c'est
+    `template_is_intact`, ajouté après avoir constaté qu'un fichier tronqué à
+    l'estampille valide passait. Est-il seul — aucun `-wal`, `-shm` ni
+    `-journal` à côté, dont le contenu ne serait pas copié ; ce contrôle ne
+    tournait qu'à la construction, il tourne maintenant avant CHAQUE copie.
+
+    Une estampille absente, illisible ou partielle vaut « périmé » : on ne
+    recopie jamais un gabarit dont on ne peut pas dire à quoi il correspond.
     """
     stamp = template.with_suffix(".fingerprint")
     try:
-        return stamp.read_text(encoding="utf-8").strip() == schema_fingerprint()
+        empreinte = stamp.read_text(encoding="utf-8").strip()
     except OSError:
         return False
+    if len(empreinte) != 64 or empreinte != schema_fingerprint():
+        return False
+    if sidecars_beside(template):
+        return False
+    return template_is_intact(template)
 
 
 #: Les fichiers annexes que SQLite laisse à côté d'une base ouverte.
@@ -259,23 +352,44 @@ def sqlite_template(tmp_path_factory: pytest.TempPathFactory) -> Path | None:
     """
     if TEST_DATABASE_URL:
         return None
-    path = tmp_path_factory.mktemp("gabarit") / "template.sqlite3"
-    _upgrade(f"sqlite+pysqlite:///{path}")
 
-    # `_upgrade` passe par Alembic, qui ouvre son propre moteur. Le disposer
-    # explicitement : une connexion encore ouverte laisserait un `-wal`.
-    from metreo_api import db
+    directory = tmp_path_factory.mktemp("gabarit")
+    path = directory / "template.sqlite3"
 
-    db.reset_engine()
+    # Construction ATOMIQUE : la chaîne est jouée sur un nom temporaire, puis
+    # `os.replace` met le fichier en place d'un seul coup. Une interruption au
+    # milieu laisse un `.partiel-*` que personne ne recopiera jamais, au lieu
+    # d'un `template.sqlite3` à moitié écrit portant déjà son nom définitif.
+    # Le verrou exclusif interdit à deux constructions simultanées de se
+    # marcher dessus : la seconde attend, puis trouve le gabarit prêt.
+    lock = directory / "gabarit.lock"
+    with lock.open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        if not (path.exists() and template_is_current(path)):
+            for reste in directory.glob(".partiel-*"):
+                # Nettoyage d'une construction interrompue : un tronçon laissé
+                # par un run tué ne doit pas encombrer le répertoire.
+                reste.unlink(missing_ok=True)
+            partiel = directory / f".partiel-{os.getpid()}.sqlite3"
+            _upgrade(f"sqlite+pysqlite:///{partiel}")
 
-    leftovers = [
-        suffix for suffix in SQLITE_SIDECARS if path.with_name(path.name + suffix).exists()
-    ]
-    assert not leftovers, (
-        f"le gabarit laisse {leftovers} à côté de lui : une connexion est restée "
-        "ouverte, et la copie ne verrait pas ce que ces fichiers contiennent"
-    )
-    path.with_suffix(".fingerprint").write_text(schema_fingerprint(), encoding="utf-8")
+            # `_upgrade` passe par Alembic, qui ouvre son propre moteur. Le
+            # disposer explicitement : une connexion encore ouverte laisserait
+            # un `-wal`, dont le contenu ne serait pas copié.
+            from metreo_api import db
+
+            db.reset_engine()
+
+            restes = sidecars_beside(partiel)
+            assert not restes, (
+                f"le gabarit laisse {restes} à côté de lui : une connexion est restée "
+                "ouverte, et la copie ne verrait pas ce que ces fichiers contiennent"
+            )
+            assert template_is_intact(partiel), (
+                "le gabarit tout juste construit n'est pas une base SQLite lisible"
+            )
+            os.replace(partiel, path)
+            path.with_suffix(".fingerprint").write_text(schema_fingerprint(), encoding="utf-8")
     return path
 
 
