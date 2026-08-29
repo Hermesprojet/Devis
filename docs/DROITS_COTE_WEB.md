@@ -1,9 +1,9 @@
 # Ce que l'interface propose, et ce que l'API refuse
 
 Portée : la page « estimation » du client web et les refus d'autorisation que
-l'API lui renvoie. Ce document constate un écart mesuré et pose la décision.
-**Il ne la tranche pas** : les corrections possibles changent ce que voit
-l'utilisateur, et ce choix relève du produit.
+l'API lui renvoie. Ce document enregistre un écart mesuré, la décision prise, et
+ce qui a été fait. Les constats ci-dessous décrivent l'état **avant**
+correction.
 
 L'API n'est pas en cause. Elle refuse ce qu'elle doit refuser, avec le bon code
 et le bon message. Ce qui est en cause, c'est que l'interface n'en tient aucun
@@ -53,7 +53,7 @@ C'est la seule occurrence de ce champ dans tout `apps/web/src`. Il est reçu,
 typé, et **lu nulle part**. L'interface n'a donc aucun moyen d'anticiper un
 refus, alors que le serveur le lui a dit.
 
-## Trois conséquences distinctes
+## Trois conséquences distinctes *(corrigées — voir « La décision prise »)*
 
 ### 1. Le motif du refus est perdu au téléchargement
 
@@ -107,47 +107,66 @@ contrôle — mesuré sur neuf cas :
 | chaîne | 404 route inconnue, 405 méthode *(défauts du framework)* |
 | liste | 422 *(validation FastAPI)* |
 
-## La décision à prendre
+## La décision prise
 
-### A — L'interface lit les permissions
+**Masquer ce qui ne pourra jamais aboutir, désactiver avec explication ce qui
+attend un changement d'état.** L'API reste l'autorité : elle refuse toujours,
+et c'est la deuxième barrière. L'interface cesse seulement de proposer ce qui
+ne peut pas marcher.
 
-Chaque commande est conditionnée à la permission que l'API exige. Le lecteur ne
-voit que ce qu'il peut faire.
+Les deux causes d'indisponibilité sont distinguées, parce qu'elles n'appellent
+pas la même réponse :
 
-Conséquence : il faut décider **masquer ou désactiver**. Masquer donne une
-interface propre mais l'utilisateur ne sait pas qu'une fonction existe et qu'il
-lui manque un droit. Désactiver avec une infobulle le lui dit, au prix d'une
-barre d'outils encombrée de boutons éteints. Ce n'est pas un choix technique.
+| Cause | Traitement | Pourquoi |
+| --- | --- | --- |
+| le rôle n'a pas la permission | **masqué** | la montrer désactivée n'apprend rien d'actionnable — le rôle ne l'obtiendra pas en cliquant ailleurs |
+| l'objet ne s'y prête pas (version déjà gelée) | **désactivé, avec l'explication** | la commande existe et redeviendra disponible ; l'utilisateur doit le savoir |
 
-Il faut aussi décider si la table des permissions par commande vit côté web —
-au risque de diverger de `ROLE_PERMISSIONS` — ou si l'API l'expose.
+### Ce que ça change, concrètement
 
-### B — L'interface n'anticipe rien, mais explique le refus
+| Rôle | Exporter CSV | Export interne | Aperçu du devis | Geler la version |
+| --- | --- | --- | --- | --- |
+| `org_admin` | affiché | affiché | affiché | affiché *(désactivé si déjà gelée)* |
+| `estimator` | affiché | affiché | affiché | **masqué** |
+| `viewer` | **masqué** | masqué | **masqué** | **masqué** |
 
-Les boutons restent tous visibles ; quand l'API refuse, l'utilisateur lit
-exactement pourquoi et quelle permission lui manque.
+### Comment
 
-Bien moins de travail que A : il suffit que le téléchargement lève une
-`ApiError` comme le reste du client. Mais l'utilisateur découvre le refus après
-avoir cliqué.
+`apps/web/src/lib/permissions.ts` décide, `usePermissions` fournit la liste que
+`/auth/me` renvoie déjà. **La table des permissions n'est pas recopiée côté
+web** : recopier `ROLE_PERMISSIONS` produirait deux vérités qui divergeraient
+au premier rôle modifié. Le serveur dit ce que le porteur du jeton peut faire ;
+le web ne fait que le lire.
 
-### C — Ne rien changer
+Trois corrections viennent avec :
 
-L'état actuel. Un lecteur voit trois boutons dont aucun ne marche, et un
-message qui ne dit pas pourquoi.
-
-## Ce qui ne dépend d'aucune de ces options
-
-La redirection sur session expirée. Que l'on choisisse A, B ou C, une `401
-token_expired` reçue en cours de navigation devrait effacer la session et
-ramener à l'écran de connexion, comme `Shell` le fait déjà au montage. La seule
-question ouverte est de savoir si l'on préserve le travail en cours avant de
-rediriger.
+1. **le motif du refus n'est plus perdu.** Le téléchargement passe par
+   `api.fetchExport`, qui lève une `ApiError` comme le reste du client :
+   `ErrorNotice` retrouve le `required_permission` que l'API fournit ;
+2. **une session expirée met fin à la session, où qu'elle soit constatée.**
+   `request` et `fetchExport` effacent la session et renvoient à la connexion
+   sur `401 token_expired` — et sur ce code seulement. Un `403`, ou un `401`
+   d'une autre cause, laisse la session intacte : elle est valide, c'est
+   l'action qui ne l'est pas. `Shell` faisait l'inverse : il traitait `403`
+   comme `401` et aurait déconnecté un utilisateur parfaitement authentifié ;
+3. **un 422 nomme le champ.** `detail` est une liste chez FastAPI ; `ApiError`
+   la traduit en problèmes de champ, et `ErrorNotice` les affiche au lieu de
+   « Erreur HTTP 422 ».
 
 ## Ce qui est vérifié par un test
 
-`apps/api/tests/test_web_rights_alignment.py` fixe le côté API de ce constat :
-le tableau des refus par rôle et par commande, et le code renvoyé sur jeton
-expiré. Ce test ne dit pas que le comportement du **web** est juste — il ne
-touche pas au web. Il dit que les refus mesurés sont ceux-là, et que le document
-ci-dessus ne peut pas se périmer en silence.
+`apps/api/tests/test_web_rights_alignment.py` fixe le côté API : le tableau des
+refus par rôle et par commande, et le code renvoyé sur jeton expiré. Ces refus
+sont la deuxième barrière, et ils doivent rester exactement ce qu'ils sont.
+
+`apps/web/e2e/parcours.spec.ts` fixe le côté web : trois tests, un par rôle,
+qui vérifient ce que la barre d'outils propose à `org_admin`, `estimator` et
+`viewer` — plus un quatrième qui appelle l'API directement avec le jeton du
+lecteur, **sans passer par l'interface**, pour montrer que masquer un bouton
+n'est pas ce qui protège.
+
+Un test antérieur du même fichier — « un métreur ne peut pas geler » — ne
+distinguait pas les deux causes d'absence du bouton : la permission manquante,
+et la version déjà gelée par un test qui le précède. Il passait donc sans rien
+prouver sur les permissions. Il est conservé comme garde de non-régression, et
+son commentaire le dit.

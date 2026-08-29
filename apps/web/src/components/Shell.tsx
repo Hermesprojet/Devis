@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
 import { api, ApiError, clearSession, loadSession, type Health, type Me } from '@/lib/api'
+import { forgetPermissions } from '@/lib/usePermissions'
 import { t } from '@/lib/i18n'
 
 const LINKS = [
@@ -44,9 +45,14 @@ export function Shell({ children }: { children: React.ReactNode }) {
         // user out on *any* failure means a moment of network trouble throws
         // away their work, and they cannot tell the difference between an
         // expired token and an unplugged cable.
-        const rejected = caught instanceof ApiError && (caught.status === 401 || caught.status === 403)
+        // Un 401 met fin à la session ; un 403 non. Les deux étaient traités
+        // de la même façon, si bien qu'un refus de permission sur cet appel
+        // aurait déconnecté un utilisateur dont le jeton est parfaitement
+        // valide. C'est l'action qui n'est pas permise, pas la session.
+        const rejected = caught instanceof ApiError && caught.status === 401
         if (rejected) {
           clearSession()
+          forgetPermissions()
           router.replace('/')
           return
         }
@@ -95,6 +101,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             style={{ marginTop: 8 }}
             onClick={() => {
               clearSession()
+              forgetPermissions()
               router.replace('/')
             }}
           >

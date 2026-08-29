@@ -18,21 +18,79 @@ export type Session = {
   role: string
 }
 
+/** Un problème de champ, tel que FastAPI le rend sur un 422. */
+export type FieldProblem = { readonly field: string; readonly message: string }
+
+/**
+ * Traduit la `detail` d'un 422 en problèmes de champ nommés.
+ *
+ * FastAPI rend une *liste*, pas un objet `{code, message}`. `ApiError` n'y
+ * trouvait donc pas de `message` et retombait sur « Erreur HTTP 422 » : le
+ * champ fautif, que le serveur avait nommé, n'était jamais montré.
+ *
+ * `loc` commence par l'origine (`body`, `query`, `path`) ; on la retire, elle
+ * n'apprend rien à qui remplit un formulaire.
+ */
+function fieldProblems(detail: unknown): FieldProblem[] {
+  if (!Array.isArray(detail)) return []
+  return detail.flatMap((entry) => {
+    const row = (entry ?? {}) as Record<string, unknown>
+    const loc = Array.isArray(row.loc) ? row.loc : []
+    const path = loc.filter((part) => part !== 'body' && part !== 'query' && part !== 'path')
+    const message = typeof row.msg === 'string' ? row.msg : 'valeur refusée'
+    return [{ field: path.join('.') || '(corps de la requête)', message }]
+  })
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
   readonly detail: unknown
+  /** Non vide seulement pour un 422 de validation. */
+  readonly fields: readonly FieldProblem[]
 
   constructor(status: number, detail: unknown) {
     const record = (detail ?? {}) as Record<string, unknown>
+    const fields = fieldProblems(detail)
     const message =
-      typeof record.message === 'string' ? record.message : `Erreur HTTP ${status}`
+      typeof record.message === 'string'
+        ? record.message
+        : fields.length > 0
+          ? `${fields.length} champ(s) refusé(s)`
+          : `Erreur HTTP ${status}`
     super(message)
     this.name = 'ApiError'
     this.status = status
-    this.code = typeof record.code === 'string' ? record.code : 'http_error'
+    this.code =
+      typeof record.code === 'string'
+        ? record.code
+        : fields.length > 0
+          ? 'validation_error'
+          : 'http_error'
     this.detail = detail
+    this.fields = fields
   }
+}
+
+/**
+ * Une session expirée met fin à la session, où qu'elle soit constatée.
+ *
+ * `Shell` traitait déjà le cas, mais seulement à son montage, sur son appel à
+ * `/auth/me`. Une expiration survenue *pendant* la navigation tombait dans le
+ * `catch` de la page, qui se contentait d'afficher l'erreur : la session
+ * restait en place et l'utilisateur restait sur des données périmées.
+ *
+ * Seul `token_expired` déclenche la déconnexion. Un `401` d'une autre cause,
+ * ou un `403`, laisse la session intacte : elle est valide, c'est l'action qui
+ * ne l'est pas.
+ */
+function endSessionIfExpired(error: ApiError): void {
+  if (error.status !== 401 || error.code !== 'token_expired') return
+  if (typeof window === 'undefined') return
+  clearSession()
+  // `replace` et non `assign` : la page périmée ne doit pas rester dans
+  // l'historique, sinon « précédent » y ramène sans jeton.
+  window.location.replace('/')
 }
 
 export function loadSession(): Session | null {
@@ -91,7 +149,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     } catch {
       detail = { message: await response.text() }
     }
-    throw new ApiError(response.status, detail)
+    const error = new ApiError(response.status, detail)
+    endSessionIfExpired(error)
+    throw error
   }
   if (response.status === 204) return undefined as T
   if (options.raw) return (await response.text()) as T
@@ -169,6 +229,35 @@ export const api = {
     return `${API_URL}/estimates/${estimateId}/versions/${versionId}/${suffix}`
   },
   download: (path: string) => request<string>(path, { raw: true }),
+
+  /**
+   * Télécharge un export en conservant l'enveloppe d'erreur de l'API.
+   *
+   * La page appelait `fetch` elle-même et levait une `Error` nue : le
+   * `required_permission` que l'API fournit sur un 403 était jeté, et
+   * l'utilisateur lisait « Erreur HTTP 403 » sans savoir ce qui lui manquait.
+   * Passer par ici lui rend le motif, et applique la même fin de session sur
+   * jeton expiré que les lectures JSON.
+   */
+  fetchExport: async (url: string): Promise<Blob> => {
+    const session = loadSession()
+    const response = await fetch(url, {
+      headers: session ? { Authorization: `Bearer ${session.token}` } : {},
+      cache: 'no-store',
+    })
+    if (!response.ok) {
+      let detail: unknown = null
+      try {
+        detail = (await response.json()).detail
+      } catch {
+        detail = { message: `Erreur HTTP ${response.status}` }
+      }
+      const error = new ApiError(response.status, detail)
+      endSessionIfExpired(error)
+      throw error
+    }
+    return response.blob()
+  },
 
   auditEvents: (query = '') => request<Page<AuditEvent>>(`/audit/events${query}`),
   auditVerify: () => request<AuditVerify>('/audit/verify'),
