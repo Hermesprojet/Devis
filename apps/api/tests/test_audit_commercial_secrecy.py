@@ -189,3 +189,84 @@ def test_both_masks_are_driven_by_the_same_list(
         if champ in CHAMPS_COMMERCIAUX_SENSIBLES and valeur is not None
     ]
     assert en_clair == [], f"champs commerciaux encore lisibles par un lecteur : {en_clair}"
+
+
+#: Les réglages que l'on déclare **non** commerciaux, et donc lisibles par
+#: quiconque a `audit:read`. Chaque nom ici est une décision assumée, pas un
+#: oubli : `rounding_scale` et consorts décrivent la présentation des nombres,
+#: `quote_number_pattern` la numérotation, `ai_enabled` l'activation d'une
+#: fonction. Aucun ne révèle ce que l'entreprise gagne.
+#:
+#: `show_internal_costs_in_client_pdf` est ici volontairement : il dit si les
+#: coûts figurent au devis, pas quels ils sont. Le contenu, lui, est protégé
+#: par `cost:read` et par le réglage lui-même.
+REGLAGES_NON_COMMERCIAUX = frozenset(
+    {
+        "rounding_scale",
+        "rounding_mode",
+        "unit_price_scale",
+        "missing_price_policy",
+        "quote_number_pattern",
+        "show_internal_costs_in_client_pdf",
+        "ai_enabled",
+    }
+)
+
+
+def test_a_new_setting_cannot_be_added_without_deciding_if_it_is_sensitive() -> None:
+    """Le vrai risque n'est pas la liste d'aujourd'hui, c'est celle de demain.
+
+    Les huit champs déclarés sensibles couvrent exactement l'état actuel — le
+    test précédent le vérifie. Mais rien n'obligeait le prochain réglage
+    commercial à rejoindre cette liste : un champ ajouté à
+    `OrganizationSettingsUpdate` entre dans la charge utile du journal
+    immédiatement, et en sort en clair tant que personne n'y pense.
+
+    C'est exactement la liste de refus que la PR sur les coûts internes a
+    montrée fragile, transposée ici. Ce test la retourne en liste
+    d'autorisation : tout champ doit être rangé d'un côté ou de l'autre, et un
+    champ nouveau fait rougir la suite jusqu'à ce que quelqu'un tranche.
+    """
+    from metreo_api.schemas import OrganizationSettingsUpdate
+
+    modifiables = set(OrganizationSettingsUpdate.model_fields)
+    classes = set(CHAMPS_COMMERCIAUX_SENSIBLES) | REGLAGES_NON_COMMERCIAUX
+
+    non_classes = modifiables - classes
+    assert not non_classes, (
+        f"réglages modifiables et non classés : {sorted(non_classes)}. "
+        "Ajoutez-les à CHAMPS_COMMERCIAUX_SENSIBLES (schemas.py) s'ils "
+        "révèlent la politique commerciale, sinon à REGLAGES_NON_COMMERCIAUX "
+        "ici — et dites pourquoi."
+    )
+
+    fantomes = set(CHAMPS_COMMERCIAUX_SENSIBLES) - modifiables
+    assert not fantomes, (
+        f"déclarés sensibles mais non modifiables : {sorted(fantomes)}. "
+        "Un masque sur un champ qui n'existe plus ne protège rien et cache "
+        "que la liste a dérivé."
+    )
+
+
+def test_every_sensitive_setting_is_also_masked_on_the_settings_endpoint(
+    seeded_client: TestClient,
+) -> None:
+    """Les deux lecteurs de la liste la respectent, champ par champ.
+
+    Le test de la liste unique montre que le journal masque les huit. Celui-ci
+    montre que `/organization/settings` les masque aussi — sans quoi la
+    « liste unique, deux lecteurs » n'aurait qu'un lecteur.
+    """
+    lecteur = login(seeded_client, "lecteur@dubois.demo")
+    reponse = seeded_client.get("/api/v1/organization/settings", headers=lecteur)
+    assert reponse.status_code == 200, reponse.text
+    reglages = reponse.json()
+
+    assert reglages["commercial_rates_visible"] is False
+    visibles = [champ for champ in CHAMPS_COMMERCIAUX_SENSIBLES if reglages.get(champ) is not None]
+    assert visibles == [], f"champs commerciaux lisibles par un lecteur : {visibles}"
+
+    # Et les réglages non commerciaux restent lisibles : masquer tout serait
+    # une autre façon de casser la page « paramètres » pour ce rôle.
+    for champ in REGLAGES_NON_COMMERCIAUX & set(reglages):
+        assert reglages[champ] is not None, f"{champ} masqué à tort"
