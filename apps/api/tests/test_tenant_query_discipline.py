@@ -31,23 +31,60 @@ SOURCE = API_ROOT / "src" / "metreo_api"
 AIDES_TENANT = frozenset({"owned_query", "find_owned", "get_owned"})
 
 
-#: Les modèles qui n'ont pas d'organisation : une requête qui les vise n'a rien
-#: à filtrer. Lu dans les modèles, jamais recopié — un modèle qui gagnerait un
-#: `organization_id` sortirait de cette liste tout seul.
+#: **Les seuls modèles qu'une requête peut lire sans filtrer.** Données de
+#: référence, identiques pour tout le monde, sans propriétaire.
+#:
+#: Cette liste a d'abord été DÉDUITE — « tout modèle sans colonne
+#: `organization_id` » — et c'était faux. `ImportBatchRow` n'a pas la colonne
+#: mais appartient bien à une organisation, à travers son lot : un
+#: `select(ImportBatchRow)` sans filtre rendrait les lignes d'import de tout le
+#: monde, et le contrôle l'acceptait — vérifié avant correction. `Organization`
+#: et `User` sont dans le même cas : l'absence de colonne ne dit pas l'absence
+#: de propriétaire, elle dit que le propriétaire est ailleurs.
+#:
+#: Une déduction commode donnait donc une garantie fausse. La liste est
+#: maintenant écrite, et courte.
+GLOBALES = frozenset({"RegionProfile"})
+
+#: Les modèles sans colonne `organization_id` qui appartiennent malgré tout à
+#: quelqu'un. Une requête qui les vise doit passer par le parent possédé, ou
+#: être nommée dans EXCEPTIONS. Ils sont listés pour qu'un modèle ajouté demain
+#: n'atterrisse pas silencieusement du bon côté.
+POSSEDES_INDIRECTEMENT = frozenset({"ImportBatchRow", "Organization", "User"})
+
+
 def _modeles_sans_organisation() -> frozenset[str]:
+    """Les modèles réellement libres de tout tenant, et le contrôle qui le tient.
+
+    La fonction renvoie `GLOBALES`, mais elle vérifie d'abord que la partition
+    écrite ci-dessus couvre encore exactement ce que portent les modèles. Un
+    modèle ajouté sans `organization_id` et rangé nulle part fait tomber le
+    contrôle, plutôt que de glisser du côté permissif.
+    """
     from sqlalchemy.orm import DeclarativeBase
 
     from metreo_api import models
 
-    sans = set()
+    sans_colonne = set()
     for nom in dir(models):
         objet = getattr(models, nom)
         table = getattr(objet, "__table__", None)
         if table is None or not isinstance(objet, type):
             continue
         if issubclass(objet, DeclarativeBase) and "organization_id" not in table.columns:
-            sans.add(nom)
-    return frozenset(sans)
+            sans_colonne.add(nom)
+
+    non_classes = sans_colonne - GLOBALES - POSSEDES_INDIRECTEMENT
+    assert non_classes == set(), (
+        f"modèles sans `organization_id` et non classés : {sorted(non_classes)}. "
+        "Décidez : donnée de référence globale, ou possédée à travers un parent ?"
+    )
+    disparus = (GLOBALES | POSSEDES_INDIRECTEMENT) - sans_colonne
+    assert disparus == set(), (
+        f"ces modèles ne sont plus sans `organization_id` : {sorted(disparus)}. "
+        "Retirez-les de la partition."
+    )
+    return GLOBALES
 
 
 #: Les requêtes non rattachées qu'on accepte, chacune avec sa raison.
@@ -170,6 +207,49 @@ class TestEveryHandWrittenQueryIsAccountedFor:
         """Une exception sans raison écrite est une exception qu'on ne peut pas relire."""
         muettes = [cle for cle, raison in EXCEPTIONS.items() if len(raison.strip()) < 80]
         assert muettes == [], f"exceptions sans raison suffisante : {muettes}"
+
+
+class TestTheFreeListIsWrittenNotDeduced:
+    """La faiblesse trouvée dans ce contrôle même, et le filet qui l'empêche.
+
+    Première version : « est libre tout modèle sans colonne `organization_id` ».
+    Commode, et faux. `ImportBatchRow` n'a pas la colonne mais appartient à une
+    organisation à travers son lot — un `select(ImportBatchRow)` sans filtre
+    rendrait les lignes d'import de tout le monde, et le contrôle l'acceptait.
+
+    La leçon est plus large que le cas : l'absence d'une colonne ne dit pas
+    l'absence de propriétaire, elle dit que le propriétaire est ailleurs.
+    """
+
+    def test_a_tenant_owned_model_without_the_column_is_not_free(self) -> None:
+        from metreo_api import models
+
+        for nom in sorted(POSSEDES_INDIRECTEMENT):
+            objet = getattr(models, nom)
+            assert "organization_id" not in objet.__table__.columns, (
+                f"{nom} porte maintenant `organization_id` : retirez-le de la partition"
+            )
+            assert nom not in _modeles_sans_organisation(), (
+                f"{nom} appartient à quelqu'un et ne doit pas être traité comme global"
+            )
+
+    def test_an_unfiltered_read_of_such_a_model_is_reported(self) -> None:
+        """La règle appliquée à la requête exacte qui passait avant."""
+        rendu = "session.scalars(select(ImportBatchRow)).all()"
+        libres = _modeles_sans_organisation()
+        accepte = (
+            not any(aide in rendu for aide in AIDES_TENANT)
+            and "organization_id" not in rendu
+            and any(f"{modele}." in rendu or f"({modele})" in rendu for modele in libres)
+        )
+        assert not accepte, (
+            "une lecture non filtrée des lignes d'import serait acceptée : "
+            "la liste des modèles libres est redevenue trop large"
+        )
+
+    def test_the_partition_still_covers_the_models(self) -> None:
+        """Un modèle ajouté sans colonne et rangé nulle part doit faire tomber."""
+        assert _modeles_sans_organisation() == GLOBALES
 
 
 class TestTheControlCanActuallyFail:

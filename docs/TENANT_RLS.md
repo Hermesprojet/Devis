@@ -174,6 +174,25 @@ filtre ajoutée dans un routeur ; le filtre retiré d'une requête existante ; u
 exception devenue inutile laissée en place ; une exception dont la raison a été
 vidée.
 
+**Une faiblesse trouvée dans ce contrôle même, et corrigée.** Sa première
+version déduisait la liste des modèles libres : « est libre tout modèle sans
+colonne `organization_id` ». Commode, et faux. `ImportBatchRow` n'a pas la
+colonne mais appartient à une organisation **à travers son lot** : un
+`select(ImportBatchRow)` sans filtre rendrait les lignes d'import de tout le
+monde, et le contrôle l'acceptait — vérifié avant correction.
+
+La leçon dépasse le cas : l'absence d'une colonne ne dit pas l'absence de
+propriétaire, elle dit que le propriétaire est ailleurs. `Organization` et
+`User` étaient dans la même situation. La liste des modèles réellement globaux
+est désormais **écrite** — un seul, `RegionProfile` — et la partition entre
+« global » et « possédé indirectement » doit couvrir exactement ce que portent
+les modèles : un modèle ajouté demain sans colonne et rangé nulle part fait
+tomber le contrôle au lieu de glisser du côté permissif.
+
+Cela ne change rien au code applicatif : les trois requêtes non rattachées sont
+les mêmes avant et après. C'est la garantie du contrôle qui était fausse, pas
+l'application.
+
 RLS reste souhaitable — c'est la seule des quatre options qui protège d'un script
 lancé avec les identifiants de l'application, en dehors de tout code applicatif.
 Mais elle n'a de sens qu'une fois la question du rôle tranchée, et cette question
