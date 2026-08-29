@@ -116,14 +116,66 @@ def test_moving_an_event_to_another_real_tenant_breaks_the_chain(
         session.close()
 
 
+def test_falsifying_the_chain_link_alone_breaks_the_chain(organization_id: str) -> None:
+    """`previous_hash` réécrit seul, sans toucher au reste de l'événement.
+
+    C'est le seul champ que le hash de l'événement ne protège pas de
+    lui-même : `expected` est recalculé à partir du maillon **courant** de la
+    boucle, pas de la colonne stockée. Une ligne dont on ne change que
+    `previous_hash` garde donc un `hash` correct et une `sequence` intacte —
+    seule la comparaison `event.previous_hash != previous_hash` la voit.
+
+    Mesuré : en retirant cette comparaison de `verify_chain`, la falsification
+    ci-dessous passe de `valid: False` à `valid: True`, et la suite complète
+    reste verte. La liste `structural` du test de couverture affirmait que
+    `previous_hash` était « vérifié séparément » ; il ne l'était pas.
+    """
+    from metreo_api.models import AuditEvent
+    from metreo_api.services import audit
+
+    session = _session()
+    try:
+        events = session.scalars(
+            select(AuditEvent)
+            .where(AuditEvent.organization_id == organization_id)
+            .order_by(AuditEvent.sequence.asc())
+        ).all()
+        assert len(events) >= 2, (
+            "il faut au moins deux événements pour qu'il existe un maillon à "
+            f"falsifier ; le journal en porte {len(events)}"
+        )
+        assert audit.verify_chain(session, organization_id)["valid"] is True
+
+        cible = events[-1]
+        hash_avant, sequence_avant = cible.hash, cible.sequence
+        session.execute(
+            update(AuditEvent).where(AuditEvent.id == cible.id).values(previous_hash="0" * 64)
+        )
+        session.commit()
+
+        # Ce qui rend la détection non triviale : rien d'autre n'a bougé.
+        relu = session.get(AuditEvent, cible.id)
+        assert relu is not None
+        assert relu.hash == hash_avant
+        assert relu.sequence == sequence_avant
+
+        verdict = audit.verify_chain(session, organization_id)
+        assert verdict["valid"] is False
+        assert verdict["failed_at_sequence"] == sequence_avant
+    finally:
+        session.close()
+
+
 def test_every_significant_column_is_covered_by_the_hash() -> None:
     """Un champ ajouté au modèle et oublié dans le hash est un angle mort."""
     from metreo_api.models import AuditEvent
 
     columns = {c.name for c in AuditEvent.__table__.columns}
     # Ces colonnes sont exclues à dessein : `hash` est le résultat lui-même,
-    # `previous_hash` et `sequence` sont la structure de la chaîne (vérifiés
-    # séparément), `payload` est déjà couvert, `id` est vérifié via le hash.
+    # `previous_hash` et `sequence` sont la structure de la chaîne — le premier
+    # par `test_falsifying_the_chain_link_alone_breaks_the_chain`, le second par
+    # le contrôle `sequence_gap` de `verify_chain` — `payload` est déjà couvert,
+    # `id` est vérifié via le hash.
     # `hash_schema_version` est structurel : il dit sous quel schéma l'événement
     # a été scellé, et `verify_chain` s'en sert pour refuser de juger un scellé
     # d'hier avec le code d'aujourd'hui. Le falsifier fait échouer la
