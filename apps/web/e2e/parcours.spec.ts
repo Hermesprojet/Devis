@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { API_BASE_URL } from '../playwright.config'
+
 /**
  * The ten journeys that have to work for Phase 1 to mean anything.
  *
@@ -291,7 +293,9 @@ test('un lecteur ne se voit proposer aucune commande qui échouerait', async ({ 
   await openFirstEstimate(page)
 
   // Le lecteur a `estimate:read` : la page s'affiche, avec ses montants.
-  await expect(page.getByText('Total HT')).toBeVisible()
+  // `getByText('Total HT')` viserait deux éléments — l'en-tête de colonne et
+  // la ligne du pied — et Playwright refuse un locator ambigu.
+  await expect(page.getByRole('cell', { name: 'Total HT' })).toBeVisible()
 
   // Il n'a ni `export:client`, ni `export:internal`, ni `estimate:freeze`.
   await expect(page.getByRole('button', { name: 'Export CSV' })).toHaveCount(0)
@@ -307,7 +311,7 @@ test("l'API refuse toujours, même si l'interface a cessé de proposer", async (
    * l'interface, et vérifie que le refus est toujours là — avec la permission
    * manquante nommée.
    */
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1'
+  const apiUrl = API_BASE_URL
   const login = await request.post(`${apiUrl}/auth/dev-login`, {
     data: { email: DEMO_VIEWER },
   })
