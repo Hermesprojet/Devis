@@ -101,6 +101,24 @@ class OrganizationOut(ApiModel):
     timezone: str
 
 
+def _bounded(bound: bounds.Bound) -> Any:
+    """Champ Pydantic dérivé d'une borne métier du domaine.
+
+    La valeur des bornes vit dans ``metreo_domain.bounds`` et nulle part
+    ailleurs : redéclarer ici un maximum en dur produirait deux vérités qui
+    divergeraient à la première correction.
+    """
+    if bound.minimum_inclusive:
+        return Field(ge=bound.minimum, le=bound.maximum)
+    return Field(gt=bound.minimum, le=bound.maximum)
+
+
+def _bounded_opt(bound: bounds.Bound) -> Any:
+    if bound.minimum_inclusive:
+        return Field(default=None, ge=bound.minimum, le=bound.maximum)
+    return Field(default=None, gt=bound.minimum, le=bound.maximum)
+
+
 class OrganizationSettingsOut(DecimalOut):
     """Company rules.
 
@@ -128,18 +146,30 @@ class OrganizationSettingsOut(DecimalOut):
 
 
 class OrganizationSettingsUpdate(BaseModel):
+    """Réglages modifiables d'une organisation.
+
+    Les quatre taux dérivent de `bounds.RATE` par `_bounded_opt`, et ne
+    réécrivent plus leurs limites à la main. Ils l'avaient fait, et les deux
+    vérités avaient divergé : `margin_rate` portait un `lt=10` là où les trois
+    autres portaient `le=10` et où le moteur accepte `10` pour les quatre. Un
+    instantané gelé à `margin_rate = 10` se recalculait donc sans broncher,
+    alors qu'il n'aurait jamais pu être saisi par l'API.
+
+    `bounds.RATE` fait foi : maximum `10`, inclusif.
+    """
+
     rounding_scale: int | None = Field(default=None, ge=0, le=6)
     rounding_mode: Literal["half_up", "half_even"] | None = None
     unit_price_scale: int | None = Field(default=None, ge=0, le=6)
-    site_overheads_rate: Decimal | None = Field(default=None, ge=0, le=10)
+    site_overheads_rate: Decimal | None = _bounded_opt(bounds.RATE)
     site_overheads_base: Literal["direct_cost", "direct_plus_site", "running_total"] | None = None
-    general_overheads_rate: Decimal | None = Field(default=None, ge=0, le=10)
+    general_overheads_rate: Decimal | None = _bounded_opt(bounds.RATE)
     general_overheads_base: Literal["direct_cost", "direct_plus_site", "running_total"] | None = (
         None
     )
-    contingency_rate: Decimal | None = Field(default=None, ge=0, le=10)
+    contingency_rate: Decimal | None = _bounded_opt(bounds.RATE)
     contingency_base: Literal["direct_cost", "direct_plus_site", "running_total"] | None = None
-    margin_rate: Decimal | None = Field(default=None, ge=0, lt=10)
+    margin_rate: Decimal | None = _bounded_opt(bounds.RATE)
     margin_method: Literal["on_cost", "on_price"] | None = None
     missing_price_policy: Literal["block", "warn"] | None = None
     quote_number_pattern: str | None = Field(default=None, max_length=60)
@@ -408,24 +438,6 @@ class PriceItemOut(DecimalOut):
 class PriceItemPage(BaseModel):
     items: list[PriceItemOut]
     page: Page
-
-
-def _bounded(bound: bounds.Bound) -> Any:
-    """Champ Pydantic dérivé d'une borne métier du domaine.
-
-    La valeur des bornes vit dans ``metreo_domain.bounds`` et nulle part
-    ailleurs : redéclarer ici un maximum en dur produirait deux vérités qui
-    divergeraient à la première correction.
-    """
-    if bound.minimum_inclusive:
-        return Field(ge=bound.minimum, le=bound.maximum)
-    return Field(gt=bound.minimum, le=bound.maximum)
-
-
-def _bounded_opt(bound: bounds.Bound) -> Any:
-    if bound.minimum_inclusive:
-        return Field(default=None, ge=bound.minimum, le=bound.maximum)
-    return Field(default=None, gt=bound.minimum, le=bound.maximum)
 
 
 class PriceItemCreate(BaseModel):
