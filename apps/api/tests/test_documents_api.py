@@ -414,3 +414,50 @@ def test_revision_numbering_is_document_scoped_and_tenant_scoped(
     finally:
         session.rollback()
         session.close()
+
+
+def test_a_human_decision_without_a_reason_is_refused(seeded_client: TestClient) -> None:
+    """Une décision humaine sans motif n'est pas une décision traçable.
+
+    `ValidationDecisionCreate.reason` est un `NonBlank` : c'est lui qui fait
+    qu'une acceptation, une correction ou un rejet reste explicable après coup.
+    Rien ne le vérifiait — mesuré par une campagne de mutation, en rendant
+    `reason` facultatif et vide par défaut la suite complète restait verte.
+
+    Distinct de `test_document_payloads_reject_ambiguous_or_extra_data`, qui
+    porte sur un *titre* vide et sur la cohérence des valeurs d'une correction,
+    jamais sur le motif.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    project_id = _project(seeded_client, admin, "DOC-MOTIF")
+    document_id = _document(seeded_client, admin, project_id)
+    _revision_id, proposal_id = _proposal(seeded_client, admin, document_id)
+    url = f"/api/v1/extraction-proposals/{proposal_id}/decisions"
+
+    refuses = {
+        "absent": {"decision": "accepted"},
+        "vide": {"decision": "accepted", "reason": ""},
+        "blanc": {"decision": "accepted", "reason": "   "},
+    }
+    for cas, corps in refuses.items():
+        reponse = seeded_client.post(url, headers=admin, json=corps)
+        assert reponse.status_code == 422, f"motif {cas} : {reponse.status_code}"
+
+    # Contrôle positif : sans lui, les trois refus ci-dessus seraient aussi
+    # bien expliqués par une proposition inatteignable ou un corps invalide
+    # pour une tout autre raison.
+    motif = "Valeur confirmée sur le plan coté"
+    accepte = seeded_client.post(url, headers=admin, json={"decision": "accepted", "reason": motif})
+    assert accepte.status_code == 201, accepte.text
+
+    # Le motif est conservé mais n'est pas renvoyé : `ValidationDecisionOut`
+    # accuse la décision sans répéter une valeur documentaire. Les deux moitiés
+    # comptent — exigé à l'entrée, tenu hors de la réponse.
+    assert "reason" not in accepte.json()
+    session = get_session_factory()()
+    try:
+        enregistree = session.get(ValidationDecision, accepte.json()["id"])
+        assert enregistree is not None
+        assert enregistree.reason == motif
+    finally:
+        session.close()
