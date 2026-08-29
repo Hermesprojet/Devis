@@ -489,6 +489,13 @@ def freeze_version(
     version.missing_price_policy = snapshot["missing_price_policy"]
     version.total_selling_price_ht = result.total_selling_price_ht.amount
     version.total_ttc = result.total_ttc.amount
+    # Les nombres que le devis imprime, figés ici et plus jamais recalculés.
+    # Sans cette copie, une correction ultérieure du moteur d'arrondi
+    # réécrirait le total d'un devis déjà remis à un client — et la liste des
+    # versions afficherait autre chose que le document.
+    rendu = snapshot["result"]
+    version.document_total_ht = Decimal(rendu["total_selling_price_ht"])
+    version.document_total_ttc = Decimal(rendu["total_ttc"])
     version.frozen_at = utcnow()
     version.frozen_by = actor_user_id
     if label:

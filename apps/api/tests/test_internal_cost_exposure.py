@@ -58,12 +58,19 @@ VISIBLES_SANS_COST_READ: frozenset[str] = frozenset(
         "lines[].unit",
         "options_total_ht",
         "taxes[].amount",
+        # La base sur laquelle la TVA est calculée. Elle figure au pied du
+        # devis par construction — c'est la somme des lignes imprimées — et un
+        # client doit pouvoir la vérifier.
+        "taxes[].taxable_base",
         "taxes[].code",
         "taxes[].label",
         "taxes[].rate",
         "total_selling_price_ht",
         "total_selling_price_ht_raw",
         "total_ttc",
+        # Pendant brut du TTC, comme `total_selling_price_ht_raw` l'est du HT :
+        # un total de vente, jamais un coût interne.
+        "total_ttc_raw",
     }
 )
 

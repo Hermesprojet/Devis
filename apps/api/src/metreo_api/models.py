@@ -1167,8 +1167,26 @@ class EstimateVersion(TimestampMixin, Base):
     missing_price_policy: Mapped[str] = mapped_column(String(10), nullable=False, default="block")
     snapshot: Mapped[dict | None] = mapped_column(SAJSON)
     snapshot_sha256: Mapped[str | None] = mapped_column(String(64))
+    #: Totaux **bruts**, non arrondis, tels que le moteur les a produits. Ce
+    #: sont eux qui servent aux calculs internes et aux comparaisons ; ils ne
+    #: sont pas ce que le devis imprime.
     total_selling_price_ht: Mapped[Decimal | None] = mapped_column(Amount)
     total_ttc: Mapped[Decimal | None] = mapped_column(Amount)
+    #: Totaux **du document**, figés au gel : exactement les nombres que le
+    #: devis remis au client porte, sous la convention « le document
+    #: s'additionne » (voir `docs/ARRONDI_DES_DOCUMENTS.md`).
+    #:
+    #: Deux colonnes distinctes plutôt qu'une réinterprétation des précédentes :
+    #: brut et imprimé ne coïncident pas, et une colonne qui aurait porté les
+    #: deux sens selon la date de la ligne aurait été un piège permanent.
+    #:
+    #: `NULL` a un sens précis et unique : *le total documentaire de cette
+    #: version gelée n'a pas pu être reconstruit*. Il n'est jamais remplacé en
+    #: silence par l'arrondi du brut — un lecteur doit savoir qu'il ne dispose
+    #: pas du nombre imprimé. Une version brouillon n'en porte pas non plus :
+    #: son document se recalcule à la demande.
+    document_total_ht: Mapped[Decimal | None] = mapped_column(Amount)
+    document_total_ttc: Mapped[Decimal | None] = mapped_column(Amount)
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime)
     frozen_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))

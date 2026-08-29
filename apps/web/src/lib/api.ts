@@ -412,8 +412,14 @@ export type EstimateVersion = {
   label: string | null
   status: string
   total_selling_price_ht: string | null
+  /**
+   * Le Total HT **du document** — la même valeur que le devis imprime.
+   * `null` sur une version gelée ancienne dont le total imprimé n'a pas pu
+   * être reconstruit : afficher alors une absence, jamais l'arrondi du brut.
+   */
   total_selling_price_ht_display: string | null
   total_ttc_display: string | null
+  document_totals_available: boolean
   snapshot_sha256: string | null
   frozen_at: string | null
 }
