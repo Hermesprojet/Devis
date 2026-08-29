@@ -202,3 +202,156 @@ def test_a_reader_cannot_import(seeded_client, version_id):
     response = upload(seeded_client, reader, version_id, "prix_valides_5_lignes.csv")
     assert response.status_code == 403
     assert response.json()["detail"]["required_permission"] == "pricebook:write"
+
+
+# --------------------------------------------------------------------------
+# Les deux stratégies d'import que rien n'exerçait
+#
+# `create` et `replace` avaient leur test ; `ignore` et `merge` n'en avaient
+# aucun. Mesuré par une campagne de mutation : en faisant écraser `ignore`
+# comme `replace`, et en retirant à `merge` son filtre sur les valeurs vides,
+# la suite complète restait verte dans les deux cas.
+#
+# Ces fichiers sont construits ici plutôt que dans `fixtures/imports/` parce
+# que ce qui compte est le COUPLE : le même code, une valeur changée et une
+# autre laissée vide. Le second fichier n'a de sens que par rapport au premier.
+# --------------------------------------------------------------------------
+
+_CSV_AVEC_FOURNISSEUR = (
+    "code;libelle;famille;type;unite;prix_unitaire;devise;fournisseur\n"
+    "IMP-001;Poste d'essai;Matériaux;materiau;m3;10,00;EUR;Fournisseur Alpha\n"
+)
+
+#: Même code, prix changé, fournisseur laissé vide — c'est ce vide qui sépare
+#: `merge` de `replace`.
+_CSV_SANS_FOURNISSEUR = (
+    "code;libelle;famille;type;unite;prix_unitaire;devise;fournisseur\n"
+    "IMP-001;Poste d'essai;Matériaux;materiau;m3;99,00;EUR;\n"
+)
+
+
+def _televerser(client: TestClient, headers: dict[str, str], version_id: str, contenu: str):
+    return client.post(
+        f"/api/v1/price-books/versions/{version_id}/imports/preview",
+        headers=headers,
+        files={"file": ("essai.csv", contenu.encode("utf-8"), "text/csv")},
+    )
+
+
+def _valider(client: TestClient, headers: dict[str, str], batch_id: str, strategie: str):
+    return client.post(
+        f"/api/v1/price-books/imports/{batch_id}/commit",
+        headers=headers,
+        json={"strategy": strategie, "confirm": True},
+    )
+
+
+def _importer(
+    client: TestClient, headers: dict[str, str], version_id: str, contenu: str, strategie: str
+) -> dict:
+    apercu = _televerser(client, headers, version_id, contenu)
+    assert apercu.status_code == 200, apercu.text
+    resultat = _valider(client, headers, apercu.json()["batch_id"], strategie)
+    assert resultat.status_code == 200, resultat.text
+    return resultat.json()
+
+
+def _poste(client: TestClient, headers: dict[str, str], version_id: str, code: str) -> dict:
+    items = client.get(
+        f"/api/v1/price-books/versions/{version_id}/items?limit=200", headers=headers
+    ).json()["items"]
+    trouve = next((item for item in items if item["code"] == code), None)
+    assert trouve is not None, f"le poste {code} devrait exister"
+    return trouve
+
+
+def test_ignore_strategy_leaves_the_existing_row_exactly_as_it_was(
+    seeded_client, headers, version_id
+):
+    """« Ignorer » compte les lignes sautées ET ne touche à rien.
+
+    Le compteur seul ne suffirait pas : une stratégie qui écrase tout en
+    annonçant « ignoré » afficherait le même chiffre.
+    """
+    _importer(seeded_client, headers, version_id, _CSV_AVEC_FOURNISSEUR, "create")
+    avant = _poste(seeded_client, headers, version_id, "IMP-001")
+    assert avant["unit_price"] == "10"
+    assert avant["supplier_name"] == "Fournisseur Alpha"
+
+    resultat = _importer(seeded_client, headers, version_id, _CSV_SANS_FOURNISSEUR, "ignore")
+    assert resultat["skipped"] == 1
+    assert resultat["updated"] == 0
+    assert resultat["created"] == 0
+
+    apres = _poste(seeded_client, headers, version_id, "IMP-001")
+    assert apres["unit_price"] == "10", "le prix ne devait pas changer"
+    assert apres["supplier_name"] == "Fournisseur Alpha"
+
+
+def test_merge_updates_what_is_given_and_keeps_what_is_left_blank(
+    seeded_client, headers, version_id
+):
+    """Ce qui sépare `merge` de `replace` : une colonne vide n'efface pas.
+
+    Un fichier partiel est le cas courant — on remonte des prix sans réémettre
+    les fournisseurs. Avec `replace`, ce même fichier viderait la colonne.
+    """
+    _importer(seeded_client, headers, version_id, _CSV_AVEC_FOURNISSEUR, "create")
+
+    resultat = _importer(seeded_client, headers, version_id, _CSV_SANS_FOURNISSEUR, "merge")
+    assert resultat["updated"] == 1
+
+    apres = _poste(seeded_client, headers, version_id, "IMP-001")
+    assert apres["unit_price"] == "99", "la valeur fournie devait être reprise"
+    assert apres["supplier_name"] == "Fournisseur Alpha", (
+        "une colonne laissée vide ne doit pas effacer la valeur existante"
+    )
+
+
+def test_replace_does_erase_what_merge_preserves(seeded_client, headers, version_id):
+    """Le contraste, sans lequel le test de `merge` ne prouverait pas grand-chose.
+
+    Si `replace` conservait lui aussi les valeurs existantes, les deux
+    stratégies seraient identiques et le test ci-dessus passerait sur les deux.
+    """
+    _importer(seeded_client, headers, version_id, _CSV_AVEC_FOURNISSEUR, "create")
+
+    resultat = _importer(seeded_client, headers, version_id, _CSV_SANS_FOURNISSEUR, "replace")
+    assert resultat["updated"] == 1
+
+    apres = _poste(seeded_client, headers, version_id, "IMP-001")
+    assert apres["unit_price"] == "99"
+    assert apres["supplier_name"] is None, "`replace` doit bien effacer, lui"
+
+
+def test_publishing_a_version_twice_is_refused(seeded_client, headers, version_id):
+    """Publier est irréversible ; le redemander est un conflit, pas un succès.
+
+    Placé ici auprès de `test_import_into_a_published_version_is_refused`, qui
+    vérifie l'autre moitié de la même règle : ce qu'une version publiée
+    n'accepte plus.
+
+    Mesuré : en retirant le refus, la suite complète restait verte — une
+    seconde publication réécrivait `published_at` et produisait un second
+    événement d'audit pour un acte qui n'a eu lieu qu'une fois.
+    """
+    premiere = seeded_client.post(
+        f"/api/v1/price-books/versions/{version_id}/publish", headers=headers
+    )
+    assert premiere.status_code == 200, premiere.text
+    assert premiere.json()["status"] == "published"
+    publiee_le = premiere.json()["published_at"]
+
+    seconde = seeded_client.post(
+        f"/api/v1/price-books/versions/{version_id}/publish", headers=headers
+    )
+    assert seconde.status_code == 409
+    assert seconde.json()["detail"]["code"] == "already_published"
+
+    # La date de publication d'origine n'a pas bougé.
+    versions = seeded_client.get(
+        f"/api/v1/price-books/{seeded_client.get('/api/v1/price-books', headers=headers).json()[0]['id']}/versions",
+        headers=headers,
+    ).json()
+    actuelle = next(v for v in versions if v["id"] == version_id)
+    assert actuelle["published_at"] == publiee_le
