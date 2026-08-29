@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import csv
 import io
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -174,4 +174,102 @@ def test_the_gap_is_systematic_and_grows_with_the_number_of_lines() -> None:
     assert abs(ecarts[200]) > abs(ecarts[8]), (
         f"l'écart devrait croître avec le nombre de postes : "
         f"8 postes → {ecarts[8]}, 200 postes → {ecarts[200]}"
+    )
+
+
+@pytest.fixture()
+def calcul_du_devis(seeded_client: TestClient) -> dict:
+    """Le devis de démonstration, tel que l'API le rend à l'interface web.
+
+    Le CSV n'imprime pas la TVA poste par poste ; le calcul, si. Les deux
+    identités qui portent sur la TVA se mesurent donc ici, sur la charge utile
+    que le navigateur reçoit et affiche.
+    """
+    headers = login(seeded_client, "admin@dubois.demo")
+    estimate = seeded_client.get("/api/v1/estimates", headers=headers).json()[0]
+    version = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+    price_the_missing_line(seeded_client, headers, estimate)
+
+    reponse = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}/computation",
+        headers=headers,
+    )
+    assert reponse.status_code == 200, reponse.text
+    return reponse.json()["result"]
+
+
+def test_the_printed_vat_is_not_the_sum_of_the_printed_line_vats(
+    calcul_du_devis: dict,
+) -> None:
+    """Troisième identité fausse, et celle-ci n'était pas mesurée.
+
+    Le pied du devis annonce une TVA. Un lecteur qui additionne la TVA de
+    chaque poste ne retrouve pas ce montant : le total de TVA est l'arrondi de
+    la somme exacte, pas la somme des arrondis.
+    """
+    total_tva = sum(Decimal(taxe["amount"]) for taxe in calcul_du_devis["taxes"])
+    somme_des_lignes = sum(
+        Decimal(taxe["amount"])
+        for poste in calcul_du_devis["lines"]
+        if poste["included_in_total"] and poste["price"]
+        for taxe in poste["price"]["taxes"]
+    )
+    assert total_tva > 0, "le devis de démonstration ne porte plus de TVA"
+    ecart = total_tva - somme_des_lignes
+
+    assert ecart != 0, f"Les TVA de ligne s'additionnent désormais au total. {_A_CORRIGER}"
+    assert abs(ecart) <= ECART_MAXIMUM_ATTENDU, (
+        f"TVA imprimée {total_tva}, somme des TVA de ligne {somme_des_lignes} : écart de {ecart}."
+    )
+
+
+def test_the_printed_vat_is_not_bound_to_the_printed_ht_base() -> None:
+    """La TVA imprimée n'est pas garantie d'être la TVA de la base imprimée.
+
+    Sur le jeu de démonstration les deux coïncident, et on pourrait en conclure
+    que cette identité-là tient. Elle ne tient pas : trois postes suffisent à la
+    casser. C'est la plus lourde des quatre, parce qu'une facture belge doit
+    énoncer une TVA qui soit celle de la base qu'elle énonce.
+    """
+    from metreo_domain.estimate import EstimateLineInput, LineKind, compute_estimate
+    from metreo_domain.money import DEFAULT_ROUNDING, Money
+    from metreo_domain.pricing import MarkupPolicy, TaxRate
+    from metreo_domain.units import Quantity
+
+    taux = Decimal("0.21")
+    tva = TaxRate(code="VAT-BE-21", label="TVA 21 %", rate=taux)
+    montants = ("100.005", "100.0083", "100.0116")
+
+    resultat = compute_estimate(
+        lines=tuple(
+            EstimateLineInput(
+                line_id=f"L{rang}",
+                code=str(rang),
+                designation=f"Poste {rang}",
+                quantity=Quantity.of("1", "fft"),
+                kind=LineKind.ITEM,
+                unit_price=Money(Decimal(montant), "EUR"),
+            )
+            for rang, montant in enumerate(montants)
+        ),
+        currency="EUR",
+        markup=MarkupPolicy(),
+        taxes=(tva,),
+    )
+    rendu = resultat.to_dict(DEFAULT_ROUNDING)
+
+    ht_imprime = Decimal(rendu["total_selling_price_ht"])
+    tva_imprimee = Decimal(rendu["taxes"][0]["amount"])
+    tva_de_la_base_imprimee = (ht_imprime * taux).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    ecart = tva_imprimee - tva_de_la_base_imprimee
+
+    assert ecart != 0, (
+        f"La TVA imprimée est désormais celle de la base imprimée sur ce "
+        f"cas ({ht_imprime} × {taux}). {_A_CORRIGER}"
+    )
+    assert abs(ecart) <= ECART_MAXIMUM_ATTENDU, (
+        f"TVA imprimée {tva_imprimee}, TVA de la base imprimée "
+        f"{tva_de_la_base_imprimee} : écart de {ecart}."
     )
