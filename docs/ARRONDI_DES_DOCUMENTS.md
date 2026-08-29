@@ -1,9 +1,11 @@
-# Arrondi : les documents ne s'additionnent pas
+# Arrondi : le devis remis au client s'additionne
 
 Portée : le devis remis au client — export CSV et aperçu imprimable — et les
-totaux que l'API renvoie. Ce document constate un défaut mesuré, expose ses
-conséquences et pose la décision. **Il ne la tranche pas** : les deux
-conventions possibles changent des montants imprimés.
+totaux que l'API renvoie. Ce document enregistre un défaut mesuré, la
+convention retenue pour le corriger, et ce que ce choix coûte.
+
+Le constat, la cause et l'ampleur ci-dessous décrivent l'état **avant**
+correction.
 
 ## Le constat
 
@@ -127,65 +129,85 @@ présentation ainsi :
 L'objectif est donc bien que les totaux ne divergent pas. Ils divergent, à
 l'intérieur d'un seul document.
 
-## La décision à prendre
+## La décision prise : option A
 
-Trois conventions existent, et elles ne donnent pas le même devis.
+**Le document remis au client s'additionne exactement.**
 
-### A — Le total est la somme des lignes imprimées
-
-Le document devient cohérent par construction : `Total HT` est la somme des
-totaux de ligne tels qu'imprimés, la TVA se calcule sur cette base imprimée, et
-`Total TTC` est la somme des deux montants imprimés.
+    Total HT       = somme des totaux de ligne imprimés et inclus dans le total
+    TVA d'un taux  = arrondi(taux x base taxable IMPRIMÉE de ce taux)
+    Total TTC      = Total HT imprimé + TVA imprimées
 
 C'est la convention de la facturation : sur une facture, les nombres imprimés
 doivent s'additionner, et la TVA porte sur la base telle qu'énoncée.
 
-Conséquence : le total imprimé s'écarte du total exact, d'autant plus que le
-bordereau est long. `total_selling_price_ht` (brut) reste la valeur de
-référence pour le calcul interne et pour le gel.
+Sur le devis de démonstration, le Total HT imprimé passe de `99 097,08` à
+`99 097,07`, et le TTC de `119 907,46` à `119 907,47`. Sur les trois forfaits
+du contre-exemple : Total HT `300,03`, TVA `63,01`, TTC `363,04`.
 
-Cette convention règle les quatre identités d'un coup, à condition d'aller
-jusqu'au bout : la TVA doit se calculer sur la base **imprimée**, pas sur la
-somme exacte. Sur les trois forfaits ci-dessus, elle donnerait Total HT
-`300,03`, TVA `63,01`, Total TTC `363,04` — au lieu de `300,02` / `63,01` /
-`363,03`. Le TTC change de un centime : c'est le prix de la cohérence.
+### Ce que ça coûte
 
-Question ouverte que cette convention pose et ne referme pas : faut-il calculer
-la TVA sur la base imprimée globale, ou additionner les TVA de ligne imprimées ?
-Les deux divergent (`63,01` contre `63,00` sur le même exemple), et le choix
-relève du traitement fiscal, pas de la technique.
+Le total imprimé s'écarte du total exact, d'autant plus que le bordereau est
+long. C'est le prix assumé de la cohérence : un lecteur qui additionne trouve
+ce que le document annonce.
+
+`total_selling_price_ht_raw` et `total_ttc_raw` restent les valeurs non
+arrondies. Le calcul interne, le stockage et l'empreinte des instantanés
+s'appuient dessus.
+
+### Ce qui ne suit pas, et ne peut pas suivre
+
+**La somme des TVA imprimées poste par poste n'égale pas la TVA du pied.** La
+TVA porte sur la base d'un taux, pas sur chaque ligne prise isolément : c'est
+le traitement fiscal, et c'est ce que la ligne « TVA 21 % » énonce. Le
+document n'imprime d'ailleurs pas de colonne TVA par poste.
+
+### Les devis déjà gelés
+
+Un devis figé avant ce changement **affichera** désormais les montants de la
+nouvelle convention : `recompute_from_snapshot` rejoue le moteur sur les
+*entrées* de l'instantané, et c'est la mise en forme qui change. Un Total HT
+peut donc bouger d'un centime entre hier et aujourd'hui sur un devis gelé.
+
+Ce qui ne bouge pas :
+
+| | |
+| --- | --- |
+| `snapshot_sha256` | l'empreinte porte sur l'instantané **stocké**, que rien ne réécrit |
+| `total_selling_price_ht`, `total_ttc` en base | valeurs **brutes**, non arrondies |
+| `total_selling_price_ht_raw` | la somme exacte, inchangée |
+
+Un devis gelé reste donc comparable à lui-même et vérifiable.
+`apps/api/tests/test_quote_arithmetic.py` le prouve : il gèle une version, la
+relit depuis son instantané, vérifie les quatre identités sur ce relu, et
+vérifie que l'empreinte et les valeurs brutes n'ont pas bougé.
+
+**Un devis déjà remis à un client sur papier ou en PDF n'est pas rétroactivement
+corrigé** : le fichier qu'il détient garde ses anciens nombres. C'est une
+différence d'un centime sur un petit bordereau, jusqu'à un peu plus d'un euro
+sur cinq cents postes. À signaler au commerce avant la mise en production.
+
+### Les options et lignes exclues
+
+Sémantique inchangée : une option est chiffrée et reste hors du Total HT, donc
+hors de la base taxable. `options_total_ht` continue de l'exposer à part.
+
+## Les options qui n'ont pas été retenues
 
 ### B — Une ligne d'écart d'arrondi
 
 Le total reste l'arrondi de la valeur exacte, et le document porte une ligne
-supplémentaire, visible, qui absorbe la différence.
-
-Honnête, et courant en comptabilité. Mais une ligne « écart d'arrondi » sur un
-devis d'appel d'offres se remarque, et se discute.
-
-Cette convention règle la première identité et la troisième. Elle ne règle pas
-la quatrième : la TVA imprimée reste celle de la somme exacte, et la base
-imprimée reste, elle, la somme exacte arrondie. Il y faudrait une seconde ligne
-d'écart, sur la TVA.
+supplémentaire qui absorbe la différence. Honnête, et courant en comptabilité,
+mais une ligne « écart d'arrondi » sur un devis d'appel d'offres se remarque et
+se discute — et il en aurait fallu une seconde sur la TVA.
 
 ### C — Ne rien changer
 
-Le défaut reste, et il faut savoir qu'il est là. C'est l'état actuel, et c'est
-ce que les tests associés verrouillent.
+Aurait laissé un devis de cinq cents postes se contredire d'un euro et demi, et
+un devis annoncer une TVA qui n'est pas celle de sa base. Sur un devis, un
+client conteste ; sur la facture qui en découle, c'est l'administration.
 
-Choisir C, c'est accepter qu'un devis de cinq cents postes se contredise d'un
-euro et demi, et qu'un devis puisse annoncer une TVA qui n'est pas celle de sa
-base. Sur un devis, un client conteste ; sur la facture qui en découle, c'est
-l'administration.
+## Ce qui n'est pas en cause
 
-## En attendant
-
-`apps/api/tests/test_quote_rounding_coherence.py` reproduit les quatre
-identités et **borne l'écart** de chacune. Ce test ne dit pas que le comportement est juste :
-il dit qu'il est celui-ci, et qu'il ne peut pas s'aggraver sans que la suite le
-signale. Si la convention est tranchée, ce test doit être supprimé et remplacé
-par les identités correspondantes ; son message d'échec le rappelle.
-
-Ce qui n'est **pas** en cause : le gel. `snapshot_sha256` porte sur les valeurs
-non arrondies, identiques sur les deux moteurs (voir la PR sur l'écriture
-canonique). Un devis gelé reste comparable à lui-même.
+Le gel. `snapshot_sha256` porte sur les valeurs non arrondies, identiques sur
+les deux moteurs (voir la PR sur l'écriture canonique). Un devis gelé reste
+comparable à lui-même.

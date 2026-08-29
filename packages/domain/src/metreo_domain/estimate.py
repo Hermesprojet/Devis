@@ -117,25 +117,86 @@ class EstimateResult:
             self.currency,
         )
 
+    def displayed_taxable_bases(self, policy: RoundingPolicy) -> dict[str, Decimal]:
+        """Base taxable **imprimée** de chaque taux, par code.
+
+        La base d'un taux est la somme des totaux de ligne *tels qu'imprimés*
+        des postes qui portent ce taux et qui entrent dans le total. Les mêmes
+        règles d'inclusion que le Total HT : une option est chiffrée, elle
+        n'est pas taxée dans le total du marché de base.
+        """
+        bases: dict[str, Decimal] = {tax.code: Decimal(0) for tax, _ in self.tax_totals}
+        for line in self.lines:
+            if not line.included_in_total or line.price is None:
+                continue
+            imprime = policy.quantize(line.price.selling_price_ht.amount)
+            for tax, _ in line.price.tax_amounts:
+                if tax.code in bases:
+                    bases[tax.code] += imprime
+        return bases
+
     def to_dict(self, policy: RoundingPolicy = DEFAULT_ROUNDING) -> dict[str, Any]:
+        """Le document remis au client s'additionne exactement.
+
+        Convention retenue — celle de la facturation : les nombres imprimés
+        côte à côte doivent s'accorder, parce que c'est de tête que le lecteur
+        les vérifie.
+
+            Total HT       = somme des totaux de ligne imprimés et inclus
+            TVA d'un taux  = arrondi(taux x base taxable IMPRIMÉE de ce taux)
+            Total TTC      = Total HT imprimé + TVA imprimées
+
+        Chaque montant restait auparavant le bon arrondi de sa propre valeur
+        exacte, et leur mise côte à côte se contredisait : sur le devis de
+        démonstration, la somme des lignes valait 99 097,07 pour un Total HT
+        imprimé de 99 097,08, et HT + TVA donnaient 119 907,47 pour un TTC
+        imprimé de 119 907,46. L'écart croît avec le nombre de postes — mesuré
+        jusqu'à 1,29 EUR sur un bordereau de deux cent cinquante lignes.
+
+        Le total imprimé s'écarte donc du total exact, et c'est le prix assumé
+        de la cohérence. **Les valeurs brutes ne bougent pas** :
+        `total_selling_price_ht_raw` reste la valeur non arrondie, le calcul
+        interne et l'empreinte des instantanés s'appuient dessus, et un devis
+        gelé reste comparable à lui-même.
+
+        Une chose ne suit pas et ne peut pas suivre : la somme des TVA
+        imprimées poste par poste n'égale pas la TVA du pied. La TVA porte sur
+        la base d'un taux, pas sur chaque ligne prise isolément — c'est le
+        traitement fiscal, et c'est ce que la ligne « TVA 21 % » énonce.
+        """
+        bases = self.displayed_taxable_bases(policy)
+        total_ht = Decimal(0)
+        for line in self.lines:
+            if line.included_in_total and line.price is not None:
+                total_ht += policy.quantize(line.price.selling_price_ht.amount)
+
+        taxes = [
+            {
+                "code": tax.code,
+                "label": tax.label,
+                "rate": canonical_text(tax.rate),
+                "taxable_base": str(bases[tax.code]),
+                "amount": str(policy.quantize(bases[tax.code] * tax.rate)),
+                "amount_raw": canonical_text(amount.amount),
+            }
+            for tax, amount in self.tax_totals
+        ]
+        total_ttc = total_ht + sum(
+            (Decimal(tax["amount"]) for tax in taxes),
+            Decimal(0),
+        )
+
         return {
             "currency": self.currency,
             "lines": [line.to_dict(policy) for line in self.lines],
             "total_direct_cost": str(policy.quantize(self.total_direct_cost.amount)),
             "total_cost_price": str(policy.quantize(self.total_cost_price.amount)),
-            "total_selling_price_ht": str(policy.quantize(self.total_selling_price_ht.amount)),
+            "total_selling_price_ht": str(total_ht),
             "total_selling_price_ht_raw": canonical_text(self.total_selling_price_ht.amount),
             "options_total_ht": str(policy.quantize(self.options_total_ht.amount)),
-            "taxes": [
-                {
-                    "code": tax.code,
-                    "label": tax.label,
-                    "rate": canonical_text(tax.rate),
-                    "amount": str(policy.quantize(amount.amount)),
-                }
-                for tax, amount in self.tax_totals
-            ],
-            "total_ttc": str(policy.quantize(self.total_ttc.amount)),
+            "taxes": taxes,
+            "total_ttc": str(total_ttc),
+            "total_ttc_raw": canonical_text(self.total_ttc.amount),
             "missing_price_line_ids": list(self.missing_price_line_ids),
             "blocking": self.blocking,
         }
