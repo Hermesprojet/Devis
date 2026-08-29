@@ -717,11 +717,27 @@ class SeedRefused(RuntimeError):
     """The demonstration dataset must not be written where it could be believed."""
 
 
+#: Le nom de chaque organisation semée, écrit UNE fois.
+#:
+#: Il servait auparavant deux fois : dans l'appel qui crée l'organisation, et
+#: dans une liste séparée que `--reset` consultait pour savoir quoi effacer. Les
+#: deux avaient divergé. La liste nommait « Voiries & Égouttage Martin SPRL
+#: (démo) », que rien ne crée, et ignorait « Wegenbouw Janssens NV (demo) », que
+#: le seed crée bel et bien.
+#:
+#: Conséquence mesurée : `--reset` laissait la seconde organisation en place
+#: puis en recréait une copie. Après un reset, la base portait DEUX
+#: « Wegenbouw Janssens NV (demo) », et un reset de plus en aurait ajouté une
+#: troisième. La garantie affichée — « n'efface que ce qu'il a semé » — était
+#: fausse dans l'autre sens : il n'effaçait pas tout ce qu'il avait semé.
+#:
+#: Une seule source, donc, et un test qui refuse qu'une organisation soit créée
+#: sous un nom absent d'ici.
+ORGANIZATION_A = "Terrassements Dubois SA (démo)"
+ORGANIZATION_B = "Wegenbouw Janssens NV (demo)"
+
 #: Les organisations que ce module sème, et les seules qu'il accepte d'effacer.
-SEEDED_ORGANIZATIONS = (
-    "Terrassements Dubois SA (démo)",
-    "Voiries & Égouttage Martin SPRL (démo)",
-)
+SEEDED_ORGANIZATIONS = (ORGANIZATION_A, ORGANIZATION_B)
 
 
 def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
@@ -780,7 +796,7 @@ def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
 
     org_a = _create_organization(
         session,
-        name="Terrassements Dubois SA (démo)",
+        name=ORGANIZATION_A,
         legal_name="Terrassements Dubois SA",
         company_number="BE0123456789",
         region_code="BE-WAL",
@@ -789,7 +805,7 @@ def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
     )
     org_b = _create_organization(
         session,
-        name="Wegenbouw Janssens NV (demo)",
+        name=ORGANIZATION_B,
         legal_name="Wegenbouw Janssens NV",
         company_number="BE0987654321",
         region_code="BE-VLG",
