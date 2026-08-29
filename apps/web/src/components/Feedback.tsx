@@ -15,6 +15,21 @@ export function ErrorNotice({ error }: { error: unknown }) {
         {typeof detail.required_permission === 'string' && (
           <div className="mono">permission requise : {detail.required_permission}</div>
         )}
+        {/*
+          Sur un 422, FastAPI rend une LISTE de problèmes de champ, pas un
+          objet `{code, message}`. `ApiError` n'y trouvait pas de `message` et
+          retombait sur « Erreur HTTP 422 » : le champ fautif, que le serveur
+          avait nommé, n'était jamais montré.
+        */}
+        {error.fields.length > 0 && (
+          <ul>
+            {error.fields.map((problem, index) => (
+              <li key={index}>
+                <span className="mono">{problem.field}</span> — {problem.message}
+              </li>
+            ))}
+          </ul>
+        )}
         {problems && (
           <ul>
             {problems.map((problem, index) => {

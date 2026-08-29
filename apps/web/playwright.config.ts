@@ -17,6 +17,15 @@ import { join } from 'node:path'
 
 const API_PORT = 8011
 const WEB_PORT = 3011
+
+/**
+ * L'API que les specs peuvent appeler directement.
+ *
+ * Exportée d'ici parce que le port ne vit qu'ici : un test qui le
+ * réécrivait à la main visait `localhost:8000`, qui résout en `::1` sur le
+ * runner et où rien n'écoute.
+ */
+export const API_BASE_URL = `http://127.0.0.1:${API_PORT}/api/v1`
 const REPO_ROOT = join(__dirname, '..', '..')
 const API_DIR = join(REPO_ROOT, 'apps', 'api')
 

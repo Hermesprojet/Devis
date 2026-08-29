@@ -5,8 +5,10 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
-import { api, loadSession, type Computation, type EstimateLine } from '@/lib/api'
+import { api, type Computation, type EstimateLine } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { availability, PERMISSIONS } from '@/lib/permissions'
+import { usePermissions } from '@/lib/usePermissions'
 
 /**
  * Priced bill of quantities for one estimate version.
@@ -24,6 +26,7 @@ export default function EstimateVersionPage() {
   const [ready, setReady] = useState(false)
   const [confirmingFreeze, setConfirmingFreeze] = useState(false)
   const [busy, setBusy] = useState(false)
+  const permissions = usePermissions()
 
   const load = useCallback(async () => {
     setError(null)
@@ -59,21 +62,16 @@ export default function EstimateVersionPage() {
    * Exports are authenticated, so a plain <a href> would hit the API without a
    * token. The file is fetched with the bearer token and handed to the browser
    * as a blob.
+   *
+   * Le `fetch` passe par `api.fetchExport` : cette fonction refaisait le sien
+   * et levait une `Error` nue, ce qui jetait le `required_permission` que
+   * l'API fournit sur un refus. L'utilisateur lisait « Erreur HTTP 403 » sans
+   * savoir quelle permission lui manquait.
    */
   async function download(kind: 'csv' | 'internal' | 'quote') {
     setError(null)
-    const session = loadSession()
-    if (!session) return
     try {
-      const response = await fetch(api.exportUrl(estimateId, versionId, kind), {
-        headers: { Authorization: `Bearer ${session.token}` },
-      })
-      if (!response.ok) {
-        throw Object.assign(new Error(`Erreur HTTP ${response.status}`), {
-          detail: await response.json().catch(() => null),
-        })
-      }
-      const blob = await response.blob()
+      const blob = await api.fetchExport(api.exportUrl(estimateId, versionId, kind))
       const url = URL.createObjectURL(blob)
       if (kind === 'quote') {
         window.open(url, '_blank', 'noopener')
@@ -109,6 +107,13 @@ export default function EstimateVersionPage() {
 
   const { version, result, includes_internal_costs: internal, from_snapshot: snapshot } = computation
   const frozen = version.status === 'frozen'
+  const exportClient = availability(permissions, PERMISSIONS.exportClient)
+  const exportInternal = availability(permissions, PERMISSIONS.exportInternal)
+  const freezing = availability(
+    permissions,
+    PERMISSIONS.estimateFreeze,
+    frozen ? t('estimate.freezeAlreadyFrozen') : null,
+  )
 
   return (
     <Shell>
@@ -132,19 +137,41 @@ export default function EstimateVersionPage() {
       {snapshot && <div className="notice info">{t('estimate.fromSnapshot')}</div>}
       {result.blocking && <div className="notice warning">{t('estimate.blocked')}</div>}
 
+      {/*
+        Deux causes d'indisponibilité, deux traitements. Une commande que le
+        rôle ne pourra JAMAIS exécuter est masquée : la montrer désactivée
+        n'apprend rien d'actionnable. Une commande autorisée mais bloquée par
+        l'état de l'objet reste visible et désactivée, avec l'explication —
+        l'utilisateur doit savoir qu'elle existe et pourquoi elle attend.
+
+        L'API reste l'autorité : elle refuse toujours, et c'est la deuxième
+        barrière. Ceci évite seulement de proposer ce qui ne peut pas aboutir.
+      */}
       <div className="toolbar">
-        <button onClick={() => void download('csv')}>{t('estimate.exportCsv')}</button>
-        {internal && (
+        {exportClient.available && (
+          <button onClick={() => void download('csv')}>{t('estimate.exportCsv')}</button>
+        )}
+        {internal && exportInternal.available && (
           <button onClick={() => void download('internal')}>{t('estimate.exportInternal')}</button>
         )}
-        <button onClick={() => void download('quote')}>{t('estimate.quotePreview')}</button>
+        {exportClient.available && (
+          <button onClick={() => void download('quote')}>{t('estimate.quotePreview')}</button>
+        )}
         <div className="spacer" />
-        {!frozen && (
+        {freezing.available && (
           <button className="primary" onClick={() => setConfirmingFreeze(true)} disabled={busy}>
             {t('estimate.freeze')}
           </button>
         )}
+        {!freezing.available && freezing.reason === 'state' && (
+          <button className="primary" disabled title={freezing.explanation}>
+            {t('estimate.freeze')}
+          </button>
+        )}
       </div>
+      {!freezing.available && freezing.reason === 'state' && (
+        <p className="muted">{freezing.explanation}</p>
+      )}
 
       {confirmingFreeze && (
         <div className="card">
