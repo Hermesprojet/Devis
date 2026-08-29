@@ -225,3 +225,74 @@ class TestLockOrder:
                     f"{list(locking.LOCK_ORDER)}"
                 )
         assert checked >= 1, "aucune fonction ne prend deux verrous : le test ne prouve rien"
+
+
+class TestTheLockableRefusal:
+    """Le refus de verrouiller une ligne hors liste, et sa survie sous `-O`.
+
+    `locking.py` a choisi `raise` plutôt qu'`assert` précisément parce que
+    `python -O` supprime les assertions, et son commentaire annonce que ce
+    choix est « vérifié dans un sous-processus par
+    `test_the_refusal_survives_python_optimised_mode` ». Ce test n'existait
+    nulle part dans le dépôt : le commentaire promettait une vérification
+    absente. Mesuré par ailleurs par une campagne de mutation — en remplaçant
+    `if model.__name__ not in LOCKABLE:` par `if False:`, la suite complète
+    restait verte.
+
+    Le refus tombe avant toute utilisation de la session, d'où le `None` passé
+    en premier argument : si le contrôle disparaissait, l'appel échouerait sur
+    la session et non par un `RuntimeError`, ce qui se voit.
+    """
+
+    def test_locking_a_model_outside_the_list_is_refused(self) -> None:
+        from metreo_api.models import User
+        from metreo_api.services import locking
+
+        assert "User" not in locking.LOCKABLE
+
+        with pytest.raises(RuntimeError) as refus:
+            locking.lock_owned(None, User, "une-organisation", "un-objet")
+        assert "verrouillables" in str(refus.value)
+
+    def test_the_refusal_survives_python_optimised_mode(self) -> None:
+        """Dans un vrai sous-processus `-O`, sinon la garantie n'est pas testée.
+
+        Le sous-processus commence par prouver que les assertions sont bien
+        supprimées. Sans ce contrôle, un sous-processus lancé sans `-O`
+        passerait ce test en ne démontrant rien — vérifié en retirant `-O` de
+        l'appel ci-dessous : le test échoue alors sur ce contrôle.
+        """
+        import subprocess
+        import sys
+
+        programme = (
+            "import sys\n"
+            "assertions_actives = False\n"
+            "try:\n"
+            "    assert False\n"
+            "except AssertionError:\n"
+            "    assertions_actives = True\n"
+            "if assertions_actives:\n"
+            "    print('ASSERTIONS-ACTIVES'); sys.exit(2)\n"
+            "from metreo_api.models import User\n"
+            "from metreo_api.services.locking import lock_owned\n"
+            "try:\n"
+            "    lock_owned(None, User, 'une-organisation', 'un-objet')\n"
+            "except RuntimeError:\n"
+            "    print('REFUS-TENU'); sys.exit(0)\n"
+            "except Exception as erreur:\n"
+            "    print('AUTRE:' + type(erreur).__name__); sys.exit(3)\n"
+            "print('AUCUN-REFUS'); sys.exit(1)\n"
+        )
+        acheve = subprocess.run(
+            [sys.executable, "-O", "-c", programme],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        sortie = acheve.stdout.strip()
+        assert sortie != "ASSERTIONS-ACTIVES", (
+            "le sous-processus ne tournait pas en mode optimisé : ce test n'aurait rien prouvé"
+        )
+        assert sortie == "REFUS-TENU", f"sortie={sortie!r} stderr={acheve.stderr[-400:]}"
+        assert acheve.returncode == 0
