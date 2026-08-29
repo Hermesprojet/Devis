@@ -517,21 +517,56 @@ def test_commercial_rates_are_masked_without_margin_read(seeded_client: TestClie
 
 
 def test_cross_tenant_identifiers_answer_404_on_every_route(
-    seeded_client: TestClient, admin_b: dict[str, str], graph_a: dict[str, str]
+    seeded_client: TestClient, admin_a: dict[str, str], admin_b: dict[str, str]
 ) -> None:
-    """Organisation B, full permissions, pointing at organisation A's rows."""
+    """Organisation B, full permissions, pointing at organisation A's rows.
+
+    Every route is called twice **on the same identifiers**: once as B, which
+    must answer 404, then once as A, which must not. The second call is what
+    gives the first its meaning. A 404 is deliberately ambiguous — "unknown"
+    and "someone else's" answer alike — so on its own the sweep cannot tell a
+    tenant refusal from an identifier that never designated anything.
+
+    Measured, on the version of this test that made the B call alone: replacing
+    every identifier with ``uuid4()`` left the whole file green. The sweep was
+    establishing "an unknown identifier gives 404", which is true of any route,
+    including one that ignores the tenant entirely. Splitting the owner call
+    into a separate test does not close this: that test builds its own graph
+    and cannot vouch for the identifiers this one used. Same loop, same
+    ``graph``, or no proof.
+
+    A 422 from the owner is refused for the same reason as a 404: the body
+    would have been rejected before any ownership lookup, so B's 404 came from
+    validation rather than from tenancy.
+
+    The graph is rebuilt for every route because the sweep includes writes:
+    ``DELETE /projects/{project_id}`` really deletes, and every later route
+    would then answer 404 to its owner for a reason unrelated to tenancy. B is
+    called before A for the same reason — B's call is refused, so it mutates
+    nothing, while A's may.
+    """
     wrong: list[str] = []
+    unproven: list[str] = []
     exercised = 0
-    for route in _all_routes(seeded_client):
+    for index, route in enumerate(_all_routes(seeded_client)):
         if route.key in PUBLIC or route.key in AUTH_ONLY:
             continue
         if route.key in NO_TENANT_IDENTIFIER:
             continue
-        response = _request(seeded_client, route, _fill(route.path, graph_a), admin_b, graph_a)
+        graph = _build_graph(seeded_client, admin_a, f"MATRIX-{index:03d}")
+        path = _fill(route.path, graph)
+        refused = _request(seeded_client, route, path, admin_b, graph)
         exercised += 1
-        if response.status_code != 404:
-            wrong.append(f"{route.key} -> {response.status_code}")
+        if refused.status_code != 404:
+            wrong.append(f"{route.key} -> {refused.status_code}")
+        owned = _request(seeded_client, route, path, admin_a, graph)
+        if owned.status_code in {404, 422}:
+            unproven.append(f"{route.key} -> {owned.status_code} {owned.text[:120]}")
     assert wrong == [], f"Identifiants d'un autre tenant ne donnant pas 404 : {wrong}"
+    assert unproven == [], (
+        "Ces routes répondent 404 ou 422 à leur propre propriétaire : le 404 "
+        f"obtenu pour l'autre tenant ne prouve donc rien sur le cloisonnement. {unproven}"
+    )
     assert exercised >= 15, f"Trop peu de routes couvertes par le test 404 : {exercised}"
 
 
