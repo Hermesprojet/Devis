@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -839,6 +839,27 @@ class ComputationOut(BaseModel):
 # -- audit -----------------------------------------------------------------
 
 
+#: Les champs de `OrganizationSettings` qui révèlent la politique commerciale.
+#:
+#: Une seule liste, deux lecteurs : `/organization/settings` les remplace par
+#: `null` pour qui n'a pas `margin:read`, et le journal d'audit masque leurs
+#: valeurs `before`/`after` pour les mêmes appelants. Les tenir séparément,
+#: c'est exactement ce qui a laissé la fuite ouvrir : les réglages masquaient
+#: `margin_rate`, le journal le rendait en clair au même utilisateur.
+CHAMPS_COMMERCIAUX_SENSIBLES: Final[frozenset[str]] = frozenset(
+    {
+        "site_overheads_rate",
+        "site_overheads_base",
+        "general_overheads_rate",
+        "general_overheads_base",
+        "contingency_rate",
+        "contingency_base",
+        "margin_rate",
+        "margin_method",
+    }
+)
+
+
 class AuditEventOut(ApiModel):
     id: str
     sequence: int
@@ -850,6 +871,10 @@ class AuditEventOut(ApiModel):
     object_id: str | None
     summary: str
     payload: dict[str, Any]
+    #: Vrai quand des valeurs commerciales ont été retirées du payload rendu.
+    #: Le payload STOCKÉ n'est jamais modifié — son empreinte reste celle qui a
+    #: été scellée, et `/audit/verify` continue de la recalculer à l'identique.
+    payload_redacted: bool = False
     hash: str
     previous_hash: str | None
 

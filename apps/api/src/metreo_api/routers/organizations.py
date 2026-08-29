@@ -14,6 +14,7 @@ from metreo_domain.errors import DomainError
 from ..db import session_scope
 from ..models import OrganizationSettings, TaxRateRow
 from ..schemas import (
+    CHAMPS_COMMERCIAUX_SENSIBLES,
     OrganizationOut,
     OrganizationSettingsOut,
     OrganizationSettingsUpdate,
@@ -48,17 +49,13 @@ def get_settings_endpoint(
         # Coefficients that reveal commercial policy are masked rather than
         # refused: the rest of the screen stays usable. They become null, never
         # zero, so a client cannot mistake a mask for a real rate.
+        # La même liste que le journal d'audit consulte, et pour la même
+        # raison : deux listes tenues séparément, c'est exactement ce qui a
+        # laissé `/audit/events` rendre en clair ce que cet écran masque.
         payload = payload.model_copy(
             update={
                 "commercial_rates_visible": False,
-                "site_overheads_rate": None,
-                "site_overheads_base": None,
-                "general_overheads_rate": None,
-                "general_overheads_base": None,
-                "contingency_rate": None,
-                "contingency_base": None,
-                "margin_rate": None,
-                "margin_method": None,
+                **dict.fromkeys(CHAMPS_COMMERCIAUX_SENSIBLES, None),
             }
         )
     return payload
