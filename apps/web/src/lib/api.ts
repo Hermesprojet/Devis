@@ -172,6 +172,24 @@ export const api = {
       body: { email, organization_id: organizationId ?? null },
     }),
 
+  oidcStart: (returnTo?: string) =>
+    request<{ authorization_url: string }>(
+      `/auth/oidc/start${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ''}`,
+    ),
+
+  // Le jeton arrive ici, dans un corps de réponse, et nulle part ailleurs. Le
+  // navigateur ne rapporte du fournisseur qu'un code opaque à usage unique.
+  oidcExchange: (loginCode: string, organizationId?: string) =>
+    request<{
+      access_token: string
+      user_id: string
+      organization_id: string
+      role: string
+    }>('/auth/oidc/exchange', {
+      method: 'POST',
+      body: { login_code: loginCode, organization_id: organizationId ?? null },
+    }),
+
   me: () => request<Me>('/auth/me'),
   health: () => request<Health>('/health'),
   organization: () => request<Organization>('/organization'),
@@ -274,6 +292,7 @@ export type Health = {
   ai_enabled: boolean
   database: string
   configuration_problems: string[]
+  login_methods: ('dev' | 'oidc')[]
 }
 
 export type Me = {

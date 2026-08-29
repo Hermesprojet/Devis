@@ -138,9 +138,21 @@ clean-install: ## Prouver qu'une installation depuis les seuls manifestes démar
 
 .PHONY: lock
 lock: ## Régénérer constraints/api.txt depuis une résolution propre
-	@tmp=$$(mktemp -d); \
-	$(PY) -m venv $$tmp/venv; \
-	$$tmp/venv/bin/pip install --quiet --upgrade pip; \
+	@# `set -e` et un venv construit avec le python SYSTÈME.
+	@#
+	@# Sans `set -e`, cette cible annonçait « régénéré » quoi qu'il arrive :
+	@# quand la création du venv échouait, `pip freeze` ne tournait pas, le
+	@# fichier ne recevait que l'en-tête, et le verrou partait VIDE avec un
+	@# code de sortie 0. Un verrou vide n'épingle plus rien.
+	@#
+	@# Et `$(PY)` est le python d'un venv : `python -m venv` depuis un venv
+	@# peut produire un environnement sans pip, ce qui est exactement ce qui
+	@# s'était produit. `python3` du système en a un.
+	@set -e; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf $$tmp' EXIT; \
+	python3 -m venv $$tmp/venv; \
+	$$tmp/venv/bin/python -m pip install --quiet --upgrade pip; \
 	$$tmp/venv/bin/pip install --quiet ./packages/domain ./packages/contracts "./apps/api[postgres]"; \
 	{ echo "# Verrou de résolution des dépendances d'EXÉCUTION, régénéré par : make lock"; \
 	  echo "#"; \
@@ -152,9 +164,11 @@ lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	  echo "# Les manifestes (pyproject.toml) restent la source de vérité des"; \
 	  echo "# dépendances ; ce fichier ne fait que figer la résolution obtenue."; \
 	  $$tmp/venv/bin/pip freeze --exclude-editable \
-	    | grep -viE '^metreo-'; } > constraints/api.txt; \
-	rm -rf $$tmp; \
-	echo "constraints/api.txt régénéré."
+	    | grep -viE '^metreo-'; } > $$tmp/verrou.txt; \
+	test $$(grep -cvE '^#|^$$' $$tmp/verrou.txt) -ge 20 || \
+	  { echo "make lock : résolution vide ou tronquée, verrou inchangé." >&2; exit 1; }; \
+	mv $$tmp/verrou.txt constraints/api.txt; \
+	echo "constraints/api.txt régénéré ($$(grep -cvE '^#|^$$' constraints/api.txt) paquets)."
 
 .PHONY: skills
 skills: ## Contrôler les skills du dépôt

@@ -28,10 +28,34 @@ class Settings(BaseSettings):
     # Authentication -------------------------------------------------------
     # "dev" issues tokens for seeded users without a password. It is a local
     # convenience, never a production mode.
-    auth_mode: Literal["dev", "jwt"] = "dev"
+    #: - ``dev``  : jetons émis sans mot de passe pour les comptes semés.
+    #:   Commodité locale, refusée hors développement.
+    #: - ``oidc`` : Authorization Code + PKCE contre un fournisseur externe.
+    #:   Le seul mode utilisable en préproduction et en production.
+    #: - ``jwt``  : jetons signés acceptés tels quels, sans parcours de
+    #:   connexion. Utile à une intégration machine, insuffisant pour un
+    #:   navigateur.
+    auth_mode: Literal["dev", "jwt", "oidc"] = "dev"
     jwt_secret: str = Field(default="", repr=False)
     jwt_algorithm: str = "HS256"
     jwt_ttl_seconds: int = 8 * 3600
+
+    # OIDC -----------------------------------------------------------------
+    #: Émetteur. La découverte lit ``<issuer>/.well-known/openid-configuration``
+    #: et **tout** le reste en découle : rien n'est deviné ni codé en dur.
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = Field(default="", repr=False)
+    #: URL exacte enregistrée chez le fournisseur. Doit être une URL absolue
+    #: de l'application, pas de l'API : c'est le navigateur qui y revient.
+    oidc_redirect_uri: str = ""
+    oidc_scopes: str = "openid email profile"
+    #: Durée de vie du code de connexion opaque échangé contre la session.
+    #: Court par construction : il transite par l'URL de retour.
+    oidc_login_code_ttl_seconds: int = 120
+    #: Fenêtre de validité d'une demande de connexion, entre le départ vers le
+    #: fournisseur et le retour. Au-delà, `state` est considéré périmé.
+    oidc_transaction_ttl_seconds: int = 600
 
     # Storage --------------------------------------------------------------
     storage_root: str = "./var/storage"
@@ -86,6 +110,35 @@ class Settings(BaseSettings):
             raise RuntimeError("METREO_JWT_SECRET is required outside development environments")
         return "dev-only-insecure-secret"
 
+    @property
+    def browser_login_available(self) -> bool:
+        """Un navigateur peut-il obtenir un jeton sur ce déploiement ?
+
+        Faux avec `auth_mode=jwt` : les jetons sont acceptés, mais rien ne les
+        émet. C'est un déploiement d'API pure, valide, et à ne pas confondre
+        avec un déploiement où des humains doivent se connecter — la
+        distinction ne se voyait nulle part.
+        """
+        if self.auth_mode == "oidc":
+            return self.oidc_configured
+        return self.auth_mode == "dev" and not self.is_production
+
+    @property
+    def oidc_configured(self) -> bool:
+        """Le mode OIDC dispose-t-il de tout ce qu'il lui faut ?
+
+        Les quatre valeurs sont indissociables : il n'existe pas de parcours de
+        connexion partiel. Un émetteur sans identifiant client, ou une URL de
+        retour manquante, ne dégrade pas le service — il le rend inutilisable
+        d'une façon qui ne se voit qu'au premier utilisateur.
+        """
+        return bool(
+            self.oidc_issuer
+            and self.oidc_client_id
+            and self.oidc_client_secret
+            and self.oidc_redirect_uri
+        )
+
     def validate_startup(self) -> list[str]:
         """Return the list of configuration problems, worst first."""
         problems: list[str] = []
@@ -96,6 +149,28 @@ class Settings(BaseSettings):
                 problems.append("jwt_secret must be set in staging/production")
             if self.database_url.startswith("sqlite"):
                 problems.append("sqlite is not supported in staging/production")
+        # Refus fermé sur une configuration OIDC incomplète. Les quatre
+        # valeurs sont indissociables : il n'existe pas de parcours partiel, et
+        # un émetteur sans identifiant client ne dégrade pas le service — il le
+        # rend inutilisable d'une façon qui ne se voit qu'au premier
+        # utilisateur.
+        #
+        # `jwt` reste en revanche légitime hors développement : une intégration
+        # machine à machine présente ses jetons sans passer par un navigateur.
+        # Ce mode n'offre simplement aucun moyen de se connecter depuis un
+        # navigateur, et `browser_login_available` le dit à qui déploie.
+        if self.auth_mode == "oidc" and not self.oidc_configured:
+            manquants = [
+                nom
+                for nom, valeur in (
+                    ("oidc_issuer", self.oidc_issuer),
+                    ("oidc_client_id", self.oidc_client_id),
+                    ("oidc_client_secret", self.oidc_client_secret),
+                    ("oidc_redirect_uri", self.oidc_redirect_uri),
+                )
+                if not valeur
+            ]
+            problems.append(f"auth_mode=oidc requires: {', '.join(manquants)}")
         return problems
 
 

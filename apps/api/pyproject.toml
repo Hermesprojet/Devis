@@ -15,7 +15,16 @@ dependencies = [
   "pydantic[email]>=2.7",
   "pydantic-settings>=2.3",
   "python-multipart>=0.0.9",
-  "pyjwt>=2.8",
+  # L'extra "crypto" est requis, pas optionnel : un fournisseur OIDC signe
+  # ses jetons en RS256 ou ES256, et PyJWT refuse ces algorithmes sans
+  # `cryptography`. Sans lui, la validation de signature ne peut pas avoir
+  # lieu — et une validation qu'on ne peut pas faire est une validation
+  # qu'on finirait par contourner.
+  "pyjwt[crypto]>=2.8",
+  # Client HTTP d'exécution : découverte OIDC et échange du code. Il était
+  # déclaré en dépendance de développement seulement, ce qui suffisait aux
+  # tests et pas à l'application.
+  "httpx>=0.27",
   "metreo-domain",
 ]
 

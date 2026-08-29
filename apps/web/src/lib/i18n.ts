@@ -34,6 +34,22 @@ const fr: Dictionary = {
   'login.submit': 'Se connecter',
   'login.demoAccounts': 'Comptes de démonstration',
   'login.organization': 'Organisation',
+  'login.oidcSubmit': "Se connecter avec le compte de l'entreprise",
+  'login.oidcNotice':
+    "La connexion passe par le fournisseur d'identité de votre entreprise. Aucun mot de passe n'est conservé par Metreo.",
+  'login.oidcPending': 'Connexion en cours…',
+  'login.noMethod':
+    "Ce déploiement n'offre aucune connexion depuis un navigateur. Il accepte des jetons émis ailleurs.",
+  'login.error.provider_refused':
+    "Le fournisseur d'identité a refusé la connexion.",
+  'login.error.invalid_request': 'La demande de connexion était incomplète.',
+  'login.error.no_membership':
+    "Ce compte n'appartient à aucune organisation active. Demandez à un administrateur de vous ajouter.",
+  'login.error.unknown_user':
+    "Ce compte n'est pas connu de Metreo. Un administrateur doit le créer avant la première connexion.",
+  'login.error.unverified_email':
+    "Le fournisseur d'identité n'a pas confirmé cette adresse e-mail.",
+  'login.error.generic': 'La connexion a échoué.',
 
   'common.loading': 'Chargement…',
   'common.error': 'Erreur',
