@@ -362,11 +362,190 @@ def test_a_frozen_quote_keeps_its_digest_while_its_display_changes(
     dix_decimales = Decimal("0.0000000001")
     stocke = Decimal(apres["total_selling_price_ht"]).quantize(dix_decimales)
     assert stocke == brut_ht.quantize(dix_decimales)
-    assert (
-        Decimal(payload["total_selling_price_ht_raw"]).quantize(dix_decimales) == stocke
-    )
+    assert Decimal(payload["total_selling_price_ht_raw"]).quantize(dix_decimales) == stocke
 
     # Et le total imprimé s'écarte du brut : c'est le prix assumé de la
     # cohérence, pas un calcul faux.
     ecart = abs(Decimal(payload["total_selling_price_ht"]) - brut_ht)
     assert ecart < Decimal("1"), f"écart de {ecart} entre le total imprimé et le brut"
+
+
+# -- la liste des versions annonce le nombre du document -------------------
+
+
+def test_the_version_list_shows_the_document_total_not_the_rounded_raw(
+    seeded_client: TestClient,
+) -> None:
+    """Un seul total affiché, et c'est celui du devis.
+
+    C'est le point qui bloquait cette PR : la liste des versions arrondissait
+    le total **brut**, et annonçait donc `99 097,08` là où le devis imprime
+    `99 097,07`. Deux nombres « affichés » pour une même version, produits par
+    la même API.
+    """
+    headers = login(seeded_client, "admin@dubois.demo")
+    estimate = seeded_client.get("/api/v1/estimates", headers=headers).json()[0]
+    version = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+    price_the_missing_line(seeded_client, headers, estimate)
+
+    gel = seeded_client.post(
+        f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}/freeze",
+        headers=headers,
+        json={"confirm": True, "label": None},
+    )
+    assert gel.status_code == 200, gel.text
+
+    calcul = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}/computation",
+        headers=headers,
+    ).json()["result"]
+    liste = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+
+    assert liste["document_totals_available"] is True
+    assert liste["total_selling_price_ht_display"] == calcul["total_selling_price_ht"]
+    assert liste["total_ttc_display"] == calcul["total_ttc"]
+
+    # Et ce n'est pas l'arrondi du brut : les deux diffèrent bien, sinon ce
+    # test passerait sans rien prouver.
+    brut = Decimal(liste["total_selling_price_ht"])
+    assert Decimal(liste["total_selling_price_ht_display"]) != brut.quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    ), "brut arrondi et total imprimé coïncident : le cas ne discrimine plus rien"
+
+
+def test_the_csv_and_the_html_agree_with_the_version_list(
+    seeded_client: TestClient,
+) -> None:
+    """Les quatre lecteurs — liste, calcul, CSV, aperçu — disent la même chose."""
+    headers = login(seeded_client, "admin@dubois.demo")
+    estimate = seeded_client.get("/api/v1/estimates", headers=headers).json()[0]
+    version = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+    price_the_missing_line(seeded_client, headers, estimate)
+    base = f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}"
+    seeded_client.post(f"{base}/freeze", headers=headers, json={"confirm": True, "label": None})
+
+    liste = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+    attendu = liste["total_selling_price_ht_display"]
+
+    csv_texte = seeded_client.get(f"{base}/export.csv", headers=headers).text.lstrip("﻿")
+    pied = [
+        ligne
+        for ligne in csv.reader(io.StringIO(csv_texte), delimiter=";")
+        if ligne and ligne[0] == "Total HT"
+    ]
+    assert pied and pied[0][1] == attendu, f"CSV : {pied} ≠ {attendu}"
+
+    html = seeded_client.get(f"{base}/quote.html", headers=headers).text
+    trouve = re.search(r"<td>Total HT</td><td class=\"num\">([\d.]+)", html)
+    assert trouve and trouve.group(1) == attendu, f"aperçu : {trouve} ≠ {attendu}"
+
+
+def test_a_frozen_total_survives_a_later_price_change(seeded_client: TestClient) -> None:
+    """Le document figé ne bouge plus, même si les prix bougent après.
+
+    C'est la raison d'être de la persistance : sans elle, le total affiché
+    serait recalculé à chaque lecture, et un devis déjà remis changerait de
+    montant.
+    """
+    headers = login(seeded_client, "admin@dubois.demo")
+    estimate = seeded_client.get("/api/v1/estimates", headers=headers).json()[0]
+    version = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+    price_the_missing_line(seeded_client, headers, estimate)
+    base = f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}"
+    seeded_client.post(f"{base}/freeze", headers=headers, json={"confirm": True, "label": None})
+
+    avant = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]["total_selling_price_ht_display"]
+
+    book = seeded_client.get("/api/v1/price-books", headers=headers).json()[0]
+    pb_version = seeded_client.get(
+        f"/api/v1/price-books/{book['id']}/versions", headers=headers
+    ).json()[0]["id"]
+    lot = seeded_client.post(
+        f"/api/v1/price-books/versions/{pb_version}/imports/preview",
+        headers=headers,
+        files={
+            "file": (
+                "hausse.csv",
+                b"code;libelle;unite;prix_unitaire\n"
+                b"MAT-TUY-160;Tuyau beton non arme DN 400;m;146,25\n",
+                "text/csv",
+            )
+        },
+    ).json()
+    seeded_client.post(
+        f"/api/v1/price-books/imports/{lot['batch_id']}/commit",
+        headers=headers,
+        json={"strategy": "replace", "confirm": True},
+    )
+
+    apres = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]["total_selling_price_ht_display"]
+    assert apres == avant, f"le total figé a bougé : {avant} -> {apres}"
+
+
+def test_a_draft_version_has_no_frozen_document_total(seeded_client: TestClient) -> None:
+    """Un brouillon n'a pas de document figé, et ne prétend pas en avoir un."""
+    headers = login(seeded_client, "admin@dubois.demo")
+    estimate = seeded_client.get("/api/v1/estimates", headers=headers).json()[0]
+    version = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+
+    assert version["status"] == "draft"
+    assert version["document_totals_available"] is False
+    assert version["document_total_ht"] is None
+
+
+def test_a_legacy_frozen_version_shows_no_total_rather_than_a_wrong_one(
+    seeded_client: TestClient,
+) -> None:
+    """`NULL` veut dire « inconnu », jamais « voici l'arrondi du brut ».
+
+    On simule une version gelée avant l'introduction des colonnes : ses totaux
+    bruts sont là, son document ne l'est pas. La liste doit afficher une
+    absence — un maître d'ouvrage ne doit pas lire un montant qui n'est pas
+    celui de son devis.
+    """
+    from sqlalchemy import select
+
+    from metreo_api.db import get_session_factory
+    from metreo_api.models import EstimateVersion
+
+    headers = login(seeded_client, "admin@dubois.demo")
+    estimate = seeded_client.get("/api/v1/estimates", headers=headers).json()[0]
+    version = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+    price_the_missing_line(seeded_client, headers, estimate)
+    base = f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}"
+    seeded_client.post(f"{base}/freeze", headers=headers, json={"confirm": True, "label": None})
+
+    with get_session_factory()() as session:
+        ligne = session.scalar(select(EstimateVersion).where(EstimateVersion.id == version["id"]))
+        assert ligne is not None
+        brut = ligne.total_selling_price_ht
+        ligne.document_total_ht = None
+        ligne.document_total_ttc = None
+        session.commit()
+
+    relu = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions", headers=headers
+    ).json()[0]
+    assert relu["document_totals_available"] is False
+    assert relu["total_selling_price_ht_display"] is None
+    assert relu["total_ttc_display"] is None
+    # Le brut, lui, n'a pas été touché : aucune donnée n'est perdue.
+    assert Decimal(relu["total_selling_price_ht"]) == brut

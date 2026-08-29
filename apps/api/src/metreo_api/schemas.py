@@ -772,12 +772,24 @@ class EstimateOut(ApiModel):
 
 
 class EstimateVersionOut(DecimalOut):
-    """A version and its totals.
+    """Une version et ses totaux.
 
-    ``total_selling_price_ht`` is the **stored, unrounded** amount — the value
-    the engine produced. ``*_display`` applies the version's own rounding policy
-    and is what a screen or a document should print. Exposing both keeps the
-    rounding a single, explicit step instead of something each client redoes.
+    Deux familles de nombres, et il ne faut pas les confondre.
+
+    ``total_selling_price_ht`` et ``total_ttc`` sont les montants **bruts**, non
+    arrondis, tels que le moteur les a produits. Ils servent aux calculs
+    internes et aux comparaisons.
+
+    ``*_display`` est le total **du document** : exactement ce que le devis
+    remis au client porte. Il ne s'obtient pas en arrondissant le brut — il est
+    la somme des lignes imprimées — et une version gelée le conserve tel qu'il
+    était le jour du gel.
+
+    Quand il vaut ``None`` sur une version gelée, cela veut dire une seule
+    chose : *le nombre imprimé n'a pas pu être reconstruit pour cette version
+    ancienne*. On ne lui substitue jamais l'arrondi du brut, qui serait faux de
+    quelques centimes sans que personne ne s'en aperçoive.
+    ``document_totals_available`` dit lequel des deux cas le client regarde.
     """
 
     id: str
@@ -789,11 +801,19 @@ class EstimateVersionOut(DecimalOut):
     rounding: dict[str, Any] = Field(default_factory=dict)
     total_selling_price_ht: Decimal | None
     total_ttc: Decimal | None
+    document_total_ht: Decimal | None = None
+    document_total_ttc: Decimal | None = None
     snapshot_sha256: str | None
     frozen_at: datetime | None
     created_at: datetime
 
     def _quantize(self, value: Decimal | None) -> str | None:
+        """Met une valeur à l'échelle d'affichage de la version.
+
+        Utilisé pour le brouillon, dont le document se recalcule à la demande
+        et n'est donc pas figé. Jamais pour combler l'absence d'un total
+        documentaire sur une version gelée.
+        """
         if value is None:
             return None
         from metreo_domain.money import RoundingPolicy
@@ -807,12 +827,40 @@ class EstimateVersionOut(DecimalOut):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
+    def document_totals_available(self) -> bool:
+        """Le total imprimé de cette version est-il connu ?
+
+        Faux pour une version gelée avant l'introduction des totaux
+        documentaires et dont l'instantané n'a pas permis la reconstruction.
+        Le client doit alors afficher une absence, pas un nombre approchant.
+        """
+        return self.document_total_ht is not None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
     def total_selling_price_ht_display(self) -> str | None:
+        """Le Total HT **du document**, ou rien.
+
+        C'est la même valeur que le CSV, l'aperçu HTML et le calcul renvoient :
+        la liste des versions ne doit pas annoncer un autre nombre que le devis.
+        """
+        # Quantifié, pas seulement canonicalisé : la valeur est déjà à
+        # l'échelle d'affichage, mais la colonne la rend avec les dix décimales
+        # du NUMERIC(28, 10). Sans cela la liste écrirait « 99097.0700000000 »
+        # là où le devis imprime « 99097.07 » — même nombre, autre orthographe.
+        if self.document_total_ht is not None:
+            return self._quantize(self.document_total_ht)
+        if self.status == "frozen":
+            return None
         return self._quantize(self.total_selling_price_ht)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total_ttc_display(self) -> str | None:
+        if self.document_total_ttc is not None:
+            return self._quantize(self.document_total_ttc)
+        if self.status == "frozen":
+            return None
         return self._quantize(self.total_ttc)
 
 

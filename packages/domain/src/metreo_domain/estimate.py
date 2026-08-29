@@ -177,9 +177,8 @@ class EstimateResult:
                 "rate": canonical_text(tax.rate),
                 "taxable_base": str(bases[tax.code]),
                 "amount": str(policy.quantize(bases[tax.code] * tax.rate)),
-                "amount_raw": canonical_text(amount.amount),
             }
-            for tax, amount in self.tax_totals
+            for tax, _ in self.tax_totals
         ]
         total_ttc = total_ht + sum(
             (Decimal(tax["amount"]) for tax in taxes),

@@ -115,6 +115,9 @@ const fr: Dictionary = {
   'estimate.exportCsv': 'Export CSV',
   'estimate.exportInternal': 'Export interne',
   'estimate.quotePreview': 'Aperçu du devis',
+  'estimate.documentTotalUnknown':
+    "Cette version a été gelée avant l'enregistrement des totaux du document. "
+    + 'Ouvrez le devis pour en connaître le montant imprimé.',
   'estimate.freezeAlreadyFrozen':
     'Cette version est déjà gelée. Créez une nouvelle version pour la modifier.',
   'estimate.subDetail': 'Sous-détail',

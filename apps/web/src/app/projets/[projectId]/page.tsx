@@ -247,7 +247,22 @@ export default function ProjectPage() {
                         {version.status === 'frozen' ? t('estimate.frozen') : t('estimate.draft')}
                       </span>
                     </td>
-                    <td className="num">
+                    {/*
+                      Le total du document, ou une absence explicite. Cette
+                      colonne affichait l'arrondi du total brut, qui diffère du
+                      devis de quelques centimes : deux nombres pour une même
+                      version. Une version gelée ancienne dont le total imprimé
+                      n'est pas reconstructible affiche « — » et le dit au
+                      survol, plutôt qu'un montant approchant.
+                    */}
+                    <td
+                      className="num"
+                      title={
+                        version.status === 'frozen' && !version.document_totals_available
+                          ? t('estimate.documentTotalUnknown')
+                          : undefined
+                      }
+                    >
                       {version.total_selling_price_ht_display ?? t('common.none')}
                     </td>
                     <td>
