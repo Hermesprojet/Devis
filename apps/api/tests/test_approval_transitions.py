@@ -177,3 +177,150 @@ class TestApprovedQuantityOverride:
         events = seeded_client.get("/api/v1/audit/events", headers=admin).json()
         rows = events["items"] if isinstance(events, dict) else events
         assert any("dérogation" in (e.get("summary") or "").lower() for e in rows), rows[:3]
+
+
+#: Les quatre statuts qu'une ligne peut porter, indépendamment du routeur : si
+#: `ALLOWED_TRANSITIONS` en oubliait un, le balayage ci-dessous ne le verrait
+#: pas en lisant seulement les clés de la table.
+STATUTS = ("proposed", "verified", "approved", "rejected")
+
+#: Les couples que la table refuse, écrits ici en toutes lettres. Le balayage
+#: lit `ALLOWED_TRANSITIONS` et prouve donc que le *contrôle* est appliqué ;
+#: seule cette liste prouve que la *table* n'a pas été élargie en silence.
+REFUS_ATTENDUS = frozenset(
+    {
+        ("approved", "proposed"),
+        ("rejected", "verified"),
+        ("rejected", "approved"),
+    }
+)
+
+
+class TestTheTransitionTable:
+    """Le contrôle de transition n'était pas exercé.
+
+    Mesuré par une campagne de mutation : en remplaçant
+    `if target not in ALLOWED_TRANSITIONS.get(before, frozenset()):` par
+    `if False:`, la suite complète restait verte — n'importe quelle ligne
+    pouvait alors remonter de « rejeté » à « approuvé » sans repasser par la
+    proposition. Même constat pour le motif exigé à la sortie d'approbation.
+    """
+
+    @staticmethod
+    def _ligne_au_statut(client: TestClient, admin: dict[str, str], item: dict, statut: str) -> str:
+        """Amène une ligne neuve jusqu'à `statut`, en un saut depuis `proposed`."""
+        identifiant = item["id"]
+        if statut == "proposed":
+            return identifiant
+        montee = client.post(
+            f"/api/v1/boq-items/{identifiant}/transition",
+            headers=admin,
+            json={"status": statut, "reason": "mise en place du cas de départ"},
+        )
+        assert montee.status_code == 200, montee.text
+        assert montee.json()["status"] == statut
+        return identifiant
+
+    def test_every_pair_of_statuses_is_allowed_or_refused_as_the_table_says(
+        self, seeded_client: TestClient, admin: dict[str, str]
+    ) -> None:
+        from metreo_api.routers.boq import ALLOWED_TRANSITIONS
+
+        def ligne_neuve() -> dict:
+            projet = seeded_client.post(
+                "/api/v1/projects",
+                headers=admin,
+                json={"reference": f"TT-{depart}-{cible}", "name": "Table"},
+            ).json()
+            bordereau = seeded_client.post(
+                f"/api/v1/projects/{projet['id']}/boqs", headers=admin, json={"name": "Métré"}
+            ).json()
+            return seeded_client.post(
+                f"/api/v1/boqs/{bordereau['id']}/items",
+                headers=admin,
+                json={
+                    "position": "1.1",
+                    "designation": "Ligne d'essai",
+                    "unit_code": "m3",
+                    "quantity": "10",
+                },
+            ).json()
+
+        ecarts: list[str] = []
+        exerces = 0
+        refus = 0
+        for depart in STATUTS:
+            for cible in STATUTS:
+                # Un statut vers lui-même sort en 200 avant tout contrôle : ce
+                # n'est pas une transition, c'est une absence de transition.
+                if depart == cible:
+                    continue
+                identifiant = self._ligne_au_statut(seeded_client, admin, ligne_neuve(), depart)
+                reponse = seeded_client.post(
+                    f"/api/v1/boq-items/{identifiant}/transition",
+                    headers=admin,
+                    json={"status": cible, "reason": "essai de transition"},
+                )
+                exerces += 1
+                autorise = cible in ALLOWED_TRANSITIONS.get(depart, frozenset())
+                attendu = 200 if autorise else 409
+                if reponse.status_code != attendu:
+                    ecarts.append(
+                        f"{depart} -> {cible} : {reponse.status_code} au lieu de {attendu}"
+                    )
+                if not autorise:
+                    refus += 1
+
+        assert exerces == len(STATUTS) * (len(STATUTS) - 1), (
+            f"{exerces} couples exercés au lieu de 12 : le balayage n'a pas eu lieu"
+        )
+        assert refus >= 1, (
+            "aucun couple refusé : une table qui autorise tout rendrait ce "
+            "balayage vert sans rien contrôler"
+        )
+        assert ecarts == [], f"Transitions ne suivant pas la table : {ecarts}"
+
+    def test_the_table_still_refuses_exactly_what_it_is_meant_to_refuse(self) -> None:
+        """La table elle-même, pas seulement son application.
+
+        Le balayage ci-dessus lit `ALLOWED_TRANSITIONS` : élargie, elle
+        élargirait aussi ses attentes. Ce test-ci est écrit en dur.
+        """
+        from metreo_api.routers.boq import ALLOWED_TRANSITIONS
+
+        refuses = {
+            (depart, cible)
+            for depart in STATUTS
+            for cible in STATUTS
+            if depart != cible and cible not in ALLOWED_TRANSITIONS.get(depart, frozenset())
+        }
+        assert refuses == REFUS_ATTENDUS, (
+            "La table des transitions a changé. Si c'est voulu, mettre à jour "
+            f"REFUS_ATTENDUS et dire pourquoi : {sorted(refuses)}"
+        )
+
+    def test_leaving_the_approved_status_requires_a_reason(
+        self, seeded_client: TestClient, admin: dict[str, str], item: dict
+    ) -> None:
+        approbation = seeded_client.post(
+            f"/api/v1/boq-items/{item['id']}/transition",
+            headers=admin,
+            json={"status": "approved"},
+        )
+        assert approbation.status_code == 200, approbation.text
+
+        sans_motif = seeded_client.post(
+            f"/api/v1/boq-items/{item['id']}/transition",
+            headers=admin,
+            json={"status": "verified"},
+        )
+        assert sans_motif.status_code == 422
+        assert sans_motif.json()["detail"]["code"] == "transition_reason_required"
+
+        avec_motif = seeded_client.post(
+            f"/api/v1/boq-items/{item['id']}/transition",
+            headers=admin,
+            json={"status": "verified", "reason": "quantité à revoir après visite"},
+        )
+        assert avec_motif.status_code == 200, avec_motif.text
+        assert avec_motif.json()["status"] == "verified"
