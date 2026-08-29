@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 
+import { API_BASE_URL } from '../playwright.config'
+
 /**
  * The ten journeys that have to work for Phase 1 to mean anything.
  *
@@ -193,8 +195,15 @@ test("le journal d'audit liste les actions et vérifie sa propre chaîne", async
   await expect(page.getByText('Chaîne intègre')).toBeVisible()
 })
 
-// -- permissions are enforced on the server, not hidden in the UI ----------
+// -- permissions ----------------------------------------------------------
 
+/**
+ * Ce test précède la décision de masquer selon les permissions, et il ne
+ * distingue pas les deux causes d'absence : la permission manquante, et la
+ * version déjà gelée par un test antérieur de ce fichier. Il est conservé
+ * comme garde de non-régression, mais ce sont les trois tests par rôle en fin
+ * de fichier qui prouvent quelque chose sur les permissions.
+ */
 test("un métreur ne peut pas geler : le bouton n'est pas offert", async ({ page }) => {
   await signIn(page, DEMO_ESTIMATOR)
   await page.getByText('2026-014').click()
@@ -220,4 +229,107 @@ test("un accès direct par URL ne renvoie pas à l'écran de connexion", async (
 
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Bibliothèque de prix' })).toBeVisible()
+})
+
+// -- la barre d'outils suit les permissions du rôle ------------------------
+
+/**
+ * Décision : une commande que le rôle ne pourra jamais exécuter est masquée ;
+ * une commande autorisée mais bloquée par l'état de l'objet reste visible et
+ * désactivée, avec l'explication. L'API reste l'autorité — elle refuse
+ * toujours — mais l'interface cesse de proposer ce qui ne peut pas aboutir.
+ *
+ * Avant, un lecteur voyait trois boutons dont les trois menaient à un 403, et
+ * le message affiché était « Erreur HTTP 403 » sans dire quelle permission
+ * manquait.
+ */
+const DEMO_VIEWER = 'lecteur@dubois.demo'
+
+async function openFirstEstimate(page: Page): Promise<void> {
+  await page.getByText('2026-014').click()
+  await page.getByRole('link', { name: 'Ouvrir' }).first().click()
+  await expect(page.getByRole('heading', { name: /Étude de prix/ })).toBeVisible()
+}
+
+test("un administrateur voit les trois commandes de la barre d'outils", async ({ page }) => {
+  await signIn(page, DEMO_ADMIN)
+  await openFirstEstimate(page)
+
+  await expect(page.getByRole('button', { name: 'Export CSV' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Aperçu du devis' })).toBeVisible()
+
+  /**
+   * Le gel est présent, qu'il soit actionnable ou non — et c'est le point de
+   * la décision. Un test antérieur de ce fichier gèle la version ; le bouton
+   * apparaît alors désactivé, avec l'explication, au lieu de disparaître.
+   *
+   * Sans cette distinction, ce test passerait pour une mauvaise raison : le
+   * bouton absent parce que la version est gelée se confondrait avec le
+   * bouton absent parce que la permission manque. C'est exactement ce qui
+   * arrivait au test du métreur ci-dessus, qui ne prouvait donc rien sur les
+   * permissions.
+   */
+  const freeze = page.getByRole('button', { name: 'Geler cette version' })
+  await expect(freeze).toHaveCount(1)
+  if (await freeze.isDisabled()) {
+    await expect(page.getByText(/déjà gelée/)).toBeVisible()
+  }
+})
+
+test('un métreur exporte mais ne gèle pas', async ({ page }) => {
+  await signIn(page, DEMO_ESTIMATOR)
+  await openFirstEstimate(page)
+
+  // `export:client` et `export:internal` : accordés au métreur.
+  await expect(page.getByRole('button', { name: 'Export CSV' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Aperçu du devis' })).toBeVisible()
+  // `estimate:freeze` : refusé. Masqué, pas désactivé — il ne l'obtiendra
+  // jamais dans ce rôle, donc le montrer grisé n'apprendrait rien.
+  await expect(page.getByRole('button', { name: 'Geler cette version' })).toHaveCount(0)
+})
+
+test('un lecteur ne se voit proposer aucune commande qui échouerait', async ({ page }) => {
+  await signIn(page, DEMO_VIEWER)
+  await openFirstEstimate(page)
+
+  // Le lecteur a `estimate:read` : la page s'affiche, avec ses montants.
+  // `getByText('Total HT')` viserait deux éléments — l'en-tête de colonne et
+  // la ligne du pied — et Playwright refuse un locator ambigu.
+  await expect(page.getByRole('cell', { name: 'Total HT' })).toBeVisible()
+
+  // Il n'a ni `export:client`, ni `export:internal`, ni `estimate:freeze`.
+  await expect(page.getByRole('button', { name: 'Export CSV' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Export interne' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Aperçu du devis' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Geler cette version' })).toHaveCount(0)
+})
+
+test("l'API refuse toujours, même si l'interface a cessé de proposer", async ({ request }) => {
+  /**
+   * Deuxième barrière. Masquer un bouton n'est pas une protection : ce test
+   * appelle l'API directement avec le jeton du lecteur, sans passer par
+   * l'interface, et vérifie que le refus est toujours là — avec la permission
+   * manquante nommée.
+   */
+  const apiUrl = API_BASE_URL
+  const login = await request.post(`${apiUrl}/auth/dev-login`, {
+    data: { email: DEMO_VIEWER },
+  })
+  expect(login.ok()).toBeTruthy()
+  const token = (await login.json()).access_token as string
+  const headers = { Authorization: `Bearer ${token}` }
+
+  const estimates = await request.get(`${apiUrl}/estimates`, { headers })
+  const estimateId = (await estimates.json())[0].id as string
+  const versions = await request.get(`${apiUrl}/estimates/${estimateId}/versions`, { headers })
+  const versionId = (await versions.json())[0].id as string
+
+  const refused = await request.get(
+    `${apiUrl}/estimates/${estimateId}/versions/${versionId}/export.csv`,
+    { headers },
+  )
+  expect(refused.status()).toBe(403)
+  const detail = (await refused.json()).detail
+  expect(detail.code).toBe('permission_denied')
+  expect(detail.required_permission).toBe('export:client')
 })

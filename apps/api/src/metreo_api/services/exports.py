@@ -171,6 +171,27 @@ def estimate_to_csv(
     return buffer.getvalue()
 
 
+#: Le document se défend lui-même.
+#:
+#: Le client web ouvre cet aperçu par `URL.createObjectURL` puis `window.open` :
+#: une URL `blob:` hérite de l'origine de la page qui la crée, donc le devis
+#: s'affiche DANS l'origine de l'application, où le jeton de session vit en
+#: `sessionStorage`. L'échappement de `escape()` est aujourd'hui la seule chose
+#: qui empêche une désignation de poste de devenir du script exécutable ; s'il
+#: cédait une fois, la conséquence ne serait pas un affichage abîmé mais
+#: l'exfiltration du jeton.
+#:
+#: Cette page n'a besoin de rien : pas de script, pas d'image, pas de police ni
+#: de feuille externe — seulement son `<style>` en ligne. `default-src 'none'`
+#: ferme donc tout, et l'absence de `script-src` fait retomber le script sur
+#: `'none'` : ni balise `<script>`, ni gestionnaire `onerror=`, quelle que soit
+#: la façon dont il serait arrivé là.
+_CSP_META: Final[str] = (
+    '<meta http-equiv="Content-Security-Policy" '
+    "content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+    "form-action 'none'\">"
+)
+
 _STYLE = """
 :root { color-scheme: light; }
 * { box-sizing: border-box; }
@@ -356,6 +377,7 @@ def quote_html(
 
     return (
         '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
+        f"{_CSP_META}"
         f"<title>Devis {escape(project.reference)} — version {version.version_number}</title>"
         f"<style>{_STYLE}</style></head><body>{''.join(body)}</body></html>"
     )
