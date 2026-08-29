@@ -119,6 +119,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response = await call_next(request)
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
             response.headers["X-Request-Id"] = request_id
+            # Sans en-tête de cache, Chromium écrit le corps de la réponse en
+            # clair dans son cache disque. Mesuré : un devis téléchargé se
+            # retrouve dans `Default/Cache/Cache_Data/`, et y reste après la
+            # déconnexion — sur un poste partagé, le suivant le relit.
+            #
+            # Posé ici et pas endpoint par endpoint : une liste d'endpoints à
+            # protéger se périme au premier endpoint ajouté. Un endpoint qui
+            # aurait de bonnes raisons d'être caché pose son propre en-tête,
+            # et celui-ci le respecte.
+            response.headers.setdefault("Cache-Control", "no-store")
             logger.info(
                 "http_request",
                 extra={
