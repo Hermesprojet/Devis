@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Sauvegarde la base et le stockage des fichiers, chiffre, et dépose.
+#
+#   ops/sauvegarder.sh [répertoire-de-sortie]
+#
+# Ce que ce script refuse de faire, et pourquoi :
+#
+#   - il ne sauvegarde pas une base qu'il n'a pas pu joindre. Une archive vide
+#     déposée sans erreur est pire que pas d'archive : on croit être protégé.
+#   - il ne dépose rien sans chiffrer si un destinataire est configuré. Un dump
+#     PostgreSQL en clair chez un hébergeur tiers, c'est la base entière.
+#   - il n'écrase jamais une archive existante : le nom porte l'horodatage.
+set -euo pipefail
+
+RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SORTIE="${1:-${BACKUP_DIR:-$RACINE/var/sauvegardes}}"
+COMPOSE=(docker compose -f "$RACINE/infra/docker-compose.staging.yml")
+if [[ -f "$RACINE/infra/staging.env" ]]; then
+  COMPOSE+=(--env-file "$RACINE/infra/staging.env")
+  # shellcheck disable=SC1091
+  set -a; . "$RACINE/infra/staging.env"; set +a
+fi
+
+HORODATAGE="$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$SORTIE"
+BASE="$SORTIE/metreo-$HORODATAGE"
+
+echo "→ base de données"
+# `--format=custom` : restaurable sélectivement, et compressé. `pg_dumpall`
+# aurait embarqué les rôles du serveur, qui ne nous appartiennent pas.
+"${COMPOSE[@]}" exec -T db \
+  pg_dump --format=custom --no-owner --no-privileges \
+  -U "${POSTGRES_USER:?}" "${POSTGRES_DB:?}" > "$BASE.dump"
+
+if [[ ! -s "$BASE.dump" ]]; then
+  echo "sauvegarde refusée : le dump est vide." >&2
+  rm -f "$BASE.dump"
+  exit 1
+fi
+
+echo "→ stockage des fichiers"
+# Le volume est lu depuis un conteneur jetable : le service n'a pas à être
+# arrêté, et rien n'est monté sur la machine hôte.
+"${COMPOSE[@]}" run --rm --no-deps --entrypoint sh api \
+  -c 'tar -C /var/lib/metreo -cf - .' > "$BASE-storage.tar"
+
+echo "→ archive"
+tar -C "$SORTIE" -czf "$BASE.tar.gz" \
+  "$(basename "$BASE.dump")" "$(basename "$BASE-storage.tar")"
+rm -f "$BASE.dump" "$BASE-storage.tar"
+
+ARCHIVE="$BASE.tar.gz"
+if [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]]; then
+  echo "→ chiffrement"
+  command -v age >/dev/null || { echo "age est requis pour chiffrer." >&2; exit 1; }
+  age -r "$BACKUP_AGE_RECIPIENT" -o "$ARCHIVE.age" "$ARCHIVE"
+  rm -f "$ARCHIVE"
+  ARCHIVE="$ARCHIVE.age"
+else
+  echo "! aucun BACKUP_AGE_RECIPIENT : archive NON chiffrée, locale seulement." >&2
+fi
+
+if [[ -n "${BACKUP_DESTINATION:-}" ]]; then
+  echo "→ dépôt vers $BACKUP_DESTINATION"
+  case "$BACKUP_DESTINATION" in
+    s3://*) aws s3 cp "$ARCHIVE" "$BACKUP_DESTINATION/" ;;
+    *)      rsync -a "$ARCHIVE" "$BACKUP_DESTINATION/" ;;
+  esac
+else
+  echo "! aucune BACKUP_DESTINATION : la sauvegarde reste sur cette machine." >&2
+  echo "  Une sauvegarde qui vit sur la machine sauvegardée ne protège de rien." >&2
+fi
+
+echo "sauvegarde terminée : $ARCHIVE ($(du -h "$ARCHIVE" | cut -f1))"

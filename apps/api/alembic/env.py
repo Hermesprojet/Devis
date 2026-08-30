@@ -17,7 +17,13 @@ from metreo_api.models import Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False` : la valeur par défaut de `fileConfig`
+    # est True, et elle ÉTEINT tous les journaux déjà créés — dont
+    # `metreo.api`. Un processus qui migre puis sert se tait alors
+    # complètement, sans qu'aucune erreur ne l'annonce. Mesuré : après un
+    # `fileConfig` par défaut, `logging.getLogger("metreo.api").disabled` vaut
+    # True et plus une seule requête n'est journalisée.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 DATABASE_URL = get_settings().database_url
 # Même geste que l'application : sur un clone neuf, le répertoire de la

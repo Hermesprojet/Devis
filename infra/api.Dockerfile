@@ -60,9 +60,13 @@ USER metreo
 
 EXPOSE 8000
 
-# Le point de santé n'interroge aucune dépendance externe : il dit que le
-# processus répond, pas que la base est saine.
+# `/live` et non `/health` : ce commentaire annonçait déjà qu'aucune
+# dépendance externe n'était interrogée, mais `/health` exécute un `SELECT 1`.
+# Un orchestrateur redémarrait donc le conteneur quand la BASE flanchait —
+# ajoutant un redémarrage à une panne qu'il n'atteint pas, et faisant tomber
+# les instances les unes après les autres. `/health` reste le contrôle de
+# disponibilité, interrogé par le répartiteur, pas par la vivacité.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
-  CMD curl -fsS http://127.0.0.1:8000/api/v1/health || exit 1
+  CMD curl -fsS http://127.0.0.1:8000/api/v1/live || exit 1
 
 CMD ["uvicorn", "metreo_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

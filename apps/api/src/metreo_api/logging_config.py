@@ -59,6 +59,12 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO") -> None:
+    # Rendre la parole avant de poser le formateur. Toute configuration
+    # antérieure par `fileConfig`/`dictConfig` a pu désactiver ce journal, et
+    # poser un formateur sur un journal éteint ne produit rien : la
+    # configuration paraîtrait réussie et l'application resterait muette.
+    logging.getLogger("metreo.api").disabled = False
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()
