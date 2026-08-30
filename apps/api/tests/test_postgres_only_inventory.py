@@ -33,6 +33,10 @@ POSTGRES_ONLY: dict[str, str] = {
     "test_version_concurrency.py": "courses de numérotation, publication, gel, quantité approuvée",
     "test_write_contention.py": "interblocage entre écritures indépendantes",
     "test_import_idempotence.py": "double validation d'un import",
+    # Une contrainte constatée au flush par le serveur, et la visibilité d'une
+    # écriture depuis une seconde CONNEXION en `READ COMMITTED` : ni l'une ni
+    # l'autre n'existe sur SQLite, où « une autre session » partage le fichier.
+    "test_frontieres_postgres.py": "frontières transactionnelles constatées par le serveur",
 }
 
 #: Modules qui n'ignorent que CERTAINS de leurs tests, avec la raison.
