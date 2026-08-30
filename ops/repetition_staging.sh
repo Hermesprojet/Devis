@@ -604,6 +604,27 @@ etape_devis() {
 		detail "$(grep -aE "✘|Error|error:|expect|Timeout|✓ |›" "$journal" | tail -40)"
 		detail "--- fin du journal ---"
 		detail "$(tail -6 "$journal")"
+
+		# Ce que le SERVEUR a répondu pendant ce parcours.
+		#
+		# Playwright ne rapporte que ce que la page a montré. Quand le refus
+		# vient de l'API — une connexion rejetée, un dépôt refusé — la raison
+		# n'est que dans le journal du conteneur, et celui-ci n'était consulté
+		# qu'à la toute fin de la répétition, pour y chercher des secrets. Le
+		# diagnostic tenait donc dans un fichier que personne ne regardait.
+		recolter_journaux || true
+		detail "--- ce que l'API a répondu (auth et refus) ---"
+		detail "$(grep -aE '"(status_code|status)": *(4|5)[0-9][0-9]|/auth/' "$JOURNAUX/api.log" 2>/dev/null | tail -25)"
+
+		# Playwright range sous `test-results/` une capture d'écran et l'arbre
+		# d'accessibilité de l'instant exact de l'échec. Ce dossier vit sous
+		# `apps/web/`, que l'artefact de la répétition n'emporte pas : la
+		# preuve était produite, puis jetée au démontage.
+		if [[ -d apps/web/test-results ]]; then
+			rm -rf "$JOURNAUX/parcours-navigateur"
+			cp -R apps/web/test-results "$JOURNAUX/parcours-navigateur" 2>/dev/null || true
+			detail "preuves du navigateur conservées : journaux/parcours-navigateur/"
+		fi
 		return 1
 	fi
 	ok "une organisation vide a produit son premier devis, au navigateur seul"
@@ -656,6 +677,22 @@ etape_devis() {
 #: après redémarrage et après restauration.
 EMPREINTES_PIECES=""
 CONSTAT_DOCUMENTS=""
+
+#: Compare deux listes d'empreintes, en refusant la comparaison VIDE.
+#:
+#: `verifier "" ""` répond vert : deux listes vides sont égales. Mesuré — quand
+#: le parcours navigateur échouait, `EMPREINTES_PIECES` restait vide et la
+#: restauration annonçait « les originaux sont revenus à l'identique » sans
+#: qu'aucun original n'ait jamais existé. Un contrôle qui passe parce qu'il n'a
+#: rien à contrôler est pire que pas de contrôle.
+verifier_empreintes() {
+	local libelle="$1" attendues="$2" obtenues="$3"
+	if [[ -z "$attendues" ]]; then
+		ko "$libelle — aucune empreinte de référence : rien n'a été vérifié"
+		return 1
+	fi
+	verifier "$libelle" "$attendues" "$obtenues"
+}
 
 #: Empreintes de TOUS les originaux du volume, une par ligne, triées, calculées
 #: par le processus applicatif dans son propre conteneur.
@@ -754,7 +791,7 @@ etape_redemarrage() {
 	verifier "l'empreinte de l'instantané est inchangée" "$EMPREINTE_DEVIS" "$empreinte_apres"
 
 	# Le stockage : les originaux doivent être là, aux mêmes octets.
-	verifier "les pièces jointes ont survécu au redémarrage" \
+	verifier_empreintes "les pièces jointes ont survécu au redémarrage" \
 		"$EMPREINTES_PIECES" "$(empreintes_du_volume)"
 
 	# Et la session reste valable : le jeton n'était adossé à aucune mémoire
@@ -975,7 +1012,7 @@ with get_session_factory()() as s:
 
 	# Les pièces jointes : mêmes octets, dans une pile qui n'a jamais vu le
 	# navigateur qui les a déposées.
-	verifier "les originaux sont revenus à l'identique" \
+	verifier_empreintes "les originaux sont revenus à l'identique" \
 		"$EMPREINTES_PIECES" "$(empreintes_du_volume "$PROJET_RESTAURE")"
 
 	# Et surtout : ils se TÉLÉCHARGENT encore. Comparer des empreintes sur le
