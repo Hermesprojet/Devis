@@ -185,6 +185,12 @@ web-build: ## Construction de production du front
 .PHONY: e2e
 e2e: ## Parcours de bout en bout (Playwright)
 	cd apps/web && npx playwright test
+	@# L'une APRÈS l'autre, jamais en même temps : les deux configurations
+	@# construisent dans le même `.next`. Celle-ci part d'une base migrée puis
+	@# seulement amorcée — aucun jeu de démonstration — et se connecte par
+	@# OpenID Connect : c'est le parcours d'une entreprise qui vient
+	@# d'installer Metreo.
+	cd apps/web && npx playwright test --config=playwright.premier-devis.config.ts
 
 .PHONY: compose-config
 compose-config: ## Valider la composition Docker

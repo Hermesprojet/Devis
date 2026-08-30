@@ -35,6 +35,11 @@ function LoginPage() {
   const loginCode = parametres.get('login_code')
   const loginError = parametres.get('login_error')
   const returnTo = parametres.get('return_to')
+  // Ce que le FOURNISSEUR renvoie, à ne pas confondre avec `login_code`, que
+  // l'API renvoie ensuite : ce sont deux étapes distinctes du même retour.
+  const codeFournisseur = parametres.get('code')
+  const etatFournisseur = parametres.get('state')
+  const erreurFournisseur = parametres.get('error')
 
   useEffect(() => {
     if (loadSession()) router.replace('/projets')
@@ -50,6 +55,33 @@ function LoginPage() {
   useEffect(() => {
     if (loginError) setRetour(messageDeRetour(loginError))
   }, [loginError])
+
+  /**
+   * Le retour du fournisseur d'identité, transmis à l'API pour vérification.
+   *
+   * `oidc_redirect_uri` est l'adresse de l'APPLICATION, pas celle de l'API :
+   * c'est le navigateur qui revient, et il revient donc ici, avec `code` et
+   * `state`. Sans ce relais, la page ignorait les deux paramètres et se
+   * contentait de réafficher l'écran de connexion — mesuré : le parcours
+   * complet ne pouvait pas aboutir dans un navigateur, alors même qu'il
+   * réussissait au niveau HTTP. Le premier utilisateur d'un déploiement neuf
+   * ne pouvait pas entrer.
+   *
+   * Rien n'est vérifié ici, et c'est voulu : la signature, l'émetteur,
+   * l'audience, le nonce et l'usage unique sont contrôlés par l'API, seule à
+   * détenir le vérificateur PKCE. Cette page ne fait que porter le message.
+   *
+   * `replace` et non `assign` : le retour ne doit pas rester dans
+   * l'historique, sinon « précédent » rejoue un code déjà consommé.
+   */
+  useEffect(() => {
+    if (!codeFournisseur && !erreurFournisseur) return
+    if (!etatFournisseur) return
+    const retour = new URLSearchParams({ state: etatFournisseur })
+    if (codeFournisseur) retour.set('code', codeFournisseur)
+    if (erreurFournisseur) retour.set('error', erreurFournisseur)
+    window.location.replace(`${api.url}/auth/oidc/callback?${retour.toString()}`)
+  }, [codeFournisseur, etatFournisseur, erreurFournisseur])
 
   const arriver = useCallback(
     (token: { access_token: string; user_id: string; organization_id: string; role: string }) => {

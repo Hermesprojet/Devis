@@ -76,13 +76,24 @@ avertissement.
 ```
 1. GET  /api/v1/auth/oidc/start      → URL d'autorisation ; la transaction est
                                        écrite en base (state, nonce, verifier)
-2.      le navigateur va chez le fournisseur, s'authentifie, revient
-3. GET  /api/v1/auth/oidc/callback   → vérifie tout, redirige vers l'application
+2.      le navigateur va chez le fournisseur, s'authentifie, revient sur
+                                       METREO_OIDC_REDIRECT_URI avec code+state
+3.      la page d'accueil relaie code et state à l'API
+4. GET  /api/v1/auth/oidc/callback   → vérifie tout, redirige vers l'application
                                        avec un code de connexion OPAQUE
-4. POST /api/v1/auth/oidc/exchange   → rend la session, une seule fois
+5. POST /api/v1/auth/oidc/exchange   → rend la session, une seule fois
 ```
 
-Ce qui est vérifié à l'étape 3 : le `state` existe, n'a pas expiré, n'a pas déjà
+L'étape 3 n'est pas un détail : `METREO_OIDC_REDIRECT_URI` désigne
+l'**application**, pas l'API — c'est le navigateur qui revient, et il revient
+sur une page. La page d'accueil transmet `code` et `state` à l'API sans rien en
+vérifier : la signature, l'émetteur, l'audience, le `nonce` et l'usage unique
+sont contrôlés par l'API, seule à détenir le vérificateur PKCE. Sans ce relais,
+le parcours réussissait au niveau HTTP et échouait dans un navigateur — mesuré :
+la page ignorait les deux paramètres et réaffichait l'écran de connexion, si
+bien que le premier utilisateur d'un déploiement neuf ne pouvait pas entrer.
+
+Ce qui est vérifié à l'étape 4 : le `state` existe, n'a pas expiré, n'a pas déjà
 servi ; la signature du jeton d'identité contre le JWKS du fournisseur ;
 l'émetteur ; l'audience ; l'expiration ; et le `nonce`, comparé explicitement —
 la bibliothèque ne le fait pas.

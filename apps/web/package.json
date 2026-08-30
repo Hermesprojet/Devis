@@ -9,7 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui"
+    "e2e:ui": "playwright test --ui",
+    "e2e:premier-devis": "playwright test --config=playwright.premier-devis.config.ts"
   },
   "dependencies": {
     "next": "15.5.24",

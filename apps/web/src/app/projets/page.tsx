@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 
 import { ErrorNotice, Loading } from '@/components/Feedback'
+import { MiseEnRoute } from '@/components/MiseEnRoute'
 import { Shell } from '@/components/Shell'
 import { api, type Project } from '@/lib/api'
 import { t } from '@/lib/i18n'
@@ -54,6 +55,8 @@ export default function ProjectsPage() {
     <Shell>
       <h1>{t('projects.title')}</h1>
       <ErrorNotice error={error} />
+
+      <MiseEnRoute />
 
       <div className="toolbar">
         <input

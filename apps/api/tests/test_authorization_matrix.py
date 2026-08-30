@@ -88,7 +88,10 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
         "GET /api/v1/estimates",
         "GET /api/v1/price-books",
         "GET /api/v1/projects",
+        "GET /api/v1/organization/members",
         "PATCH /api/v1/organization/settings",
+        "POST /api/v1/organization/members",
+        "POST /api/v1/organization/tax-rates",
         "POST /api/v1/price-books",
         "POST /api/v1/projects",
         "POST /api/v1/estimates",
@@ -146,6 +149,18 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
         "PATCH /api/v1/boq-items/{item_id}": {"designation": "Renommé"},
         "POST /api/v1/boq-items/{item_id}/approve": {},
         "POST /api/v1/boq-items/{item_id}/transition": {"status": "verified"},
+        "POST /api/v1/organization/tax-rates": {
+            "code": "TX-CORPS",
+            "label": "Taxe",
+            "rate": "0.10",
+        },
+        "PATCH /api/v1/organization/tax-rates/{tax_rate_id}": {"label": "Renommée"},
+        "POST /api/v1/organization/members": {
+            "email": "corps@matrice.example",
+            "full_name": "Collaborateur",
+            "role": "viewer",
+        },
+        "PATCH /api/v1/organization/members/{membership_id}": {"role": "viewer"},
         "POST /api/v1/price-books": {"name": "Bibliothèque"},
         "POST /api/v1/price-books/{price_book_id}/versions": {"label": "v1"},
         "POST /api/v1/price-books/versions/{version_id}/items": {
@@ -327,7 +342,27 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
         assert created.status_code == 201, created.text
         version_rows = [created.json()]
 
+    taux = client.post(
+        "/api/v1/organization/tax-rates",
+        headers=headers,
+        json={"code": f"TX-{reference}"[:30], "label": "Taxe de matrice", "rate": "0.10"},
+    )
+    assert taux.status_code == 201, taux.text
+
+    membre = client.post(
+        "/api/v1/organization/members",
+        headers=headers,
+        json={
+            "email": f"{reference.lower()}@matrice.example",
+            "full_name": "Collaborateur de matrice",
+            "role": "viewer",
+        },
+    )
+    assert membre.status_code == 201, membre.text
+
     return {
+        "tax_rate": taux.json()["id"],
+        "membership": membre.json()["id"],
         "project": project_id,
         "document": document_id,
         "proposal": proposal_id,
@@ -370,6 +405,8 @@ _PARAM_TO_KEY = {
     "price_book_id": "price_book",
     "batch_id": "import_batch",
     "estimate_id": "estimate",
+    "tax_rate_id": "tax_rate",
+    "membership_id": "membership",
 }
 
 

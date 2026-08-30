@@ -537,46 +537,74 @@ TOTAL_HT=""
 EMPREINTE_DEVIS=""
 
 etape_devis() {
-	titre "Production d'un devis, jusqu'au gel"
+	titre "Premier devis, produit au navigateur par une personne"
 
-	# Une organisation amorcée n'a AUCUN taux de taxe : aucune route n'en crée,
-	# ils viennent du jeu de démonstration ou d'un pack régional. Sans taux, le
-	# TTC vaudrait le HT et le contrôle « TTC = HT + TVA » se vérifierait tout
-	# seul. On en pose donc un, par la base, et on le dit.
-	dans_api python -c "
-from datetime import date
-from decimal import Decimal
-from metreo_api.db import get_session_factory
-from metreo_api.models import Organization, TaxRateRow
-with get_session_factory()() as s:
-    o = s.query(Organization).first()
-    s.add(TaxRateRow(organization_id=o.id, code='VAT-BE-21', label='TVA 21 %',
-                     rate=Decimal('0.21'), applies_from=date(1996, 1, 1),
-                     is_default=True, source='Posé par la répétition'))
-    s.commit()
-" >/dev/null 2>&1 && ok "un taux de TVA a été posé pour rendre le contrôle du TTC probant" \
-		|| ko "impossible de poser un taux de TVA"
-
-	local constat
-	constat=$(python3 ops/parcours_devis.py --base "$API" --jeton "$JETON" \
-		--suffixe "$(date -u +%H%M%S)" --exiger-tva 2>&1)
-	if [[ $? -ne 0 ]]; then
-		ko "le parcours de devis a échoué"
-		detail "$(tail -3 <<<"$constat")"
+	# Ce que cette étape éprouve a changé, et c'est le fond du sujet.
+	#
+	# Elle posait un taux de TVA DIRECTEMENT EN BASE, puis fabriquait projet,
+	# bordereau et devis avec `ops/parcours_devis.py`. Les deux raccourcis
+	# étaient assumés et dits — mais ils prouvaient une chose que personne ne
+	# pouvait faire : aucun écran ne permettait de configurer une taxe, et
+	# aucun utilisateur n'avait de script.
+	#
+	# Le scénario passe maintenant par le NAVIGATEUR, sur la pile réelle,
+	# derrière le proxy : la fiscalité, la bibliothèque, le prix, le chantier,
+	# la ligne chiffrée et le gel sont produits à la souris. Ce qui suit —
+	# redémarrage, sauvegarde, restauration — porte donc sur un devis
+	# qu'une personne aurait pu remettre à un client.
+	if ! command -v npx >/dev/null 2>&1; then
+		ko "npx est absent : le parcours navigateur ne peut pas être joué"
 		return 1
 	fi
 
-	ESTIMATION_ID=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["estimate_id"])' "$constat")
-	VERSION_ID=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["version_id"])' "$constat")
-	TOTAL_HT=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["total_ht"])' "$constat")
-	local total_ttc empreinte
-	total_ttc=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["total_ttc"])' "$constat")
-	EMPREINTE_DEVIS=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["snapshot_sha256"])' "$constat")
+	local constat="$TRAVAIL/devis-navigateur.json"
+	rm -f "$constat"
+
+	local journal="$JOURNAUX/parcours-navigateur.txt"
+	if ! (
+		cd apps/web \
+			&& METREO_BANC_URL="$BASE" \
+				METREO_BANC_ADMIN="$ADMIN" \
+				METREO_BANC_ORGANISATION="$ORGANISATION" \
+				METREO_BANC_CONSTAT="$constat" \
+				npx playwright test --config=playwright.premier-devis.config.ts
+	) >"$journal" 2>&1; then
+		ko "le parcours navigateur du premier devis a échoué"
+		detail "$(tail -12 "$journal")"
+		return 1
+	fi
+	ok "une organisation vide a produit son premier devis, au navigateur seul"
+	ok "taxe, bibliothèque, prix, chantier et gel : aucun script, aucune écriture en base"
+
+	if [[ ! -s "$constat" ]]; then
+		ko "le parcours n'a pas rendu les identifiants du devis"
+		return 1
+	fi
+	ESTIMATION_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["estimate_id"])' "$constat")
+	VERSION_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version_id"])' "$constat")
+
+	# Relecture — et RIEN d'autre. Ce que le navigateur a produit, on le relit
+	# par HTTP pour disposer de l'empreinte de l'instantané, que l'écran ne
+	# montre qu'abrégée. Aucune donnée n'est créée ici.
+	local constat_api
+	constat_api=$(python3 ops/parcours_devis.py --base "$API" --jeton "$JETON" \
+		--verifier-seulement --estimation "$ESTIMATION_ID" --version "$VERSION_ID" \
+		--exiger-tva 2>&1)
+	if [[ $? -ne 0 ]]; then
+		ko "le devis fabriqué au navigateur n'est pas relisible par l'API"
+		detail "$(tail -3 <<<"$constat_api")"
+		return 1
+	fi
+
+	TOTAL_HT=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["total_ht"])' "$constat_api")
+	local total_ttc
+	total_ttc=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["total_ttc"])' "$constat_api")
+	EMPREINTE_DEVIS=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["snapshot_sha256"])' "$constat_api")
 
 	ok "devis gelé : $TOTAL_HT HT, $total_ttc TTC"
 	ok "le total du document s'additionne, sur le calcul, le CSV et l'aperçu HTML"
 	detail "empreinte de l'instantané : ${EMPREINTE_DEVIS:0:16}…"
-	printf '%s\n' "$constat" > "$TRAVAIL/devis.json"
+	printf '%s\n' "$constat_api" > "$TRAVAIL/devis.json"
 }
 
 # ===========================================================================

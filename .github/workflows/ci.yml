@@ -248,6 +248,16 @@ jobs:
         env:
           METREO_PYTHON: python
         run: npx playwright test
+      - name: Premier devis d'une organisation neuve
+        working-directory: apps/web
+        # Une seconde configuration, jouée APRÈS la première et jamais en même
+        # temps : les deux construisent dans le même `.next`. Celle-ci part
+        # d'une base migrée puis seulement amorcée — aucun jeu de
+        # démonstration — derrière une connexion OpenID Connect contre le faux
+        # fournisseur du dépôt.
+        env:
+          METREO_PYTHON: python
+        run: npx playwright test --config=playwright.premier-devis.config.ts
       - name: Rapport en cas d'échec
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

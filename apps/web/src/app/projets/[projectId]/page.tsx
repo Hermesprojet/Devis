@@ -6,8 +6,18 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
-import { api, type Boq, type BoqItem, type Estimate, type EstimateVersion, type Project } from '@/lib/api'
+import {
+  api,
+  type Boq,
+  type BoqItem,
+  type Estimate,
+  type EstimateVersion,
+  type PriceItem,
+  type Project,
+} from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { PERMISSIONS, can } from '@/lib/permissions'
+import { usePermissions } from '@/lib/usePermissions'
 
 type VersionsByEstimate = Record<string, EstimateVersion[]>
 
@@ -28,7 +38,15 @@ export default function ProjectPage() {
     unit_code: 'm3',
     quantity: '0',
     kind: 'item',
+    // Sans prix, la ligne est créée « sans prix » et le gel sera refusé. Le
+    // champ existe donc dès la saisie plutôt qu'après coup.
+    price_item_id: '',
   })
+  const [prix, setPrix] = useState<PriceItem[]>([])
+  const permissions = usePermissions()
+  const ecrireBordereau = can(permissions, PERMISSIONS.boqWrite)
+  const ecrireEtude = can(permissions, PERMISSIONS.estimateWrite)
+  const [versionPrix, setVersionPrix] = useState<string>('')
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +60,30 @@ export default function ProjectPage() {
       setEstimates(loadedEstimates)
       const firstBoq = loadedBoqs[0]
       setItems(firstBoq ? await api.boqItems(firstBoq.id) : [])
+
+      // Les prix de la première version de bibliothèque : c'est eux qu'on
+      // proposera à la saisie d'une ligne.
+      //
+      // Dans son propre `try` : un lecteur n'a pas `pricebook:read`, et le
+      // refus faisait échouer TOUT le chargement — la liste des études
+      // disparaissait avec, et la page devenait illisible pour le rôle qui ne
+      // fait précisément que lire. Un catalogue indisponible ne retire que le
+      // sélecteur de prix.
+      try {
+        const livres = await api.priceBooks()
+        const premier = livres[0]
+        if (premier) {
+          const versionsPrix = await api.priceBookVersions(premier.id)
+          const versionCourante = versionsPrix[0]
+          if (versionCourante) {
+            setVersionPrix(versionCourante.id)
+            setPrix((await api.priceItems(versionCourante.id, '?limit=200')).items)
+          }
+        }
+      } catch {
+        setPrix([])
+        setVersionPrix('')
+      }
       const versionEntries = await Promise.all(
         loadedEstimates.map(async (estimate) => [estimate.id, await api.estimateVersions(estimate.id)] as const),
       )
@@ -67,14 +109,45 @@ export default function ProjectPage() {
     }
   }
 
+  async function createEstimate() {
+    const boq = boqs[0]
+    if (!boq || !versionPrix) return
+    setError(null)
+    try {
+      // L'API crée l'estimation ET sa « Version initiale » : une estimation
+      // sans version n'aurait rien à calculer ni à geler.
+      await api.createEstimate({
+        project_id: projectId,
+        boq_id: boq.id,
+        price_book_version_id: versionPrix,
+        name: 'Étude de prix',
+      })
+      await load()
+    } catch (caught) {
+      setError(caught)
+    }
+  }
+
   async function addItem(event: React.FormEvent) {
     event.preventDefault()
     const boq = boqs[0]
     if (!boq) return
     setError(null)
     try {
-      await api.createBoqItem(boq.id, newItem)
-      setNewItem({ position: '', designation: '', unit_code: 'm3', quantity: '0', kind: 'item' })
+      // `price_item_id` vide signifie « pas de prix » : l'API refuse la chaîne
+      // vide, il faut envoyer null.
+      await api.createBoqItem(boq.id, {
+        ...newItem,
+        price_item_id: newItem.price_item_id || null,
+      })
+      setNewItem({
+        position: '',
+        designation: '',
+        unit_code: 'm3',
+        quantity: '0',
+        kind: 'item',
+        price_item_id: '',
+      })
       setItems(await api.boqItems(boq.id))
     } catch (caught) {
       setError(caught)
@@ -106,9 +179,16 @@ export default function ProjectPage() {
       {boqs.length === 0 ? (
         <div className="card">
           <p className="muted">{t('boq.empty')}</p>
-          <button className="primary" onClick={createBoq}>
-            {t('common.create')}
-          </button>
+          {/*
+            Une commande que le rôle ne pourra jamais exécuter est masquée :
+            l'API la refuserait, et un bouton qui échoue n'apprend rien. La
+            phrase, elle, reste — l'absence doit s'expliquer.
+          */}
+          {ecrireBordereau && (
+            <button className="primary" onClick={createBoq}>
+              {t('common.create')}
+            </button>
+          )}
         </div>
       ) : (
         <>
@@ -160,70 +240,113 @@ export default function ProjectPage() {
             </table>
           </div>
 
-          <form className="card" onSubmit={addItem}>
-            <h3 style={{ marginTop: 0 }}>{t('boq.addItem')}</h3>
-            <div className="row">
-              <div className="field">
-                <label htmlFor="position">{t('boq.position')}</label>
-                <input
-                  id="position"
-                  required
-                  value={newItem.position}
-                  onChange={(event) => setNewItem({ ...newItem, position: event.target.value })}
-                />
+          {ecrireBordereau && (
+            <form className="card" onSubmit={addItem}>
+              <h3 style={{ marginTop: 0 }}>{t('boq.addItem')}</h3>
+              <div className="row">
+                <div className="field">
+                  <label htmlFor="position">{t('boq.position')}</label>
+                  <input
+                    id="position"
+                    required
+                    value={newItem.position}
+                    onChange={(event) => setNewItem({ ...newItem, position: event.target.value })}
+                  />
+                </div>
+                <div className="field" style={{ flex: '3 1 300px' }}>
+                  <label htmlFor="designation">{t('boq.designation')}</label>
+                  <input
+                    id="designation"
+                    required
+                    value={newItem.designation}
+                    onChange={(event) => setNewItem({ ...newItem, designation: event.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="unit">{t('common.unit')}</label>
+                  <input
+                    id="unit"
+                    required
+                    value={newItem.unit_code}
+                    onChange={(event) => setNewItem({ ...newItem, unit_code: event.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="quantity">{t('common.quantity')}</label>
+                  <input
+                    id="quantity"
+                    inputMode="decimal"
+                    value={newItem.quantity}
+                    onChange={(event) => setNewItem({ ...newItem, quantity: event.target.value })}
+                  />
+                </div>
+                <div className="field" style={{ flex: '2 1 240px' }}>
+                  <label htmlFor="price">Prix unitaire</label>
+                  <select
+                    id="price"
+                    value={newItem.price_item_id}
+                    onChange={(event) =>
+                      setNewItem({ ...newItem, price_item_id: event.target.value })
+                    }
+                  >
+                    <option value="">Sans prix — le gel sera refusé</option>
+                    {prix.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.code} — {p.label} ({p.unit_price} €/{p.unit_code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="kind">Type</label>
+                  <select
+                    id="kind"
+                    value={newItem.kind}
+                    onChange={(event) => setNewItem({ ...newItem, kind: event.target.value })}
+                  >
+                    <option value="item">Poste</option>
+                    <option value="section">Chapitre</option>
+                    <option value="option">Option</option>
+                    <option value="variant">Variante</option>
+                    <option value="provisional">Quantité présumée</option>
+                  </select>
+                </div>
               </div>
-              <div className="field" style={{ flex: '3 1 300px' }}>
-                <label htmlFor="designation">{t('boq.designation')}</label>
-                <input
-                  id="designation"
-                  required
-                  value={newItem.designation}
-                  onChange={(event) => setNewItem({ ...newItem, designation: event.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="unit">{t('common.unit')}</label>
-                <input
-                  id="unit"
-                  required
-                  value={newItem.unit_code}
-                  onChange={(event) => setNewItem({ ...newItem, unit_code: event.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="quantity">{t('common.quantity')}</label>
-                <input
-                  id="quantity"
-                  inputMode="decimal"
-                  value={newItem.quantity}
-                  onChange={(event) => setNewItem({ ...newItem, quantity: event.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="kind">Type</label>
-                <select
-                  id="kind"
-                  value={newItem.kind}
-                  onChange={(event) => setNewItem({ ...newItem, kind: event.target.value })}
-                >
-                  <option value="item">Poste</option>
-                  <option value="section">Chapitre</option>
-                  <option value="option">Option</option>
-                  <option value="variant">Variante</option>
-                  <option value="provisional">Quantité présumée</option>
-                </select>
-              </div>
-            </div>
-            <button className="primary" type="submit">
-              {t('common.create')}
-            </button>
-          </form>
+              <button className="primary" type="submit">
+                {t('common.create')}
+              </button>
+            </form>
+          )}
         </>
       )}
 
       <h2>{t('estimate.title')}</h2>
       {estimates.length === 0 ? (
-        <div className="card muted">Aucune estimation pour ce projet.</div>
+        <div className="card">
+          <p className="muted">
+            Aucune étude de prix pour ce projet. Une étude reprend les lignes du bordereau et les
+            chiffre avec une version de bibliothèque de prix.
+          </p>
+          {/*
+            Ce qui manque, et l'action qui y remédie — mais seulement pour qui
+            peut la faire. Dire « créez-en une » à un lecteur l'enverrait sur un
+            refus.
+          */}
+          {!ecrireEtude ? null : boqs.length === 0 ? (
+            <div className="notice warning" role="status">
+              Créez d&apos;abord le bordereau ci-dessus : c&apos;est lui que l&apos;étude chiffre.
+            </div>
+          ) : !versionPrix ? (
+            <div className="notice warning" role="status">
+              Aucune bibliothèque de prix. <Link href="/bibliotheque">Créez-en une</Link> : une
+              étude doit s&apos;appuyer sur une version de bibliothèque.
+            </div>
+          ) : (
+            <button className="primary" onClick={() => void createEstimate()}>
+              Créer une étude de prix
+            </button>
+          )}
+        </div>
       ) : (
         <div className="card" style={{ padding: 0 }}>
           <table>
