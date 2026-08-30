@@ -139,6 +139,7 @@ const fr: Dictionary = {
     'Le gel est irréversible : la version devient immuable et conserve la bibliothèque de prix utilisée.',
   'estimate.frozenAt': 'Gelée le',
   'estimate.digest': 'Empreinte',
+  'estimate.newVersion': 'Créer une nouvelle version',
   'estimate.exportCsv': 'Export CSV',
   'estimate.exportInternal': 'Export interne',
   'estimate.quotePreview': 'Aperçu du devis',

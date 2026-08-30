@@ -14,6 +14,7 @@ est branchée sur PostgreSQL, et il éprouve ce que l'autre backend ne peut pas 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -146,77 +147,69 @@ def test_sur_postgres_une_creation_est_visible_d_une_autre_connexion_au_moment_d
     )
 
 
-def test_le_verrou_de_sequence_serialise_deux_numerotations_concurrentes(
-    seeded: dict[str, str],
+def test_deux_emissions_simultanees_ne_recoivent_jamais_le_meme_numero(
+    client_neuf: TestClient,
 ) -> None:
-    """Deux connexions numérotent EN MÊME TEMPS et repartent avec deux numéros.
+    """Deux émissions LANCÉES ENSEMBLE, sur la vraie route, et deux numéros.
 
-    C'est le seul endroit où cette garantie se prouve. SQLite n'a pas de
-    `SELECT … FOR UPDATE` : il n'y montrerait que le dernier rempart —
-    `uq_issued_quote_number` rejetant la perdante, éprouvé dans
-    `test_devis_emis.py`. Ici, le verrou fait mieux que rejeter : la seconde
-    connexion ATTEND, relit un maximum désormais validé, et obtient le rang
-    suivant. Les deux émissions aboutissent, avec deux numéros distincts.
+    C'est le seul endroit où cette garantie se prouve. SQLite n'a ni
+    connexions réellement concurrentes ni `SELECT … FOR UPDATE` : on n'y montre
+    que le dernier rempart — `uq_issued_quote_number` rejetant la perdante,
+    éprouvé dans `test_devis_emis.py`. Ici, le verrou fait mieux que rejeter :
+    la seconde requête ATTEND, relit un maximum désormais validé, et repart
+    avec le rang suivant. Les DEUX émissions aboutissent.
 
     Le verrou porte sur la ligne `Organization`, dans le mode déjà utilisé par
     la séquence d'audit (`FOR NO KEY UPDATE`). Réutiliser la même ligne et le
     même mode est ce qui garantit l'absence de nouvel ordre de verrouillage,
     donc de nouvel interblocage — voir `services/locking.py`.
+
+    Et il faut bien la ROUTE, pas le service : c'est la transaction complète —
+    verrou, numéro, ligne insérée, validation — qui rend le numéro visible à
+    la suivante. Un test qui n'allouerait qu'un rang sans écrire la ligne
+    verrait les deux connexions repartir avec le même, et il aurait raison.
     """
     import threading
 
-    from metreo_api.db import get_session_factory
-    from metreo_api.models import Organization
-    from metreo_api.services import issuance
+    from .emission import emettre, fiche, geler, prix_manquant, rattacher, version_de_plus
 
-    with get_session_factory()() as lecture:
-        organisation = lecture.scalars(select(Organization.id)).first()
-    assert organisation
+    entete = _entete(client_neuf)
+    estimation = client_neuf.get("/api/v1/estimates", headers=entete).json()[0]
+    versions = client_neuf.get(
+        f"/api/v1/estimates/{estimation['id']}/versions", headers=entete
+    ).json()
 
-    quand = issuance.maintenant()
-    motif = "DEV-{year}-{sequence:04d}"
-    #: `a_pris_le_verrou` sépare les deux étapes : la seconde connexion ne
-    #: démarre qu'une fois la première DÉJÀ sous verrou. Sans cela, les deux
-    #: pourraient s'exécuter l'une après l'autre et le test passerait sans
-    #: jamais avoir mis le verrou à l'épreuve.
-    a_pris_le_verrou = threading.Event()
-    resultats: dict[str, tuple[str, int, int]] = {}
-    erreurs: list[BaseException] = []
+    prix_manquant(client_neuf, entete, estimation)
+    rattacher(client_neuf, entete, estimation["project_id"], fiche(client_neuf, entete)["id"])
+    a_emettre = [versions[0], version_de_plus(client_neuf, entete, estimation, "v2")]
+    for version in a_emettre:
+        geler(client_neuf, entete, estimation, version)
 
-    def premiere() -> None:
-        try:
-            with get_session_factory()() as session:
-                resultats["a"] = issuance.numeroter(
-                    session, organization_id=organisation, motif=motif, quand=quand
-                )
-                a_pris_le_verrou.set()
-                # Le verrou tient jusqu'à la validation : la seconde connexion
-                # attend ici, et non pas « peut-être ».
-                threading.Event().wait(0.5)
-                session.commit()
-        except BaseException as erreur:  # remonté par le fil principal
-            erreurs.append(erreur)
-            a_pris_le_verrou.set()
+    depart = threading.Barrier(len(a_emettre))
+    reponses: list[Any] = []
+    verrou = threading.Lock()
 
-    def seconde() -> None:
-        try:
-            assert a_pris_le_verrou.wait(timeout=30)
-            with get_session_factory()() as session:
-                resultats["b"] = issuance.numeroter(
-                    session, organization_id=organisation, motif=motif, quand=quand
-                )
-                session.commit()
-        except BaseException as erreur:
-            erreurs.append(erreur)
+    def emettre_en_meme_temps(version: dict) -> None:
+        depart.wait(timeout=30)
+        reponse = emettre(client_neuf, entete, estimation, version)
+        with verrou:
+            reponses.append(reponse)
 
-    fils = [threading.Thread(target=premiere), threading.Thread(target=seconde)]
+    fils = [threading.Thread(target=emettre_en_meme_temps, args=(v,)) for v in a_emettre]
     for fil in fils:
         fil.start()
     for fil in fils:
-        fil.join(timeout=60)
-        assert not fil.is_alive(), "une numérotation ne s'est jamais terminée"
+        fil.join(timeout=120)
+        assert not fil.is_alive(), "une émission ne s'est jamais terminée"
 
-    assert not erreurs, erreurs
-    assert set(resultats) == {"a", "b"}
-    numeros = {resultats["a"][0], resultats["b"][0]}
-    assert len(numeros) == 2, f"le même numéro a été servi deux fois : {resultats}"
+    assert len(reponses) == len(a_emettre)
+    codes = sorted(r.status_code for r in reponses)
+    assert codes == [201, 201], [r.text for r in reponses]
+    numeros = [r.json()["number"] for r in reponses]
+    assert len(set(numeros)) == 2, f"le même numéro a été servi deux fois : {numeros}"
+
+    #: Et la base porte bien deux devis distincts, vus d'une AUTRE connexion.
+    historique = client_neuf.get(
+        f"/api/v1/projects/{estimation['project_id']}/issued-quotes", headers=entete
+    ).json()
+    assert sorted(d["number"] for d in historique) == sorted(numeros)

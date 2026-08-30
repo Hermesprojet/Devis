@@ -323,6 +323,19 @@ export const api = {
     request<Estimate[]>(`/estimates${projectId ? `?project_id=${projectId}` : ''}`),
   estimate: (id: string) => request<Estimate>(`/estimates/${id}`),
   estimateVersions: (id: string) => request<EstimateVersion[]>(`/estimates/${id}/versions`),
+  /**
+   * Une version de plus sur la même estimation.
+   *
+   * C'est le SEUL moyen de corriger un chiffrage déjà gelé — et, une fois le
+   * devis émis, de le corriger sans réécrire ce qui a été remis. Les lignes
+   * viennent du bordereau, pas d'une copie : la nouvelle version chiffre
+   * l'état courant du métré.
+   */
+  createEstimateVersion: (estimateId: string, label?: string) =>
+    request<EstimateVersion>(`/estimates/${estimateId}/versions`, {
+      method: 'POST',
+      body: { label: label ?? null },
+    }),
   computation: (estimateId: string, versionId: string) =>
     request<Computation>(`/estimates/${estimateId}/versions/${versionId}/computation`),
   freeze: (estimateId: string, versionId: string, label?: string) =>

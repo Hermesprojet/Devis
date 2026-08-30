@@ -25,17 +25,13 @@ from fastapi.testclient import TestClient
 from metreo_api.config import get_settings
 from metreo_api.services import pdf as moteur_pdf
 
-from .conftest import login
-
-CLIENT = {
-    "name": "Commune de Perwez",
-    "company_number": "BE 0207.363.192",
-    "billing_address": "Rue Émile de Brabant 2",
-    "postal_code": "1360",
-    "city": "Perwez",
-    "contact_name": "Service Travaux",
-    "email": "travaux@perwez.example",
-}
+from .conftest import login, running_on_postgresql
+from .emission import CLIENT_COMPLET as CLIENT
+from .emission import emettre as _emettre
+from .emission import fiche as _fiche
+from .emission import geler as _geler
+from .emission import prix_manquant as _prix_manquant
+from .emission import rattacher as _rattacher
 
 
 @pytest.fixture()
@@ -55,71 +51,6 @@ def version(seeded_client: TestClient, admin, estimate) -> dict:
         f"/api/v1/estimates/{estimate['id']}/versions", headers=admin
     ).json()[0]
     return resultat
-
-
-def _prix_manquant(client: TestClient, headers: dict[str, str], estimate: dict) -> None:
-    """Le jeu de démonstration laisse une ligne sans prix, exprès."""
-    livre = client.get("/api/v1/price-books", headers=headers).json()[0]
-    version_id = client.get(f"/api/v1/price-books/{livre['id']}/versions", headers=headers).json()[
-        0
-    ]["id"]
-    cree = client.post(
-        f"/api/v1/price-books/versions/{version_id}/items",
-        headers=headers,
-        json={
-            "code": "RAC-PART-001",
-            "label": "Mise en conformité d'un raccordement particulier",
-            "unit_code": "pce",
-            "unit_price": "480.00",
-            "resource_kind": "subcontract",
-        },
-    )
-    assert cree.status_code == 201, cree.text
-    postes = client.get(f"/api/v1/boqs/{estimate['boq_id']}/items", headers=headers).json()
-    orphelin = next(
-        p
-        for p in postes
-        if p["price_item_id"] is None and p["composite_price_id"] is None and p["kind"] != "section"
-    )
-    rattache = client.patch(
-        f"/api/v1/boq-items/{orphelin['id']}",
-        headers=headers,
-        json={"price_item_id": cree.json()["id"]},
-    )
-    assert rattache.status_code == 200, rattache.text
-
-
-def _fiche(client: TestClient, headers: dict[str, str], **remplacements: Any) -> dict:
-    reponse = client.post("/api/v1/clients", headers=headers, json={**CLIENT, **remplacements})
-    assert reponse.status_code == 201, reponse.text
-    resultat: dict = reponse.json()
-    return resultat
-
-
-def _rattacher(client: TestClient, headers: dict[str, str], projet_id: str, fiche_id: str) -> None:
-    reponse = client.patch(
-        f"/api/v1/projects/{projet_id}", headers=headers, json={"client_id": fiche_id}
-    )
-    assert reponse.status_code == 200, reponse.text
-
-
-def _geler(client: TestClient, headers: dict[str, str], estimate: dict, version: dict) -> None:
-    reponse = client.post(
-        f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}/freeze",
-        headers=headers,
-        json={"confirm": True},
-    )
-    assert reponse.status_code == 200, reponse.text
-
-
-def _emettre(
-    client: TestClient, headers: dict[str, str], estimate: dict, version: dict, **corps: Any
-) -> Any:
-    return client.post(
-        f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}/issue",
-        headers=headers,
-        json=corps,
-    )
 
 
 @pytest.fixture()
@@ -360,9 +291,7 @@ def test_le_document_est_un_vrai_pdf_et_non_du_html_renomme(
     seeded_client: TestClient, admin, estimate, version, pret
 ) -> None:
     devis = _emettre(seeded_client, admin, estimate, version).json()
-    reponse = seeded_client.get(
-        f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=admin
-    )
+    reponse = seeded_client.get(f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=admin)
     assert reponse.status_code == 200, reponse.text
     octets = reponse.content
 
@@ -415,9 +344,9 @@ def test_les_en_tetes_conviennent_a_un_document_commercial_confidentiel(
 
     assert entetes["content-type"].startswith("application/pdf")
     assert entetes["content-disposition"].startswith("attachment;")
-    assert f"devis-{devis['number']}".replace("/", "") in entetes[
-        "content-disposition"
-    ].replace("/", "")
+    assert f"devis-{devis['number']}".replace("/", "") in entetes["content-disposition"].replace(
+        "/", ""
+    )
     assert entetes["x-content-type-options"] == "nosniff"
     assert "no-store" in entetes["cache-control"]
     assert "private" in entetes["cache-control"]
@@ -527,9 +456,7 @@ def test_le_reglage_de_l_organisation_donne_le_defaut_sans_avoir_le_dernier_mot(
         f"/api/v1/estimates/{estimate['id']}/versions", headers=admin, json={"label": "v2"}
     ).json()
     _geler(seeded_client, admin, estimate, suivante)
-    contredit = _emettre(
-        seeded_client, admin, estimate, suivante, include_internal_costs=False
-    )
+    contredit = _emettre(seeded_client, admin, estimate, suivante, include_internal_costs=False)
     assert contredit.status_code == 201, contredit.text
     assert contredit.json()["include_internal_costs"] is False
 
@@ -574,9 +501,7 @@ def test_un_role_sans_export_client_ne_peut_pas_telecharger_le_pdf(
     assert invite.status_code == 201, invite.text
     acheteur = login(seeded_client, "acheteur@dubois.demo")
 
-    refus = seeded_client.get(
-        f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=acheteur
-    )
+    refus = seeded_client.get(f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=acheteur)
     assert refus.status_code == 403, refus.text
     assert refus.json()["detail"]["required_permission"] == "export:client"
 
@@ -586,8 +511,16 @@ def test_un_role_sans_export_client_ne_peut_pas_telecharger_le_pdf(
 # --------------------------------------------------------------------------
 
 
-def _poser_un_devis(session: Any, *, devis_id: str, version_id: str, numero: str, annee: int,
-                    rang: int, modele: dict) -> None:
+def _poser_un_devis(
+    session: Any,
+    *,
+    devis_id: str,
+    version_id: str,
+    numero: str,
+    annee: int,
+    rang: int,
+    modele: dict,
+) -> None:
     """Écrit une ligne `issued_quotes` minimale, copiée sur un devis réel."""
     from metreo_api.models import IssuedQuote
 
@@ -615,6 +548,15 @@ def _poser_un_devis(session: Any, *, devis_id: str, version_id: str, numero: str
     )
 
 
+@pytest.mark.skipif(
+    running_on_postgresql(),
+    reason=(
+        "l'entrelacement recherché est IMPOSSIBLE sur PostgreSQL : le verrou de "
+        "séquence y ferait attendre la seconde allocation, et les deux appels "
+        "successifs d'un même fil s'interbloqueraient. C'est la bonne nouvelle, "
+        "et elle est prouvée par test_frontieres_postgres.py"
+    ),
+)
 def test_deux_allocations_qui_se_croisent_ne_produisent_jamais_deux_fois_le_numero(
     seeded_client: TestClient, admin, estimate, version, pret
 ) -> None:
@@ -627,8 +569,12 @@ def test_deux_allocations_qui_se_croisent_ne_produisent_jamais_deux_fois_le_nume
 
     L'entrelacement est imposé plutôt qu'espéré : des fils sur SQLite ne
     prouveraient qu'un ordonnancement, et le plus souvent se bloqueraient.
-    Le verrou de séquence, lui, ne peut être éprouvé que là où il existe —
-    voir `test_frontieres_postgres.py`.
+
+    SQLite seulement, donc, et ce n'est pas un aveu : sans `SELECT … FOR
+    UPDATE`, la contrainte d'unicité EST le seul rempart, et c'est celui-là
+    qu'on éprouve. Le verrou, lui, ne s'éprouve que là où il existe — voir
+    `test_frontieres_postgres.py`, qui montre la seconde connexion ATTENDRE
+    puis repartir avec le rang suivant.
     """
     from sqlalchemy.exc import IntegrityError
 
@@ -678,12 +624,26 @@ def test_deux_allocations_qui_se_croisent_ne_produisent_jamais_deux_fois_le_nume
         )
         assert numero_a == numero_b, "l'entrelacement recherché ne s'est pas produit"
 
-        _poser_un_devis(a, devis_id=new_id(), version_id=concurrentes[0], numero=numero_a,
-                        annee=annee_a, rang=rang_a, modele=modele)
+        _poser_un_devis(
+            a,
+            devis_id=new_id(),
+            version_id=concurrentes[0],
+            numero=numero_a,
+            annee=annee_a,
+            rang=rang_a,
+            modele=modele,
+        )
         a.commit()
 
-        _poser_un_devis(b, devis_id=new_id(), version_id=concurrentes[1], numero=numero_b,
-                        annee=annee_b, rang=rang_b, modele=modele)
+        _poser_un_devis(
+            b,
+            devis_id=new_id(),
+            version_id=concurrentes[1],
+            numero=numero_b,
+            annee=annee_b,
+            rang=rang_b,
+            modele=modele,
+        )
         with pytest.raises(IntegrityError):
             b.commit()
         b.rollback()
