@@ -7,18 +7,33 @@
 #
 #   - il ne sauvegarde pas une base qu'il n'a pas pu joindre. Une archive vide
 #     déposée sans erreur est pire que pas d'archive : on croit être protégé.
-#   - il ne dépose rien sans chiffrer si un destinataire est configuré. Un dump
-#     PostgreSQL en clair chez un hébergeur tiers, c'est la base entière.
+#   - il refuse de DÉPOSER une archive non chiffrée chez un tiers. Un dump
+#     PostgreSQL en clair chez un hébergeur, c'est la base entière. Sans
+#     destination distante, une archive locale en clair reste permise — elle
+#     ne quitte pas la machine, et l'exiger chiffrée bloquerait l'exercice de
+#     restauration sans rien protéger.
 #   - il n'écrase jamais une archive existante : le nom porte l'horodatage.
 set -euo pipefail
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SORTIE="${1:-${BACKUP_DIR:-$RACINE/var/sauvegardes}}"
-COMPOSE=(docker compose -f "$RACINE/infra/docker-compose.staging.yml")
-if [[ -f "$RACINE/infra/staging.env" ]]; then
-  COMPOSE+=(--env-file "$RACINE/infra/staging.env")
+# Quelle pile sauvegarder. Par défaut celle de préproduction, décrite par le
+# seul fichier de composition ; une répétition ou une seconde instance passent
+# les leurs.
+#
+# Sans ces variables, le script visait le projet « metreo-staging » et
+# échouait à résoudre `WEB_IMAGE` — il ne pouvait donc sauvegarder aucune pile
+# portant un autre nom, y compris celle qu'on monte pour vérifier qu'il marche.
+read -r -a FICHIERS_COMPOSE <<< "${BACKUP_COMPOSE_FILES:--f $RACINE/infra/docker-compose.staging.yml}"
+COMPOSE=(docker compose)
+[[ -n "${BACKUP_COMPOSE_PROJECT:-}" ]] && COMPOSE+=(--project-name "$BACKUP_COMPOSE_PROJECT")
+COMPOSE+=("${FICHIERS_COMPOSE[@]}")
+
+ENV_COMPOSE="${BACKUP_ENV_FILE:-$RACINE/infra/staging.env}"
+if [[ -f "$ENV_COMPOSE" ]]; then
+  COMPOSE+=(--env-file "$ENV_COMPOSE")
   # shellcheck disable=SC1091
-  set -a; . "$RACINE/infra/staging.env"; set +a
+  set -a; . "$ENV_COMPOSE"; set +a
 fi
 
 HORODATAGE="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -57,10 +72,23 @@ if [[ -n "${BACKUP_AGE_RECIPIENT:-}" ]]; then
   rm -f "$ARCHIVE"
   ARCHIVE="$ARCHIVE.age"
 else
-  echo "! aucun BACKUP_AGE_RECIPIENT : archive NON chiffrée, locale seulement." >&2
+  echo "! aucun BACKUP_AGE_RECIPIENT : archive NON chiffrée." >&2
 fi
 
 if [[ -n "${BACKUP_DESTINATION:-}" ]]; then
+  # REFUS, et non un avertissement. Une archive en clair déposée chez un tiers,
+  # c'est la base entière — tous les clients, tous les prix, tous les devis —
+  # lisible par quiconque atteint ce dépôt.
+  #
+  # Ce refus corrige un écart réel : le message ci-dessus annonçait
+  # « locale seulement », puis ce bloc envoyait quand même l'archive en clair.
+  # La phrase rassurait sur ce qui n'arrivait pas.
+  if [[ -z "${BACKUP_AGE_RECIPIENT:-}" ]]; then
+    echo "sauvegarde refusée : dépôt vers un tiers demandé sans chiffrement." >&2
+    echo "  BACKUP_DESTINATION est posée, BACKUP_AGE_RECIPIENT ne l'est pas." >&2
+    echo "  L'archive reste sur cette machine : $ARCHIVE" >&2
+    exit 1
+  fi
   echo "→ dépôt vers $BACKUP_DESTINATION"
   case "$BACKUP_DESTINATION" in
     s3://*) aws s3 cp "$ARCHIVE" "$BACKUP_DESTINATION/" ;;

@@ -1,0 +1,143 @@
+# Répétition complète de préproduction, et fabrication du candidat de release.
+#
+# Elle monte une préproduction réelle — PostgreSQL durable, migrations en tâche
+# séparée, API, front, proxy, stockage persistant, fournisseur d'identité — la
+# fait travailler comme un jour d'exploitation, la casse, la sauvegarde, la
+# restaure ailleurs, et vérifie que tout est revenu.
+#
+# Rien ne sort du runner : aucun port hors 127.0.0.1, aucune image publiée,
+# aucun service externe. Le fournisseur d'identité est un faux, monté ici et
+# détruit avec le reste.
+#
+# Déclenchement : à la main, et automatiquement quand un fichier
+# d'infrastructure change — ce sont précisément les fichiers dont la CI
+# ordinaire ne prouve que la syntaxe.
+
+name: Répétition de préproduction
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "ops/**"
+      - ".github/workflows/repetition-staging.yml"
+      - "apps/api/alembic/**"
+      - "apps/api/src/metreo_api/config.py"
+      - "apps/api/src/metreo_api/main.py"
+      - "apps/api/src/metreo_api/routers/meta.py"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "ops/**"
+      - ".github/workflows/repetition-staging.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Une seule répétition à la fois par référence : deux piles simultanées se
+  # disputeraient les ports 8080 et 8021 du runner.
+  group: repetition-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repetition:
+    name: Répétition complète
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Le SHA répété
+        id: revision
+        # Le SHA du commit RÉELLEMENT testé. Sur une pull request,
+        # `github.sha` désigne la fusion d'essai et non la tête de la branche :
+        # un manifeste qui la nommerait désignerait un commit qui n'existe
+        # nulle part après la fusion.
+        run: |
+          sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Commit répété : $sha"
+
+      - name: Construire les images du SHA répété
+        # Construites ici, jamais tirées d'un registre : la répétition doit
+        # porter sur le contenu de CE commit, et sur rien d'autre.
+        run: |
+          docker build -f infra/api.Dockerfile -t metreo-api:repetition .
+          docker build -f infra/web.Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1 \
+            -t metreo-web:repetition .
+
+      - name: Préparer l'environnement de répétition
+        # Aucune valeur n'est un secret : elles ne vivent que le temps de ce
+        # travail, sur une pile liée à la boucle locale du runner, et sont
+        # détruites avec lui. Le fichier n'est pas versionné.
+        run: cp infra/repetition.env.example infra/repetition.env
+
+      - name: Le fournisseur d'identité est joignable sous son nom de service
+        # L'application joint le fournisseur par `http://oidc:8021` — le
+        # document de découverte doit déclarer exactement cet émetteur. Le
+        # script de répétition, lui, joue le navigateur depuis le runner : il
+        # lui faut le même nom.
+        run: echo "127.0.0.1 oidc" | sudo tee -a /etc/hosts
+
+      - name: Répétition
+        run: ops/repetition_staging.sh
+
+      - name: Manifeste du candidat de release
+        if: always()
+        run: |
+          python ops/manifeste_release.py \
+            --sortie var/repetition/manifeste-release.json \
+            --sha "${{ steps.revision.outputs.sha }}" \
+            --horodatage "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --image metreo-api:repetition \
+            --image metreo-web:repetition \
+            --repetition var/repetition/rapport.json
+
+      - name: Aucune image n'a été publiée
+        if: always()
+        # Le contrôle qui tient la promesse : la répétition construit, elle ne
+        # pousse pas. Un `docker push` ajouté un jour par commodité serait
+        # attrapé ici.
+        run: |
+          for image in metreo-api:repetition metreo-web:repetition; do
+            publiee=$(docker image inspect -f '{{json .RepoDigests}}' "$image")
+            test "$publiee" = "[]" || {
+              echo "L'image $image porte une empreinte de registre : $publiee" >&2
+              exit 1
+            }
+          done
+          echo "aucune image publiée"
+
+      - name: Conserver le manifeste, le rapport et les journaux
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidat-de-release-${{ steps.revision.outputs.sha }}
+          path: |
+            var/repetition/manifeste-release.json
+            var/repetition/rapport.json
+            var/repetition/journaux/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Rien ne reste debout
+        if: always()
+        # Le script démonte déjà par `trap`. Ce filet attrape le cas où le
+        # script lui-même n'aurait pas pu s'exécuter.
+        run: |
+          for projet in metreo-repetition metreo-repetition-restaure; do
+            docker ps -aq --filter "label=com.docker.compose.project=$projet" \
+              | xargs -r docker rm -f || true
+            docker volume ls -q --filter "label=com.docker.compose.project=$projet" \
+              | xargs -r docker volume rm -f || true
+          done
+          restants=$(docker ps -aq --filter "label=com.docker.compose.project=metreo-repetition" | wc -l)
+          test "$restants" -eq 0 && echo "aucune ressource de répétition restante"

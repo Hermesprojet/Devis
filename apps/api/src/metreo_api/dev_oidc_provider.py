@@ -143,11 +143,21 @@ def main() -> int:  # pragma: no cover - point d'entrée
     parseur = argparse.ArgumentParser(prog="python -m metreo_api.dev_oidc_provider")
     parseur.add_argument("--port", type=int, default=8021)
     parseur.add_argument("--client-id", default="metreo-recette")
+    # L'émetteur ANNONCÉ, qui peut différer de l'adresse d'écoute. Dans un
+    # réseau de conteneurs, l'application joint le fournisseur par son nom de
+    # service (`http://oidc:8021`) et non par `127.0.0.1` — et le document de
+    # découverte doit déclarer exactement l'émetteur configuré côté
+    # application, sinon `discover()` refuse, à juste titre.
+    parseur.add_argument("--issuer", default="")
+    # L'adresse d'écoute reste la boucle locale par défaut : ce fournisseur
+    # accepte n'importe quelle adresse sans mot de passe, et ne doit s'ouvrir
+    # au réseau que lorsqu'on le demande explicitement.
+    parseur.add_argument("--host", default="127.0.0.1")
     arguments = parseur.parse_args()
-    issuer = f"http://127.0.0.1:{arguments.port}"
+    issuer = arguments.issuer or f"http://127.0.0.1:{arguments.port}"
     uvicorn.run(
         create_provider_app(issuer, client_id=arguments.client_id),
-        host="127.0.0.1",
+        host=arguments.host,
         port=arguments.port,
         log_level="warning",
     )

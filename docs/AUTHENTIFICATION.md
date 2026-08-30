@@ -146,6 +146,13 @@ python -m metreo_api.bootstrap \
   --admin-name "Prénom Nom"
 ```
 
+L'adresse est validée par le **même contrôle que la connexion**, et pas
+seulement sur la présence d'un `@`. Conséquence pratique : les domaines
+réservés — `.invalid`, `.test`, `.localhost` — sont refusés. Ils l'étaient déjà
+à la connexion ; ils étaient acceptés à l'amorçage, ce qui créait un premier
+administrateur incapable d'entrer, sans que rien ne le signale. Pour un
+exemple, `.example` convient.
+
 Elle est **idempotente** : relancée avec les mêmes valeurs elle ne duplique rien
 et ne modifie rien, ce qui permet de la laisser dans un script de démarrage.
 Elle réactive en revanche une appartenance désactivée, parce que c'est la seule
