@@ -139,6 +139,7 @@ Une tranche n'est pas finie tant qu'ils ne sont pas verts sur le dernier SHA.
 | `api-postgres` | PostgreSQL 16 + PostGIS : `upgrade head` → `downgrade base` → `upgrade head`, `seed`, puis **la suite complète** via `METREO_TEST_DATABASE_URL` — sans cette variable la conftest retombe sur SQLite et le job ne prouve rien |
 | `web` | `npm ci` (installation verrouillée), `npm run typecheck`, `npm run build` |
 | `e2e` | Les parcours Playwright contre l'API réelle, pas contre des données simulées |
+| `banc-oidc` | Quatorze scénarios de connexion joués contre une pile réelle : volume, concurrence, API coupée EN COURS de parcours, deux instances sans affinité, refus qui doivent rester des refus. Il ne réessaie jamais — un parcours qui n'aboutit qu'à la seconde tentative est un échec |
 | `skills` | Frontmatter, chemins cités, compteurs figés, et le fait que le dossier de vérification nomme un commit qui existe |
 | `clean-install` | Un environnement vierge démarre depuis les seuls manifestes, **et sur les versions qu'ils exigent** — extras compris |
 | `containers` | Les deux images se construisent, ne tournent pas en root et déclarent un point de santé |

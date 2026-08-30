@@ -71,6 +71,26 @@ class Verdict:
 VERDICTS: list[Verdict] = []
 
 
+class ParcoursInterrompu(RuntimeError):
+    """Une étape n'a pas rendu ce que la suivante attendait.
+
+    Un `assert` nu disait « AssertionError » et rien d'autre : le banc
+    s'arrêtait sans nommer le refus, exactement le silence qu'il est censé
+    faire disparaître. Cette exception transporte le parcours entier.
+    """
+
+    def __init__(self, etape: str, connexion: Connexion) -> None:
+        super().__init__(f"{etape} — {connexion.resume()}")
+        self.connexion = connexion
+
+
+def exiger(valeur, etape: str, connexion: Connexion):
+    """Rend `valeur`, ou interrompt le scénario en disant ce qui manquait."""
+    if valeur is None or valeur == (None, None):
+        raise ParcoursInterrompu(etape, connexion)
+    return valeur
+
+
 def conclure(scenario: str, attendu: str, obtenu: str, reussi: bool, detail: str = "") -> bool:
     VERDICTS.append(Verdict(scenario, attendu, obtenu, reussi, detail))
     marque = f"{VERT}✓{FIN}" if reussi else f"{ROUGE}✗{FIN}"
@@ -578,10 +598,11 @@ def scenario_04_redemarrage_avant_callback(pile: Pile) -> bool:
     connexion = Connexion()
     try:
         url = navigateur.commencer(pile.api, connexion)
-        assert url is not None
+        exiger(url, "le départ n'a pas rendu d'URL d'autorisation", connexion)
         code, etat = navigateur.sauthentifier(url, ADMIN_A, connexion)
         pile.redemarrer_api(0)
-        assert code is not None and etat is not None
+        exiger(code, "le fournisseur n'a pas rendu de code", connexion)
+        exiger(etat, "le fournisseur n'a pas rendu de state", connexion)
         code_connexion = navigateur.revenir(pile.api, code, etat, connexion)
         if code_connexion is not None:
             navigateur.echanger(pile.api, code_connexion, connexion)
@@ -601,9 +622,10 @@ def scenario_05_redemarrage_avant_echange(pile: Pile) -> bool:
     connexion = Connexion()
     try:
         url = navigateur.commencer(pile.api, connexion)
-        assert url is not None
+        exiger(url, "le départ n'a pas rendu d'URL d'autorisation", connexion)
         code, etat = navigateur.sauthentifier(url, ADMIN_A, connexion)
-        assert code is not None and etat is not None
+        exiger(code, "le fournisseur n'a pas rendu de code", connexion)
+        exiger(etat, "le fournisseur n'a pas rendu de state", connexion)
         code_connexion = navigateur.revenir(pile.api, code, etat, connexion)
         pile.redemarrer_api(0)
         if code_connexion is not None:
@@ -680,11 +702,11 @@ def scenario_08_transaction_expiree(pile: Pile, url_base: str) -> bool:
     connexion = Connexion()
     try:
         url = navigateur.commencer(pile.api, connexion)
-        assert url is not None
+        exiger(url, "le départ n'a pas rendu d'URL d'autorisation", connexion)
         code, etat = navigateur.sauthentifier(url, ADMIN_A, connexion)
-        assert etat is not None
+        exiger(etat, "le fournisseur n'a pas rendu de state", connexion)
         _perimer_transaction(url_base, etat)
-        assert code is not None
+        exiger(code, "le fournisseur n'a pas rendu de code", connexion)
         navigateur.revenir(pile.api, code, etat, connexion)
         # Et surtout : on doit pouvoir recommencer, proprement.
         reprise = navigateur.connecter(ADMIN_A, depart=pile.api)
@@ -706,11 +728,12 @@ def scenario_09_rejeu_du_code_opaque(pile: Pile) -> bool:
     connexion = Connexion()
     try:
         url = navigateur.commencer(pile.api, connexion)
-        assert url is not None
+        exiger(url, "le départ n'a pas rendu d'URL d'autorisation", connexion)
         code, etat = navigateur.sauthentifier(url, ADMIN_A, connexion)
-        assert code is not None and etat is not None
+        exiger(code, "le fournisseur n'a pas rendu de code", connexion)
+        exiger(etat, "le fournisseur n'a pas rendu de state", connexion)
         code_connexion = navigateur.revenir(pile.api, code, etat, connexion)
-        assert code_connexion is not None
+        exiger(code_connexion, "le retour n'a pas rendu de code de connexion", connexion)
         navigateur.echanger(pile.api, code_connexion, connexion)
         premier_jeton = connexion.jeton
         rejeu = Connexion()
@@ -737,7 +760,7 @@ def scenario_10_navigation_interrompue(pile: Pile) -> bool:
     abandon = Connexion()
     try:
         url = navigateur.commencer(pile.api, abandon)
-        assert url is not None
+        exiger(url, "le départ n'a pas rendu d'URL d'autorisation", abandon)
         navigateur.sauthentifier(url, ADMIN_A, abandon)
         # Rien de plus : l'utilisateur ferme l'onglet, puis revient.
         reprise = navigateur.connecter(ADMIN_A, depart=pile.api)
@@ -782,14 +805,16 @@ def scenario_12_deux_onglets(pile: Pile) -> bool:
     try:
         url_un = navigateur.commencer(pile.api, onglet_un)
         url_deux = navigateur.commencer(pile.api, onglet_deux)
-        assert url_un is not None and url_deux is not None
+        exiger(url_un, "le premier onglet n'a pas obtenu d'URL", onglet_un)
+        exiger(url_deux, "le second onglet n'a pas obtenu d'URL", onglet_deux)
         code_un, etat_un = navigateur.sauthentifier(url_un, ADMIN_A, onglet_un)
         code_deux, etat_deux = navigateur.sauthentifier(url_deux, ADMIN_A, onglet_deux)
         for code, etat, connexion in (
             (code_un, etat_un, onglet_un),
             (code_deux, etat_deux, onglet_deux),
         ):
-            assert code is not None and etat is not None
+            exiger(code, "le fournisseur n'a pas rendu de code", connexion)
+            exiger(etat, "le fournisseur n'a pas rendu de state", connexion)
             opaque = navigateur.revenir(pile.api, code, etat, connexion)
             if opaque is not None:
                 navigateur.echanger(pile.api, opaque, connexion)
@@ -809,13 +834,14 @@ def scenario_13_callback_recu_deux_fois(pile: Pile) -> bool:
     connexion = Connexion()
     try:
         url = navigateur.commencer(pile.api, connexion)
-        assert url is not None
+        exiger(url, "le départ n'a pas rendu d'URL d'autorisation", connexion)
         code, etat = navigateur.sauthentifier(url, ADMIN_A, connexion)
-        assert code is not None and etat is not None
+        exiger(code, "le fournisseur n'a pas rendu de code", connexion)
+        exiger(etat, "le fournisseur n'a pas rendu de state", connexion)
         premier_opaque = navigateur.revenir(pile.api, code, etat, connexion)
         second = Connexion()
         second_opaque = navigateur.revenir(pile.api, code, etat, second)
-        assert premier_opaque is not None
+        exiger(premier_opaque, "le premier retour n'a pas rendu de code de connexion", connexion)
         navigateur.echanger(pile.api, premier_opaque, connexion)
     finally:
         navigateur.fermer()
@@ -934,6 +960,22 @@ def base_jetable(url_admin: str) -> Iterator[str]:
         moteur.dispose()
 
 
+def jouer(scenario, *arguments) -> None:
+    """Joue un scénario, et rend rouge ce qui n'aboutit pas.
+
+    Un scénario qui lève met tous les suivants à la porte : le banc ne dirait
+    plus rien des treize autres, et le premier échec masquerait ce qu'il fallait
+    justement comparer. On rapporte, et on continue.
+    """
+    nom = scenario.__doc__.strip().splitlines()[0] if scenario.__doc__ else scenario.__name__
+    try:
+        scenario(*arguments)
+    except ParcoursInterrompu as interruption:
+        conclure(nom, "le parcours va jusqu'au bout", str(interruption), False)
+    except Exception as erreur:  # le banc rapporte, il ne s'arrête jamais net
+        conclure(nom, "le parcours va jusqu'au bout", f"{type(erreur).__name__}: {erreur}", False)
+
+
 def main(argv: list[str] | None = None) -> int:
     parseur = argparse.ArgumentParser(description=__doc__)
     parseur.add_argument(
@@ -966,26 +1008,26 @@ def _jouer(url_base: str, arguments: argparse.Namespace, racine: Path) -> int:
                 print(f"   api         {adresse}")
 
             titre("Volume et concurrence")
-            scenario_01_cinquante_sequentielles(pile)
-            scenario_02_dix_concurrentes(pile)
-            scenario_03_plusieurs_organisations(pile)
+            jouer(scenario_01_cinquante_sequentielles, pile)
+            jouer(scenario_02_dix_concurrentes, pile)
+            jouer(scenario_03_plusieurs_organisations, pile)
 
             titre("Pannes au milieu du parcours")
-            scenario_04_redemarrage_avant_callback(pile)
-            scenario_05_redemarrage_avant_echange(pile)
-            scenario_06_deux_instances(pile)
-            scenario_07_redemarrage_fournisseur(pile)
+            jouer(scenario_04_redemarrage_avant_callback, pile)
+            jouer(scenario_05_redemarrage_avant_echange, pile)
+            jouer(scenario_06_deux_instances, pile)
+            jouer(scenario_07_redemarrage_fournisseur, pile)
 
             titre("Refus qui doivent rester des refus")
-            scenario_08_transaction_expiree(pile, url_base)
-            scenario_09_rejeu_du_code_opaque(pile)
-            scenario_10_navigation_interrompue(pile)
-            scenario_11_restes_d_une_session_precedente(pile)
-            scenario_12_deux_onglets(pile)
-            scenario_13_callback_recu_deux_fois(pile)
+            jouer(scenario_08_transaction_expiree, pile, url_base)
+            jouer(scenario_09_rejeu_du_code_opaque, pile)
+            jouer(scenario_10_navigation_interrompue, pile)
+            jouer(scenario_11_restes_d_une_session_precedente, pile)
+            jouer(scenario_12_deux_onglets, pile)
+            jouer(scenario_13_callback_recu_deux_fois, pile)
 
         titre("Horloges décalées")
-        scenario_14_decalage_horloge(url_base, racine)
+        jouer(scenario_14_decalage_horloge, url_base, racine)
     finally:
         if not arguments.garder:
             shutil.rmtree(racine, ignore_errors=True)
