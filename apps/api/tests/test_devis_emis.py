@@ -393,6 +393,39 @@ def test_les_conditions_sont_configurables_et_non_gravees(
     assert "Acompte de 30 %" in texte
 
 
+def test_des_conditions_longues_passent_a_la_page_suivante_au_lieu_de_disparaitre(
+    seeded_client: TestClient, admin, estimate, version, pret
+) -> None:
+    """Le champ accepte 4 000 caractères ; le papier doit les porter TOUS.
+
+    Reproduit : dessinées à la suite des totaux, une quarantaine de lignes de
+    conditions sortaient de la page — tracées à une ordonnée négative, donc
+    invisibles. Un devis dont les conditions disparaissent en silence est pire
+    qu'un devis sans conditions : l'entreprise croit les avoir envoyées.
+    """
+    paragraphes = [
+        f"Article {numero}. " + "Chaque clause occupe une ligne entière du document remis. " * 2
+        for numero in range(1, 26)
+    ]
+    conditions = "\n".join(paragraphes)
+    assert len(conditions) < 4000, "le champ n'accepte pas plus"
+
+    devis = _emettre(seeded_client, admin, estimate, version, terms=conditions).json()
+    octets = seeded_client.get(
+        f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=admin
+    ).content
+    texte = moteur_pdf.extraire_le_texte(octets)
+
+    assert moteur_pdf.compter_les_pages(octets) >= 2, (
+        "les conditions longues tiennent prétendument sur la même page que les totaux"
+    )
+    assert "Article 1." in texte
+    assert "Article 25." in texte, "la dernière clause est tombée hors de la page"
+    #: Et les cadres de signature suivent les conditions, pas l'inverse.
+    assert "Bon pour accord" in texte
+    assert texte.index("Article 25.") < texte.index("Bon pour accord")
+
+
 def test_un_pdf_disparu_du_volume_donne_410_et_non_un_document_reconstruit(
     seeded_client: TestClient, admin, estimate, version, pret
 ) -> None:

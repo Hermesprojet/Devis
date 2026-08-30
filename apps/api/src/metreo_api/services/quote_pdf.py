@@ -119,10 +119,24 @@ def composer_le_devis(
         else:
             y = _entete_court(page, numero, organisation)
         y = _tableau(page, y, colonnes, tranche, index == 0)
-        if index == len(tranches) - 1:
-            y = _totaux(page, y, totaux, devise)
-            _conditions_et_signatures(page, y, terms, client, organisation)
         pages.append(page)
+        if index < len(tranches) - 1:
+            continue
+
+        y = _totaux(page, y, totaux, devise)
+        # Les conditions passent à la page suivante plutôt que sous le pied.
+        #
+        # Le champ accepte 4 000 caractères, soit une quarantaine de lignes ;
+        # les dessiner à la suite des totaux les faisait sortir de la page —
+        # tracées à une ordonnée négative, donc invisibles. Un devis dont les
+        # conditions disparaissent en silence est pire qu'un devis sans
+        # conditions : l'entreprise croit les avoir envoyées.
+        conditions = _lignes_de_conditions(terms)
+        if y - _hauteur_du_pied(conditions) < moteur.MARGE:
+            page = moteur.Page()
+            y = _entete_court(page, numero, organisation)
+            pages.append(page)
+        _conditions_et_signatures(page, y, conditions, client, organisation)
 
     for numero_page, page in enumerate(pages, start=1):
         _pied(page, numero, numero_page, len(pages))
@@ -330,23 +344,44 @@ def _totaux(page: moteur.Page, y: float, totaux: dict[str, Any], devise: str) ->
     return y
 
 
+#: Ce qu'occupent les deux cadres de signature, sous les conditions.
+HAUTEUR_SIGNATURES = 90.0
+
+
+def _lignes_de_conditions(terms: str | None) -> list[str]:
+    """Les conditions, déjà repliées : on doit les MESURER avant de les poser."""
+    if not terms:
+        return []
+    lignes: list[str] = []
+    for paragraphe in terms.splitlines():
+        lignes += _replier(paragraphe, 105)
+    return lignes
+
+
+def _hauteur_du_pied(conditions: list[str]) -> float:
+    """Ce que réclament les conditions et les signatures, ensemble."""
+    hauteur = 14.0 + HAUTEUR_SIGNATURES
+    if conditions:
+        hauteur += 12.0 + 10.0 * len(conditions)
+    return hauteur
+
+
 def _conditions_et_signatures(
     page: moteur.Page,
     y: float,
-    terms: str | None,
+    conditions: list[str],
     client: dict[str, Any],
     organisation: dict[str, Any],
 ) -> None:
     gauche = moteur.MARGE
     droite = moteur.A4[0] - moteur.MARGE
     y -= 14
-    if terms:
+    if conditions:
         page.texte(gauche, y, "CONDITIONS", police=moteur.HELVETICA_GRAS, taille=8)
         y -= 12
-        for paragraphe in terms.splitlines():
-            for morceau in _replier(paragraphe, 105):
-                page.texte(gauche, y, morceau, taille=8.5)
-                y -= 10
+        for morceau in conditions:
+            page.texte(gauche, y, morceau, taille=8.5)
+            y -= 10
 
     bas = max(y - 24, moteur.MARGE + 66)
     milieu = (gauche + droite) / 2
