@@ -44,3 +44,7 @@ apps/web/next-env.d.ts
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/blob-report/
+
+# Fichier d'environnement de la répétition : fabriqué à partir de l'exemple,
+# jamais versionné, comme infra/staging.env.
+infra/repetition.env

@@ -1,0 +1,148 @@
+# =============================================================================
+#  DÉMONSTRATION LOCALE — NE JAMAIS EXPOSER SUR INTERNET
+# =============================================================================
+#
+#  Cette composition sert à découvrir Metreo sur SON PROPRE ORDINATEUR, avec
+#  Docker Desktop. Elle est délibérément ouverte :
+#
+#    * connexion par simple adresse e-mail, SANS MOT DE PASSE ;
+#    * secret de session fixe et écrit en clair juste en dessous ;
+#    * mot de passe de base de données trivial ;
+#    * données de démonstration d'entreprises fictives.
+#
+#  Exposée sur un réseau, elle donne à n'importe qui l'accès administrateur en
+#  une requête. Les ports sont donc liés à 127.0.0.1 et à rien d'autre : la
+#  machine elle-même, jamais le réseau local, jamais Internet.
+#
+#  Pour un déploiement réel, voir infra/docker-compose.staging.yml et
+#  docs/EXPLOITATION.md — connexion par fournisseur d'identité, secrets fournis
+#  par la plateforme, HTTPS terminé par un proxy.
+#
+#  Utilisation :
+#      make demo-up       démarre et attend que tout réponde
+#      make demo-status    où en est la pile, et les comptes
+#      make demo-down      arrête en CONSERVANT les données
+#      make demo-reset     efface les données de démonstration (confirmation)
+# =============================================================================
+
+# Nom de projet distinct : il préfixe conteneurs, réseau et volumes, et c'est
+# lui qui rend `demo-reset` incapable de toucher autre chose que cette pile.
+name: metreo-demo
+
+x-demo-database: &demo-database
+  # Valeurs de démonstration, volontairement en clair : elles n'ouvrent rien
+  # d'autre qu'une base liée à la boucle locale. Les écrire ici plutôt que dans
+  # un fichier d'exemple évite qu'on croie devoir les remplacer par de vraies.
+  POSTGRES_USER: metreo_demo
+  POSTGRES_PASSWORD: demonstration_locale_sans_valeur
+  POSTGRES_DB: metreo_demo
+
+x-demo-api: &demo-api
+  METREO_ENVIRONMENT: development
+  METREO_AUTH_MODE: dev
+  METREO_DATABASE_URL: postgresql+psycopg://metreo_demo:demonstration_locale_sans_valeur@db:5432/metreo_demo
+  # Secret fixe : la démonstration doit garder ses sessions d'un redémarrage à
+  # l'autre. Il n'a de valeur que sur cette machine, et l'API refuse de
+  # démarrer avec METREO_ENVIRONMENT=staging ou production.
+  METREO_JWT_SECRET: demonstration-locale-sans-valeur-0123456789
+  # Les deux orthographes : une personne tape l'une ou l'autre dans sa barre
+  # d'adresse, et un refus CORS ressemble à une panne de l'application.
+  METREO_CORS_ORIGINS: http://127.0.0.1:3000,http://localhost:3000
+  METREO_STORAGE_ROOT: /var/lib/metreo
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment: *demo-database
+    # AUCUN port publié : la base n'est joignable que par les autres
+    # conteneurs. Rien de ce que fait la démonstration n'exige d'y accéder
+    # depuis la machine hôte.
+    volumes:
+      - metreo-demo-base:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metreo_demo -d metreo_demo"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+
+  # Tâche unique, exécutée avant l'API. Dans la commande de démarrage de l'API
+  # elle serait rejouée à chaque redémarrage du conteneur.
+  migrate:
+    image: metreo-demo-api:local
+    build:
+      context: ..
+      dockerfile: infra/api.Dockerfile
+    command: ["alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"]
+    environment: *demo-api
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Le jeu de démonstration, chargé UNE SEULE FOIS.
+  #
+  # Le témoin vit dans le volume de stockage, donc il survit à `demo-down` et
+  # disparaît avec `demo-reset` — exactement la durée de vie des données qu'il
+  # accompagne. Sans lui, chaque `demo-up` rechargerait le jeu par-dessus le
+  # travail de la personne qui essaie le produit.
+  seed:
+    image: metreo-demo-api:local
+    command:
+      - sh
+      - -c
+      - |
+        if [ -f /var/lib/metreo/.demonstration-chargee ]; then
+          echo "jeu de démonstration déjà chargé — rien à faire"
+          exit 0
+        fi
+        python -m metreo_api.seed
+        touch /var/lib/metreo/.demonstration-chargee
+        echo "jeu de démonstration chargé"
+    environment: *demo-api
+    volumes:
+      - metreo-demo-stockage:/var/lib/metreo
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    image: metreo-demo-api:local
+    environment: *demo-api
+    ports:
+      # 127.0.0.1 explicite. Sans ce préfixe, Docker publie sur 0.0.0.0 et la
+      # démonstration devient joignable depuis tout le réseau local.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - metreo-demo-stockage:/var/lib/metreo
+    depends_on:
+      db:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    image: metreo-demo-web:local
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+      args:
+        # Figée à la construction : Next inscrit cette valeur dans le
+        # JavaScript livré au navigateur. C'est l'adresse vue par le
+        # NAVIGATEUR, donc 127.0.0.1 et non le nom de service `api`.
+        NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  # Noms explicites et propres à la démonstration. Un `db-data` générique
+  # deviendrait `metreo-demo_db-data` — lisible, mais indistinguable d'un
+  # `db-data` d'un autre projet dans une commande tapée à la main un soir de
+  # ménage.
+  metreo-demo-base:
+  metreo-demo-stockage:

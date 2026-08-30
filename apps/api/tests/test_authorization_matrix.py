@@ -49,6 +49,11 @@ PUBLIC: frozenset[str] = frozenset(
         # jamais. Elle ne touche rien — ni base, ni configuration — et ne rend
         # que `{"status": "live"}`.
         "GET /api/v1/live",
+        # Sonde de disponibilité, publique pour la même raison que /live : un
+        # équilibreur qui décide de retirer une instance du service ne
+        # s'authentifie pas. Elle n'expose qu'un booléen — la base répond ou
+        # non — et aucune donnée d'organisation.
+        "GET /api/v1/ready",
         "GET /api/v1/units",
         "GET /api/v1/roles",
         "GET /api/v1/region-profiles",

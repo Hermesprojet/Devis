@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -65,6 +65,39 @@ def live() -> dict[str, str]:
     C'est ce point-ci que le `HEALTHCHECK` de l'image interroge.
     """
     return {"status": "live"}
+
+
+@router.get("/ready", summary="Le service peut-il prendre du trafic ?")
+def ready(
+    response: Response,
+    session: Session = Depends(session_scope),
+) -> dict[str, str]:
+    """Disponibilité : **503 quand la base ne répond pas.**
+
+    Ni `/live` ni `/health` ne peuvent tenir ce rôle, et c'est la raison
+    d'être de ce troisième point :
+
+    - `/live` ne touche rien : il reste vert pendant une panne de base, ce
+      qui est exactement ce qu'on lui demande — il empêche un orchestrateur
+      de redémarrer des conteneurs sains.
+    - `/health` répond **200** même en `degraded`. C'est le bon choix pour une
+      page d'état lue par un humain, et le mauvais pour une sonde : un
+      équilibreur qui ne lit que le code HTTP continuerait d'envoyer du trafic
+      à une instance incapable de servir une seule requête utile.
+
+    Un code HTTP rouge est la seule forme qu'une sonde comprenne sans qu'on
+    lui apprenne à lire notre JSON.
+
+    Les problèmes de configuration n'entrent PAS dans ce contrôle : ils sont
+    tranchés au démarrage, où ils font échouer le processus en préproduction
+    et en production. Une instance qui tourne les a déjà passés.
+    """
+    try:
+        session.execute(text("SELECT 1"))
+    except Exception:  # pragma: no cover - seulement sur un déploiement cassé
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "unready", "database": "unreachable"}
+    return {"status": "ready", "database": "ok"}
 
 
 @router.get("/units", response_model=list[UnitOut], summary="Unités reconnues")

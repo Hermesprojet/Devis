@@ -189,6 +189,34 @@ e2e: ## Parcours de bout en bout (Playwright)
 .PHONY: compose-config
 compose-config: ## Valider la composition Docker
 	docker compose -f infra/docker-compose.yml config >/dev/null && echo "docker compose : valide"
+	docker compose -f infra/docker-compose.demo.yml config >/dev/null && echo "docker compose demo : valide"
+
+# -- démonstration locale -------------------------------------------------
+#
+# Le parcours destiné au propriétaire : découvrir l'application sur son
+# ordinateur, avec Docker Desktop et rien d'autre. Toute la logique — et
+# surtout les refus de `demo-reset` — vit dans ops/demonstration.sh, qui se
+# relit mieux qu'une recette Make.
+
+.PHONY: demo-up
+demo-up: ## Démonstration locale : démarrer et attendre que tout réponde
+	@ops/demonstration.sh up
+
+.PHONY: demo-status
+demo-status: ## Démonstration locale : état de la pile et comptes d'essai
+	@ops/demonstration.sh status
+
+.PHONY: demo-down
+demo-down: ## Démonstration locale : arrêter en CONSERVANT les données
+	@ops/demonstration.sh down
+
+.PHONY: demo-reset
+demo-reset: ## Démonstration locale : effacer les données (confirmation exigée)
+	@ops/demonstration.sh reset
+
+.PHONY: demo-guards
+demo-guards: ## Éprouver les garde-fous de la démonstration, sans Docker
+	$(PY) -m pytest ops/tests/test_demonstration.py -q
 
 .PHONY: secrets
 secrets: ## Refuser un .env versionné ou un motif de secret évident

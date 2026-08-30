@@ -1,0 +1,78 @@
+# Surcouche de RÉPÉTITION, appliquée par-dessus docker-compose.staging.yml.
+#
+#   docker compose -f infra/docker-compose.staging.yml \
+#                  -f infra/docker-compose.repetition.yml ...
+#
+# Une surcouche et non une copie : la répétition doit éprouver la composition
+# de préproduction RÉELLE. Un second fichier autonome dériverait du premier, et
+# la répétition finirait par valider quelque chose qui n'est pas déployé.
+#
+# Ce que cette surcouche change, et seulement cela :
+#   1. un faux fournisseur d'identité, joignable dans le réseau de la pile ;
+#   2. le proxy en HTTP simple sur un port haut, lié à la boucle locale —
+#      pas de certificat à obtenir pour un nom qui n'existe pas ;
+#   3. de quoi couper la base à la demande, pour éprouver les sondes.
+#
+# Elle ne modifie NI le mode d'authentification, NI l'environnement, NI la
+# séparation des migrations : ce sont précisément les propriétés qu'on répète.
+
+services:
+  # Le faux fournisseur. Il n'existe que le temps de la répétition, il accepte
+  # n'importe quelle adresse sans mot de passe, et il refuse de démarrer si on
+  # ne lui dit pas explicitement qu'on est en test.
+  oidc:
+    image: ${API_IMAGE:?API_IMAGE est obligatoire}
+    command:
+      - python
+      - -m
+      - metreo_api.dev_oidc_provider
+      - --port=8021
+      - --host=0.0.0.0
+      - --issuer=http://oidc:8021
+      - --client-id=metreo-repetition
+    environment:
+      # Le fournisseur, lui, est en `test` : c'est un outil de recette, pas un
+      # morceau de l'application. L'API en face reste en `staging` — c'est
+      # elle qu'on répète.
+      METREO_ENVIRONMENT: test
+    networks:
+      default:
+        aliases:
+          - oidc
+    ports:
+      # Publié pour que le script de répétition, qui tourne sur la machine
+      # hôte, puisse jouer le rôle du navigateur. Lié à la boucle locale.
+      - "127.0.0.1:8021:8021"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.request, sys
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:8021/.well-known/openid-configuration",
+              timeout=3).status == 200 else 1)
+      interval: 3s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # L'API doit attendre le fournisseur : sans lui, le premier `/auth/oidc/start`
+  # échouerait sur une découverte injoignable, et la répétition accuserait
+  # l'application d'un défaut qui n'est pas le sien.
+  api:
+    depends_on:
+      oidc:
+        condition: service_healthy
+
+  proxy:
+    # `!override` et non un simple ajout : Compose FUSIONNE les listes de ports.
+    # Sans cette marque, la préproduction publierait encore 80 et 443 — sur
+    # toutes les interfaces — en plus du port de répétition. Mesuré.
+    ports: !override
+      # HTTP simple, port haut, boucle locale. `PUBLIC_HOST` vaut
+      # `http://localhost:8080` : le schéma explicite dit à Caddy de servir en
+      # clair et de ne demander aucun certificat — un nom de répétition n'en
+      # obtiendrait aucun.
+      - "127.0.0.1:8080:8080"
