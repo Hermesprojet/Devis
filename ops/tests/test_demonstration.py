@@ -370,3 +370,43 @@ def test_backup_still_allows_a_local_unencrypted_archive() -> None:
     assert 'if [[ -z "${BACKUP_AGE_RECIPIENT:-}" ]]' in bloc, (
         "le refus ne dépend pas de l'absence de chiffrement"
     )
+
+
+# --------------------------------------------------------------------------
+# Les migrations, depuis n'importe quel répertoire
+# --------------------------------------------------------------------------
+
+ALEMBIC_INI = RACINE / "apps" / "api" / "alembic.ini"
+
+
+def test_the_migration_paths_do_not_depend_on_the_working_directory() -> None:
+    """Alembic résout un chemin relatif contre le répertoire d'APPEL.
+
+    La commande de préproduction — `alembic -c apps/api/alembic.ini upgrade
+    head`, lancée depuis la racine, qui est le WORKDIR de l'image — cherchait
+    `./alembic` et sortait en 255. La tâche de migration, celle qui doit
+    réussir avant que l'API ne démarre, ne pouvait pas fonctionner dans le
+    conteneur.
+
+    La validation de syntaxe des compositions ne pouvait pas le voir : il a
+    fallu une exécution réelle.
+    """
+    texte = ALEMBIC_INI.read_text(encoding="utf-8")
+    for reglage in ("script_location", "prepend_sys_path"):
+        ligne = re.search(rf"^{reglage}\s*=\s*(.+)$", texte, re.MULTILINE)
+        assert ligne, f"{reglage} absent de alembic.ini"
+        valeur = ligne.group(1).strip()
+        assert valeur.startswith("%(here)s") or valeur.startswith("/"), (
+            f"{reglage} = « {valeur} » est relatif au répertoire d'appel : la "
+            f"tâche de migration échouera depuis le WORKDIR de l'image"
+        )
+
+
+def test_the_migration_task_invokes_alembic_with_that_file() -> None:
+    """La composition doit pointer sur le fichier, pas sur un chemin deviné."""
+    compose_staging = yaml.safe_load(
+        (RACINE / "infra" / "docker-compose.staging.yml").read_text(encoding="utf-8")
+    )
+    commande = " ".join(compose_staging["services"]["migrate"]["command"])
+    assert "apps/api/alembic.ini" in commande
+    assert "upgrade" in commande and "head" in commande

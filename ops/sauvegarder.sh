@@ -17,11 +17,23 @@ set -euo pipefail
 
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SORTIE="${1:-${BACKUP_DIR:-$RACINE/var/sauvegardes}}"
-COMPOSE=(docker compose -f "$RACINE/infra/docker-compose.staging.yml")
-if [[ -f "$RACINE/infra/staging.env" ]]; then
-  COMPOSE+=(--env-file "$RACINE/infra/staging.env")
+# Quelle pile sauvegarder. Par défaut celle de préproduction, décrite par le
+# seul fichier de composition ; une répétition ou une seconde instance passent
+# les leurs.
+#
+# Sans ces variables, le script visait le projet « metreo-staging » et
+# échouait à résoudre `WEB_IMAGE` — il ne pouvait donc sauvegarder aucune pile
+# portant un autre nom, y compris celle qu'on monte pour vérifier qu'il marche.
+read -r -a FICHIERS_COMPOSE <<< "${BACKUP_COMPOSE_FILES:--f $RACINE/infra/docker-compose.staging.yml}"
+COMPOSE=(docker compose)
+[[ -n "${BACKUP_COMPOSE_PROJECT:-}" ]] && COMPOSE+=(--project-name "$BACKUP_COMPOSE_PROJECT")
+COMPOSE+=("${FICHIERS_COMPOSE[@]}")
+
+ENV_COMPOSE="${BACKUP_ENV_FILE:-$RACINE/infra/staging.env}"
+if [[ -f "$ENV_COMPOSE" ]]; then
+  COMPOSE+=(--env-file "$ENV_COMPOSE")
   # shellcheck disable=SC1091
-  set -a; . "$RACINE/infra/staging.env"; set +a
+  set -a; . "$ENV_COMPOSE"; set +a
 fi
 
 HORODATAGE="$(date -u +%Y%m%dT%H%M%SZ)"

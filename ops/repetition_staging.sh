@@ -192,6 +192,19 @@ etape_demarrage() {
 
 	compose up -d --wait --wait-timeout 300 >/dev/null 2>&1 || true
 
+	# La tâche de migration d'abord : l'API l'attend en
+	# `service_completed_successfully`. Si elle a échoué, l'API n'a jamais
+	# démarré et TOUT le reste échouera pour cette seule raison — autant le
+	# dire ici, avec son journal, plutôt que de laisser deviner.
+	local code_migration
+	code_migration=$(docker inspect -f '{{.State.ExitCode}}' "$(compose ps -aq migrate)" 2>/dev/null || echo "?")
+	if [[ "$code_migration" != "0" ]]; then
+		ko "la tâche de migration a échoué (code $code_migration) — rien ne démarrera"
+		printf '     ── journal de « migrate » ──\n' >&2
+		compose logs --no-color migrate 2>&1 | tail -20 | sed 's/^/     /' >&2
+		return 1
+	fi
+
 	# Par le PROXY, pas par l'API : c'est le chemin qu'emprunte un utilisateur,
 	# et c'est donc le seul dont la réponse prouve quelque chose.
 	if attendre_code "$API/ready" 200 180; then
@@ -731,9 +744,9 @@ etape_sauvegarde() {
 	titre "Sauvegarde de la base et du stockage"
 
 	local sortie
-	sortie=$(POSTGRES_USER="$(grep -E '^POSTGRES_USER=' "$ENV_FICHIER" | cut -d= -f2-)" \
-		POSTGRES_DB="$(grep -E '^POSTGRES_DB=' "$ENV_FICHIER" | cut -d= -f2-)" \
-		COMPOSE_PROJET="$PROJET" \
+	sortie=$(BACKUP_COMPOSE_PROJECT="$PROJET" \
+		BACKUP_COMPOSE_FILES="-f $RACINE/infra/docker-compose.staging.yml -f $RACINE/infra/docker-compose.repetition.yml" \
+		BACKUP_ENV_FILE="$ENV_FICHIER" \
 		BACKUP_DIR="$TRAVAIL/sauvegardes" \
 		ops/sauvegarder.sh "$TRAVAIL/sauvegardes" 2>&1)
 	if [[ $? -ne 0 ]]; then
@@ -766,7 +779,10 @@ etape_sauvegarde() {
 	# Le refus qui compte : déposer en clair chez un tiers.
 	local refus
 	refus=$(BACKUP_DESTINATION="s3://exemple-inexistant/metreo" \
-		POSTGRES_USER=x POSTGRES_DB=x BACKUP_DIR="$TRAVAIL/refus" \
+		BACKUP_COMPOSE_PROJECT="$PROJET" \
+		BACKUP_COMPOSE_FILES="-f $RACINE/infra/docker-compose.staging.yml -f $RACINE/infra/docker-compose.repetition.yml" \
+		BACKUP_ENV_FILE="$ENV_FICHIER" \
+		BACKUP_DIR="$TRAVAIL/refus" \
 		ops/sauvegarder.sh "$TRAVAIL/refus" 2>&1)
 	if grep -q "sans chiffrement" <<<"$refus"; then
 		ok "la sauvegarde refuse de déposer en clair chez un tiers"
@@ -948,7 +964,18 @@ printf '  application     %s\n' "$BASE"
 printf '  rapport         %s\n' "$RAPPORT"
 
 etape_refus_configuration
-etape_demarrage || true
+if ! etape_demarrage; then
+	# Sans pile debout, les étapes suivantes produiraient une dizaine
+	# d'échecs en cascade qui masqueraient la cause unique. On s'arrête, on
+	# recueille les journaux, et on le dit.
+	titre "Arrêt"
+	ko "la pile n'a pas démarré : les étapes suivantes ne sont pas jouées"
+	recolter_journaux
+	printf '\n\033[31mRÉPÉTITION INTERROMPUE\033[0m — %d contrôles passés, %d en échec\n' \
+		"${#ETAPES_OK[@]}" "${#ETAPES_KO[@]}"
+	for echec in "${ETAPES_KO[@]}"; do printf '  · %s\n' "$echec"; done
+	exit 1
+fi
 etape_dev_login_absent
 etape_aucune_demonstration
 etape_migrations_une_seule_fois
