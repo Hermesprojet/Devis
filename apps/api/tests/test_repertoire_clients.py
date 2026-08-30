@@ -90,9 +90,7 @@ def test_deux_fiches_de_meme_nom_ne_sont_jamais_fusionnees(
 # --------------------------------------------------------------------------
 
 
-def test_la_recherche_ignore_la_casse_du_nom_et_du_numero(
-    seeded_client: TestClient, admin
-) -> None:
+def test_la_recherche_ignore_la_casse_du_nom_et_du_numero(seeded_client: TestClient, admin) -> None:
     fiche = creer(seeded_client, admin)
     creer(seeded_client, admin, name="Commune de Wavre", company_number="BE 0207.363.192")
 
