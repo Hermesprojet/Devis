@@ -66,6 +66,23 @@ class TokenResponse(BaseModel):
     role: str
 
 
+class OidcStartOut(BaseModel):
+    """Où envoyer le navigateur pour commencer la connexion."""
+
+    authorization_url: str
+
+
+class OidcExchangeRequest(BaseModel):
+    """Le code opaque rendu par le retour, contre une session.
+
+    `organization_id` n'est requis que si l'utilisateur appartient à plusieurs
+    organisations : le choix doit rester explicite plutôt que subi.
+    """
+
+    login_code: str = Field(min_length=16, max_length=64)
+    organization_id: str | None = None
+
+
 class MembershipOut(ApiModel):
     organization_id: str
     organization_name: str
@@ -959,6 +976,14 @@ class HealthOut(BaseModel):
     ai_enabled: bool
     database: str
     configuration_problems: list[str]
+    login_methods: list[Literal["dev", "oidc"]] = Field(
+        default_factory=list,
+        description=(
+            "Moyens de connexion offerts à un navigateur sur ce déploiement. "
+            "Vide sur un déploiement d'API pure : les jetons sont acceptés, "
+            "aucun n'est émis ici."
+        ),
+    )
 
 
 LimitQuery = Annotated[int, Field(ge=1, le=200)]

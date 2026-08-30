@@ -155,6 +155,80 @@ class User(TimestampMixin, Base):
     )
 
 
+class ExternalIdentity(TimestampMixin, Base):
+    """Le lien entre un compte local et une identité chez un fournisseur.
+
+    La clé est le couple ``(issuer, subject)``, que le fournisseur garantit
+    immuable. L'adresse électronique ne sert qu'une fois, à créer ce lien : elle
+    est réattribuable et usurpable, et s'y fier durablement permettrait de
+    reprendre un compte en obtenant l'adresse chez le fournisseur.
+
+    ``email_at_link`` conserve l'adresse telle qu'elle était au moment de la
+    liaison. Elle ne sert à rien d'autre qu'à retrouver plus tard *pourquoi*
+    ce lien existe — un audit, pas une identification.
+
+    Un utilisateur peut porter plusieurs identités (deux fournisseurs), mais une
+    identité donnée n'appartient qu'à un utilisateur : l'unicité porte sur
+    ``(issuer, subject)``.
+    """
+
+    __tablename__ = "external_identities"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", name="uq_external_identity_issuer_subject"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    issuer: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    email_at_link: Mapped[str | None] = mapped_column(String(255))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class LoginTransaction(Base):
+    """Une demande de connexion en cours, du départ au retour du navigateur.
+
+    Elle vit en base et non en mémoire de processus : l'utilisateur peut partir
+    depuis une instance de l'API et revenir sur une autre, qui ne connaîtrait
+    rien d'un dictionnaire local. C'est la condition pour tourner à plus d'une
+    instance.
+
+    ``consumed_at`` fait du rejeu un refus par l'état, pas par une convention :
+    une transaction déjà servie ne peut plus l'être, quelle que soit la
+    fenêtre de temps restante.
+
+    ``login_code`` est le code opaque rendu au navigateur à la place du jeton.
+    Un JWT dans une URL de retour finit dans l'historique, les journaux du
+    proxy et l'en-tête ``Referer`` ; un code court, à usage unique et échangé
+    contre la session, non.
+    """
+
+    __tablename__ = "login_transactions"
+    __table_args__ = (
+        UniqueConstraint("state", name="uq_login_transaction_state"),
+        UniqueConstraint("login_code", name="uq_login_transaction_code"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    state: Mapped[str] = mapped_column(String(64), nullable=False)
+    nonce: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_verifier: Mapped[str] = mapped_column(String(128), nullable=False)
+    redirect_uri: Mapped[str] = mapped_column(String(500), nullable=False)
+    #: Où renvoyer l'utilisateur dans l'application après la connexion.
+    return_to: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    #: Horodatage de la consommation du `state`, au retour du fournisseur.
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    #: Rempli une fois l'identité vérifiée, puis effacé à l'échange.
+    login_code: Mapped[str | None] = mapped_column(String(64))
+    login_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+    organization_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"))
+
+
 class Membership(TimestampMixin, Base):
     """A user's role inside one organisation. A user may belong to several."""
 

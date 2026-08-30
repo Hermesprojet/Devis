@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -30,6 +32,15 @@ def health(
     except Exception:  # pragma: no cover - only on a broken deployment
         database = "unreachable"
         problems.append("database unreachable")
+    # Ce que l'écran de connexion doit savoir avant d'afficher quoi que ce
+    # soit : proposer un formulaire qui n'aboutira pas est pire que ne rien
+    # proposer. La liste vide est une réponse valide — un déploiement d'API
+    # pure accepte des jetons sans en émettre.
+    methodes: list[Literal["dev", "oidc"]] = []
+    if settings.auth_mode == "oidc" and settings.oidc_configured:
+        methodes.append("oidc")
+    elif settings.auth_mode == "dev" and not settings.is_production:
+        methodes.append("dev")
     return HealthOut(
         status="ok" if not problems else "degraded",
         environment=settings.environment,
@@ -37,6 +48,7 @@ def health(
         ai_enabled=settings.ai_enabled,
         database=database,
         configuration_problems=problems,
+        login_methods=methodes,
     )
 
 
