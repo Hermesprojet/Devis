@@ -61,9 +61,22 @@ jobs:
         # scripts/ y est joint : il porte désormais de la logique — le
         # contrôle d'installation propre et celui des skills — et non plus
         # de simples README.
+        #
+        # ops/ aussi : le contrôle de restauration décide si une archive est
+        # exploitable. Du code non vérifié qui décide de ça se découvre cassé
+        # le jour où on en a besoin.
         run: |
-          ruff format --check apps/api/src apps/api/tests scripts
-          ruff check apps/api/src apps/api/tests scripts
+          ruff format --check apps/api/src apps/api/tests scripts ops
+          ruff check apps/api/src apps/api/tests scripts ops
+      - name: Scripts d'exploitation syntaxiquement valides
+        # `bash -n` analyse sans exécuter. Un script de sauvegarde qui ne
+        # s'analyse pas échoue à sa première exécution réelle, c'est-à-dire la
+        # nuit, sans témoin, en laissant croire qu'une sauvegarde existe.
+        run: |
+          for script in ops/*.sh; do
+            bash -n "$script"
+            echo "$script : syntaxe valide"
+          done
       - name: Typage
         run: |
           mypy apps/api/src/metreo_api
@@ -291,6 +304,33 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Composition valide
         run: docker compose -f infra/docker-compose.yml config
+      - name: Composition de recette valide
+        # Les variables obligatoires utilisent `${VAR:?message}` : la
+        # composition REFUSE de se résoudre si l'une manque, ce qui est le but.
+        # On la résout donc avec des valeurs factices, uniquement pour
+        # éprouver la syntaxe et le graphe de dépendances.
+        env:
+          PUBLIC_HOST: app.example.invalid
+          PUBLIC_ORIGIN: https://app.example.invalid
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: valeur-factice-de-ci
+          POSTGRES_DB: ci
+          METREO_JWT_SECRET: valeur-factice-de-ci-0123456789abcdef
+          METREO_OIDC_ISSUER: https://issuer.example.invalid
+          METREO_OIDC_CLIENT_ID: ci
+          METREO_OIDC_CLIENT_SECRET: valeur-factice-de-ci
+          METREO_OIDC_REDIRECT_URI: https://app.example.invalid/
+          API_IMAGE: metreo-api:ci
+          WEB_IMAGE: metreo-web:ci
+        run: docker compose -f infra/docker-compose.staging.yml config
+      - name: Configuration du proxy valide
+        # Un Caddyfile invalide ne se voit qu'au démarrage, c'est-à-dire au
+        # moment du déploiement, c'est-à-dire trop tard. `caddy validate`
+        # analyse la configuration sans rien servir.
+        run: |
+          docker run --rm -v "$PWD/infra/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -e PUBLIC_HOST=app.example.invalid \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
       - name: Construire l'image de l'API
         run: docker build -f infra/api.Dockerfile -t metreo-api:ci .
       - name: Construire l'image du front

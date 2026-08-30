@@ -44,6 +44,11 @@ PUBLIC: frozenset[str] = frozenset(
         "GET /openapi.json",
         "GET /redoc",
         "GET /api/v1/health",
+        # Sonde de vivacité. Publique par nécessité : un orchestrateur qui
+        # décide de redémarrer un conteneur n'a pas de jeton, et n'en aura
+        # jamais. Elle ne touche rien — ni base, ni configuration — et ne rend
+        # que `{"status": "live"}`.
+        "GET /api/v1/live",
         "GET /api/v1/units",
         "GET /api/v1/roles",
         "GET /api/v1/region-profiles",

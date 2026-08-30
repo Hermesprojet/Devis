@@ -40,6 +40,21 @@ def health(
     )
 
 
+@router.get("/live", summary="Le processus répond-il ?")
+def live() -> dict[str, str]:
+    """Vivacité : le processus répond, et c'est tout ce que ça dit.
+
+    Distinct de `/health`, qui interroge la base et sert donc de contrôle de
+    *disponibilité*. Confondre les deux a une conséquence précise : un
+    orchestrateur qui redémarre un conteneur parce que la base est
+    momentanément injoignable ajoute un redémarrage à une panne qu'il
+    n'atteint pas, et fait tomber les instances les unes après les autres.
+
+    C'est ce point-ci que le `HEALTHCHECK` de l'image interroge.
+    """
+    return {"status": "live"}
+
+
 @router.get("/units", response_model=list[UnitOut], summary="Unités reconnues")
 def list_units() -> list[UnitOut]:
     return [

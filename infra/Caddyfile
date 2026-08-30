@@ -1,0 +1,50 @@
+# Une seule origine pour le front et l'API.
+#
+# `/api/*` va à l'API, tout le reste au front. Le navigateur ne voit qu'un
+# domaine : pas de CORS, pas de cookie tiers, pas de seconde entrée DNS.
+# HTTPS est terminé ici ; les deux applications parlent en clair sur le réseau
+# interne de la composition, qui n'est pas exposé.
+
+{$PUBLIC_HOST} {
+	encode zstd gzip
+
+	# Un identifiant de corrélation posé ici, avant tout le reste : le proxy
+	# et l'application journalisent alors la même requête sous le même
+	# identifiant. Sans lui, l'API en génère un de son côté, et rapprocher une
+	# erreur 502 vue par le proxy de la requête vue par l'application se fait à
+	# la main, sur l'horodatage.
+	#
+	# `?` : un identifiant déjà fourni par un client est conservé. L'API
+	# remplace ce qui dépasse 64 caractères.
+	request_header ?X-Request-Id {http.request.uuid}
+
+	# L'API d'abord : la règle la plus spécifique gagne.
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# En-têtes que le proxy pose pour tout le monde. `Cache-Control: no-store`
+	# vient déjà de l'API pour ses propres réponses ; ceux-ci concernent le
+	# navigateur et le transport.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+
+	# Le format JSON de Caddy ne journalise pas les en-têtes de requête par
+	# défaut. Celui-ci porte la corrélation : sans cette ligne, l'identifiant
+	# est posé mais invisible côté proxy, et ne relie donc rien.
+	log_append request>headers>X-Request-Id {http.request.header.X-Request-Id}
+}

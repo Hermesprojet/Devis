@@ -1,0 +1,124 @@
+# Préproduction : PostgreSQL durable, stockage persistant, une seule origine.
+#
+#   cp infra/staging.env.example infra/staging.env   # puis renseignez-le
+#   docker compose -f infra/docker-compose.staging.yml --env-file infra/staging.env up -d
+#
+# Ce fichier ne contient AUCUN secret : tout vient de `--env-file`, qui n'est
+# pas versionné. Les variables sans valeur par défaut sont obligatoires — la
+# composition refuse de démarrer si elles manquent, ce qui vaut mieux qu'un
+# démarrage avec un secret vide.
+#
+# Une seule origine : le proxy sert le front à la racine et l'API sous `/api`.
+# Deux origines auraient demandé du CORS, des cookies tiers, et une seconde
+# entrée DNS — trois occasions de se tromper pour aucun gain.
+
+name: metreo-staging
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  db:
+    <<: *restart
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER est obligatoire}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est obligatoire}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB est obligatoire}
+      # Les sauvegardes se font par `pg_dump` sur ce conteneur ; le port n'est
+      # pas publié, la base n'est joignable que depuis le réseau interne.
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+        reservations: { cpus: "0.5", memory: 512M }
+
+  # Les migrations sont une tâche à part, exécutée UNE fois avant l'API.
+  # Les placer dans la commande de démarrage de l'API les rejouait à chaque
+  # instance et à chaque redémarrage : deux répliques migraient en concurrence.
+  migrate:
+    image: ${API_IMAGE:?API_IMAGE est obligatoire}
+    command: ["alembic", "-c", "apps/api/alembic.ini", "upgrade", "head"]
+    environment:
+      METREO_ENVIRONMENT: ${METREO_ENVIRONMENT:-staging}
+      METREO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      METREO_JWT_SECRET: ${METREO_JWT_SECRET:?METREO_JWT_SECRET est obligatoire}
+      METREO_AUTH_MODE: ${METREO_AUTH_MODE:-oidc}
+      METREO_OIDC_ISSUER: ${METREO_OIDC_ISSUER:?METREO_OIDC_ISSUER est obligatoire}
+      METREO_OIDC_CLIENT_ID: ${METREO_OIDC_CLIENT_ID:?METREO_OIDC_CLIENT_ID est obligatoire}
+      METREO_OIDC_CLIENT_SECRET: ${METREO_OIDC_CLIENT_SECRET:?METREO_OIDC_CLIENT_SECRET est obligatoire}
+      METREO_OIDC_REDIRECT_URI: ${METREO_OIDC_REDIRECT_URI:?METREO_OIDC_REDIRECT_URI est obligatoire}
+      METREO_CORS_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN est obligatoire}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *restart
+    image: ${API_IMAGE}
+    environment:
+      METREO_ENVIRONMENT: ${METREO_ENVIRONMENT:-staging}
+      METREO_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      METREO_JWT_SECRET: ${METREO_JWT_SECRET}
+      METREO_AUTH_MODE: ${METREO_AUTH_MODE:-oidc}
+      METREO_OIDC_ISSUER: ${METREO_OIDC_ISSUER}
+      METREO_OIDC_CLIENT_ID: ${METREO_OIDC_CLIENT_ID}
+      METREO_OIDC_CLIENT_SECRET: ${METREO_OIDC_CLIENT_SECRET}
+      METREO_OIDC_REDIRECT_URI: ${METREO_OIDC_REDIRECT_URI}
+      METREO_CORS_ORIGINS: ${PUBLIC_ORIGIN}
+      METREO_STORAGE_ROOT: /var/lib/metreo
+    volumes:
+      # Les pièces téléversées survivent au remplacement de l'image : c'est un
+      # volume nommé, jamais un répertoire du conteneur.
+      - api-storage:/var/lib/metreo
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 1G }
+        reservations: { cpus: "0.25", memory: 256M }
+
+  web:
+    <<: *restart
+    image: ${WEB_IMAGE:?WEB_IMAGE est obligatoire}
+    depends_on:
+      - api
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+        reservations: { cpus: "0.1", memory: 128M }
+
+  proxy:
+    <<: *restart
+    image: caddy:2-alpine
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      # Caddy obtient et renouvelle le certificat pour ce nom. Un nom en
+      # `.invalid` désactive de fait l'émission : c'est voulu tant que le
+      # domaine réel n'est pas fourni.
+      PUBLIC_HOST: ${PUBLIC_HOST:?PUBLIC_HOST est obligatoire}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - web
+
+volumes:
+  db-data:
+  api-storage:
+  caddy-data:
+  caddy-config:
