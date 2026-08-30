@@ -35,8 +35,9 @@ from ..security.roles import Permission
 from ..services import audit, estimating, exports
 from ..services.estimating import FreezeRefused, PricingInputError
 from ..services.tenant import get_owned, owned_query
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(tags=["estimates"])
+router = APIRouter(tags=["estimates"], route_class=RouteTransactionnelle)
 
 
 def _load(session: Session, context: TenantContext, estimate_id: str) -> Estimate:

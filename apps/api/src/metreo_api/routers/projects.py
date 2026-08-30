@@ -14,8 +14,9 @@ from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import audit
 from ..services.tenant import get_owned, owned_query
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["projects"], route_class=RouteTransactionnelle)
 
 
 @router.get("", response_model=ProjectPage, summary="Lister les projets")

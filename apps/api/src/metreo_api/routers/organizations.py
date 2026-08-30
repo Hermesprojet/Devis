@@ -30,8 +30,9 @@ from ..security.auth import TenantContext, current_context, require
 from ..security.roles import Permission, Role
 from ..services import audit
 from ..services.estimating import markup_from_settings
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(prefix="/organization", tags=["organization"])
+router = APIRouter(prefix="/organization", tags=["organization"], route_class=RouteTransactionnelle)
 
 
 @router.get("", response_model=OrganizationOut, summary="Organisation courante")

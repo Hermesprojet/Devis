@@ -42,8 +42,9 @@ from ..services.composites import spec_from_row, validate_spec
 from ..services.locking import lock_owned
 from ..services.price_contract import as_http_detail, validate_price_row
 from ..services.tenant import get_owned, owned_query
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(prefix="/price-books", tags=["price-books"])
+router = APIRouter(prefix="/price-books", tags=["price-books"], route_class=RouteTransactionnelle)
 
 
 @router.get("", response_model=list[PriceBookOut], summary="Lister les bibliothèques de prix")

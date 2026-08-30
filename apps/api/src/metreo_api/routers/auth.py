@@ -18,8 +18,9 @@ from ..models import Membership, Organization, User
 from ..schemas import DevLoginRequest, MembershipOut, MeResponse, TokenResponse
 from ..security.auth import TenantContext, current_context, issue_token
 from ..security.roles import Role, permissions_for
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"], route_class=RouteTransactionnelle)
 
 
 def _role_label(role: str) -> str:

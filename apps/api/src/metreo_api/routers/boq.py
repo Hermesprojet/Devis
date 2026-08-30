@@ -26,8 +26,9 @@ from ..security.roles import Permission
 from ..services import audit
 from ..services.locking import lock_owned
 from ..services.tenant import get_owned, owned_query
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(tags=["bill-of-quantities"])
+router = APIRouter(tags=["bill-of-quantities"], route_class=RouteTransactionnelle)
 
 
 def _canonical_unit(unit_code: str) -> str:

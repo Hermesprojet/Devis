@@ -27,8 +27,9 @@ from ..services.document_storage import (
     TropVolumineux,
     nom_original_sur,
 )
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(tags=["documents"])
+router = APIRouter(tags=["documents"], route_class=RouteTransactionnelle)
 
 
 @router.get(
