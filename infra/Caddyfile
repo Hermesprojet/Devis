@@ -14,9 +14,13 @@
 	# erreur 502 vue par le proxy de la requête vue par l'application se fait à
 	# la main, sur l'horodatage.
 	#
-	# `?` : un identifiant déjà fourni par un client est conservé. L'API
-	# remplace ce qui dépasse 64 caractères.
-	request_header ?X-Request-Id {http.request.uuid}
+	# Le matcher conserve un identifiant déjà fourni par un client : le
+	# modificateur `?` de `request_header`, qui dirait la même chose en plus
+	# court, ne vaut que pour les en-têtes de RÉPONSE. Caddy refuse d'adapter
+	# la configuration si on l'emploie ici, et le contrôle en CI le montre.
+	# L'API remplace ensuite ce qui dépasse 64 caractères.
+	@sans_identifiant not header X-Request-Id *
+	request_header @sans_identifiant X-Request-Id {http.request.uuid}
 
 	# L'API d'abord : la règle la plus spécifique gagne.
 	handle /api/* {
