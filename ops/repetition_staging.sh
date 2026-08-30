@@ -681,11 +681,20 @@ print("\n".join(sorted(json.load(open(sys.argv[1]))["sha256"])))' "$CONSTAT_DOCU
 	fi
 	ok "$(wc -l <<<"$EMPREINTES_PIECES") original(aux) écrit(s) dans le volume par l'application"
 
-	# Les octets du disque sont comparés à l'empreinte calculée CÔTÉ CLIENT,
-	# et non à celle que le serveur aurait recalculée sur ses propres octets :
-	# c'est la seule comparaison qui prouve que rien n'a été transformé.
-	verifier "les originaux du volume portent les empreintes déposées" \
-		"$attendues" "$EMPREINTES_PIECES"
+	# Inclusion et non égalité : le parcours des rôles dépose lui aussi un
+	# métré, et le volume porte donc plus que le CCTP et sa révision. Ce qui
+	# doit être vrai, c'est que TOUT ce que le navigateur a envoyé s'y
+	# retrouve — comparé à l'empreinte calculée CÔTÉ CLIENT, et non à celle
+	# que le serveur aurait recalculée sur ses propres octets. C'est la seule
+	# comparaison qui prouve que rien n'a été transformé en chemin.
+	local manquantes
+	manquantes=$(comm -23 <(printf '%s\n' "$attendues") <(printf '%s\n' "$EMPREINTES_PIECES"))
+	if [[ -z "$manquantes" ]]; then
+		ok "les originaux déposés au navigateur sont sur le volume, au bit près"
+	else
+		ko "des originaux déposés manquent du volume"
+		detail "$manquantes"
+	fi
 
 	# Non-root : une image qui traite des fichiers venant de tiers ne doit pas
 	# les écrire en uid 0.
