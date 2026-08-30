@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { expect, test, type Page } from '@playwright/test'
 
@@ -32,16 +33,23 @@ const MONTANTS = {
 // Les garde-fous
 // --------------------------------------------------------------------------
 
-test('ce fichier n’emprunte aucun raccourci pour créer les données', () => {
+test('aucun scénario de cette suite n’emprunte de raccourci', () => {
   /**
-   * Le contrôle porte sur le TEXTE de ce fichier, pas sur une intention.
+   * Le contrôle porte sur le TEXTE des fichiers, pas sur une intention.
    *
    * Un parcours qui appellerait l'API directement, ou qui écrirait en base,
    * passerait au vert sans rien prouver de l'interface. Le seul moyen de
    * s'en assurer durablement est de refuser ces tournures ici, où quiconque
    * les ajouterait verrait le test tomber.
+   *
+   * TOUS les scénarios du dossier sont lus, et non ce seul fichier : la
+   * garantie doit valoir pour ceux qu'on ajoutera, sans quoi il suffirait
+   * d'écrire le raccourci dans un fichier voisin.
    */
-  const source = readFileSync(__filename, 'utf8')
+  const source = readdirSync(__dirname)
+    .filter((nom) => nom.endsWith('.spec.ts'))
+    .map((nom) => readFileSync(join(__dirname, nom), 'utf8'))
+    .join('\n')
   const interdits: ReadonlyArray<{ motif: RegExp; pourquoi: string }> = [
     { motif: /\brequest\.(post|patch|put|delete)\b/, pourquoi: 'appel direct à un point d’entrée métier' },
     { motif: /\bcontext\.request\b/, pourquoi: 'appel direct via le contexte Playwright' },
