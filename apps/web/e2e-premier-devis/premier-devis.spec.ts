@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN, CONSTAT, PILE_EXTERNE } from './banc'
+import { seConnecter } from './parcours'
 
 /**
  * Une organisation vide produit son premier devis, sans seed ni SQL.
@@ -42,12 +43,18 @@ test('aucun scénario de cette suite n’emprunte de raccourci', () => {
    * s'en assurer durablement est de refuser ces tournures ici, où quiconque
    * les ajouterait verrait le test tomber.
    *
-   * TOUS les scénarios du dossier sont lus, et non ce seul fichier : la
-   * garantie doit valoir pour ceux qu'on ajoutera, sans quoi il suffirait
-   * d'écrire le raccourci dans un fichier voisin.
+   * TOUT le dossier est lu, scénarios ET fichiers d'aide, et non ce seul
+   * fichier : la garantie doit valoir pour ce qu'on ajoutera, sans quoi il
+   * suffirait d'écrire le raccourci dans un fichier voisin — ou, depuis que
+   * les gestes communs vivent dans `parcours.ts`, dans un fichier qui n'est
+   * même pas un scénario.
+   *
+   * `banc.ts` est la seule exception, et par son nom : il EST le banc. Il lui
+   * revient de migrer la base, de l'amorcer et de démarrer les serveurs, ce
+   * que la liste ci-dessous interdit à juste titre partout ailleurs.
    */
   const source = readdirSync(__dirname)
-    .filter((nom) => nom.endsWith('.spec.ts'))
+    .filter((nom) => nom.endsWith('.ts') && nom !== 'banc.ts')
     .map((nom) => readFileSync(join(__dirname, nom), 'utf8'))
     .join('\n')
   const interdits: ReadonlyArray<{ motif: RegExp; pourquoi: string }> = [
@@ -67,15 +74,6 @@ test('aucun scénario de cette suite n’emprunte de raccourci', () => {
 // --------------------------------------------------------------------------
 // Le parcours
 // --------------------------------------------------------------------------
-
-async function seConnecter(page: Page, adresse: string): Promise<void> {
-  /** La connexion réelle : celle du déploiement, par le fournisseur d'identité. */
-  await page.goto('/')
-  await page.getByRole('button', { name: /compte de l'entreprise/ }).click()
-  await page.locator('#email').fill(adresse)
-  await page.getByRole('button', { name: 'Se connecter' }).click()
-  await page.waitForURL(/\/projets$/)
-}
 
 /** Les montants tels que l'écran les affiche, lus dans le tableau des totaux. */
 async function totaux(page: Page): Promise<Record<string, string>> {

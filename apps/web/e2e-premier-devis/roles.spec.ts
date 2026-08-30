@@ -2,9 +2,10 @@ import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
 import { ADMIN } from './banc'
+import { seConnecter, seDeconnecter } from './parcours'
 
 /**
  * Ce que les autres rôles peuvent faire de la configuration de l'entreprise.
@@ -20,19 +21,6 @@ import { ADMIN } from './banc'
 
 const METREUR = 'marc.metreur@neuve.example'
 const LECTEUR = 'lea.lectrice@neuve.example'
-
-async function seConnecter(page: Page, adresse: string): Promise<void> {
-  await page.goto('/')
-  await page.getByRole('button', { name: /compte de l'entreprise/ }).click()
-  await page.locator('#email').fill(adresse)
-  await page.getByRole('button', { name: 'Se connecter' }).click()
-  await page.waitForURL(/\/projets$/)
-}
-
-async function seDeconnecter(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Se déconnecter' }).click()
-  await page.waitForURL(/\/$/)
-}
 
 test("l'administrateur compose son équipe depuis les réglages", async ({ page }) => {
   await seConnecter(page, ADMIN)

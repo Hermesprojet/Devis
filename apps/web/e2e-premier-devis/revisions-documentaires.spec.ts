@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN, CONSTAT_DOCUMENTS } from './banc'
+import { seConnecter } from './parcours'
 
 /**
  * Joindre une pièce au chantier, la réviser, la reprendre et la ranger.
@@ -30,14 +31,6 @@ writeFileSync(CCTP_2, '%PDF-1.7\n1 0 obj<<>>endobj\n% CCTP lot 2 - revision 2 co
 
 const empreinte = (chemin: string): string =>
   createHash('sha256').update(readFileSync(chemin)).digest('hex')
-
-async function seConnecter(page: Page, adresse: string): Promise<void> {
-  await page.goto('/')
-  await page.getByRole('button', { name: /compte de l'entreprise/ }).click()
-  await page.locator('#email').fill(adresse)
-  await page.getByRole('button', { name: 'Se connecter' }).click()
-  await page.waitForURL(/\/projets$/)
-}
 
 async function ouvrirLeProjet(page: Page): Promise<void> {
   await page.getByRole('link', { name: 'PREM-001' }).click()
