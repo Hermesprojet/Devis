@@ -11,16 +11,20 @@ from sqlalchemy.orm import Session
 from metreo_domain.errors import DomainError
 from metreo_domain.estimate import EstimateResult
 
+from ..config import Settings, get_settings
 from ..db import session_scope
 from ..models import (
     BillOfQuantities,
     BoqItem,
     Estimate,
     EstimateVersion,
+    IssuedQuote,
+    Organization,
     OrganizationSettings,
     PriceBookVersion,
     PriceItem,
     Project,
+    User,
 )
 from ..schemas import (
     ComputationOut,
@@ -29,11 +33,15 @@ from ..schemas import (
     EstimateVersionCreate,
     EstimateVersionOut,
     FreezeRequest,
+    IssuedQuoteOut,
+    QuoteIssueRequest,
 )
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
-from ..services import audit, estimating, exports
+from ..services import audit, estimating, exports, issuance
+from ..services.document_storage import ContenuRefuse, StockageLocal
 from ..services.estimating import FreezeRefused, PricingInputError
+from ..services.issuance import EmissionRefusee
 from ..services.tenant import get_owned, owned_query
 from ..transactions import RouteTransactionnelle
 
@@ -512,3 +520,191 @@ def quote_preview(
         payload={"format": "html"},
     )
     return Response(content=html, media_type="text/html; charset=utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Le devis remis au client
+# ---------------------------------------------------------------------------
+
+
+def _stockage(settings: Settings) -> StockageLocal:
+    return StockageLocal(settings.storage_root)
+
+
+def _refus_emission(exc: EmissionRefusee) -> HTTPException:
+    codes = {
+        "version_not_frozen": status.HTTP_409_CONFLICT,
+        "already_issued": status.HTTP_409_CONFLICT,
+        "client_required": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "client_incomplete": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "validity_in_the_past": status.HTTP_422_UNPROCESSABLE_ENTITY,
+    }
+    return HTTPException(
+        status_code=codes.get(exc.code, status.HTTP_422_UNPROCESSABLE_ENTITY),
+        detail=exc.to_dict(),
+    )
+
+
+@router.post(
+    "/estimates/{estimate_id}/versions/{version_id}/issue",
+    response_model=IssuedQuoteOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Émettre le devis d'une version gelée",
+)
+def issue_quote(
+    estimate_id: str,
+    version_id: str,
+    payload: QuoteIssueRequest,
+    context: TenantContext = Depends(require(Permission.ESTIMATE_WRITE)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> IssuedQuoteOut:
+    """Numérote, fige, imprime et range — ou ne fait rien du tout.
+
+    Les coûts internes ne s'invitent pas : le réglage de l'organisation donne le
+    défaut, l'émetteur peut le contredire, et l'inclure exige `export:internal`.
+    La décision est écrite dans l'instantané, et c'est elle qui vaut ensuite —
+    pas le réglage tel qu'il sera demain.
+    """
+    estimate = _load(session, context, estimate_id)
+    version = _version(session, context, estimate, version_id)
+    project = get_owned(
+        session, Project, context.organization_id, estimate.project_id, label="Projet"
+    )
+    organization = get_owned(
+        session,
+        Organization,
+        context.organization_id,
+        context.organization_id,
+        label="Organisation",
+    )
+    reglages = session.get(OrganizationSettings, context.organization_id)
+
+    defaut = bool(getattr(reglages, "show_internal_costs_in_client_pdf", False))
+    include_internal = (
+        defaut if payload.include_internal_costs is None else payload.include_internal_costs
+    )
+    if include_internal:
+        context.require(Permission.EXPORT_INTERNAL)
+
+    result, _ = _computed(session, estimate=estimate, version=version)
+    rounding = estimating.rounding_from_dict(version.rounding)
+    lignes = exports.line_rows(result, rounding, _positions(session, estimate))
+    totaux = issuance.totaux_du_document(result.to_dict(rounding), estimate.currency)
+
+    try:
+        devis = issuance.emettre(
+            session,
+            context=context,
+            estimate=estimate,
+            version=version,
+            project=project,
+            organization=organization,
+            reglages=reglages,
+            lignes=lignes,
+            totaux=totaux,
+            stockage=_stockage(settings),
+            valid_until=payload.valid_until,
+            terms=payload.terms,
+            include_internal_costs=include_internal,
+        )
+    except EmissionRefusee as exc:
+        raise _refus_emission(exc) from exc
+    return _devis_rendu(session, devis, version.version_number)
+
+
+def _devis_rendu(session: Session, devis: IssuedQuote, version_number: int) -> IssuedQuoteOut:
+    emetteur = session.get(User, devis.issued_by) if devis.issued_by else None
+    return IssuedQuoteOut(
+        id=devis.id,
+        number=devis.number,
+        project_id=devis.project_id,
+        estimate_id=devis.estimate_id,
+        estimate_version_id=devis.estimate_version_id,
+        client_id=devis.client_id,
+        client_name=str(devis.client_snapshot.get("name", "")),
+        issued_at=devis.issued_at,
+        valid_until=devis.valid_until,
+        terms=devis.terms,
+        include_internal_costs=devis.include_internal_costs,
+        pdf_sha256=devis.pdf_sha256,
+        pdf_byte_size=devis.pdf_byte_size,
+        version_number=version_number,
+        issued_by_email=emetteur.email if emetteur else None,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/issued-quotes",
+    response_model=list[IssuedQuoteOut],
+    summary="Devis émis pour un chantier",
+)
+def list_issued_quotes(
+    project_id: str,
+    context: TenantContext = Depends(require(Permission.ESTIMATE_READ)),
+    session: Session = Depends(session_scope),
+) -> list[IssuedQuoteOut]:
+    get_owned(session, Project, context.organization_id, project_id, label="Projet")
+    devis = session.scalars(
+        owned_query(IssuedQuote, context.organization_id)
+        .where(IssuedQuote.project_id == project_id)
+        .order_by(IssuedQuote.issued_at.desc())
+    ).all()
+    numeros = {
+        version.id: version.version_number
+        for version in session.scalars(
+            select(EstimateVersion).where(
+                EstimateVersion.organization_id == context.organization_id,
+                EstimateVersion.id.in_([d.estimate_version_id for d in devis] or [""]),
+            )
+        ).all()
+    }
+    return [_devis_rendu(session, d, numeros.get(d.estimate_version_id, 0)) for d in devis]
+
+
+@router.get(
+    "/issued-quotes/{quote_id}/document.pdf",
+    summary="Télécharger le PDF d'un devis émis",
+    response_class=Response,
+)
+def download_issued_quote(
+    quote_id: str,
+    context: TenantContext = Depends(require(Permission.EXPORT_CLIENT)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Rend les octets écrits à l'émission, jamais un document reconstruit.
+
+    C'est ce qui rend deux téléchargements identiques, et c'est aussi ce qui
+    rend le contenu indépendant de qui télécharge : les coûts internes y sont —
+    ou n'y sont pas — selon la décision prise à l'émission, pas selon les
+    permissions du lecteur.
+    """
+    devis = get_owned(session, IssuedQuote, context.organization_id, quote_id, label="Devis émis")
+    stockage = _stockage(settings)
+    try:
+        octets = stockage.chemin(devis.pdf_storage_key).read_bytes()
+    except (OSError, ContenuRefuse) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={
+                "code": "document_missing",
+                "message": "Le fichier de ce devis est introuvable sur le volume.",
+            },
+        ) from exc
+
+    issuance.enregistrer_le_telechargement(session, context=context, devis=devis)
+    return Response(
+        content=octets,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": exports.content_disposition(f"devis-{devis.number}", "pdf"),
+            "Content-Length": str(len(octets)),
+            # Un devis est un document commercial confidentiel : il ne doit
+            # être ni deviné par le navigateur, ni conservé par un cache
+            # partagé, ni rendu dans l'origine de l'application.
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store, private",
+            "X-Quote-Sha256": devis.pdf_sha256,
+        },
+    )

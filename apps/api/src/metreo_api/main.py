@@ -24,6 +24,7 @@ from .routers import (
     audit_log,
     auth,
     boq,
+    clients,
     documents,
     estimates,
     meta,
@@ -180,6 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix=prefix)
     app.include_router(oidc_login.router, prefix=prefix)
     app.include_router(organizations.router, prefix=prefix)
+    app.include_router(clients.router, prefix=prefix)
     app.include_router(projects.router, prefix=prefix)
     app.include_router(documents.router, prefix=prefix)
     app.include_router(pricebooks.router, prefix=prefix)

@@ -17,6 +17,8 @@ projet, ni nom de client n'atteint un journal de migration.
 from __future__ import annotations
 
 import importlib.util
+import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
@@ -44,25 +46,67 @@ def _revision() -> ModuleType:
 revision = _revision()
 
 
+def _inserer(session: Any, modele: Any, **valeurs: Any) -> str:
+    """Insère une ligne en ne nommant que les colonnes que la base porte ICI.
+
+    Ce module fabrique volontairement une base ANTÉRIEURE à la migration qu'il
+    éprouve, puis y écrit. Une écriture par l'ORM nommerait toutes les colonnes
+    du modèle d'aujourd'hui : `projects.client_id`, ajoutée depuis, n'existe pas
+    à cette révision, et l'insertion échouait sur une table qui ne la connaît
+    pas encore. On n'écrit donc que ce que la table connaît vraiment — et ce
+    module cesse de dépendre de l'avenir du schéma.
+    """
+    from sqlalchemy import inspect as inspecter
+
+    existantes = {
+        colonne["name"] for colonne in inspecter(session.bind).get_columns(modele.__tablename__)
+    }
+    instant = datetime.now(UTC).replace(tzinfo=None)
+    ligne: dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "created_at": instant,
+        "updated_at": instant,
+    }
+    for colonne in modele.__table__.columns:
+        defaut = colonne.default
+        if colonne.name in ligne or colonne.name in valeurs or defaut is None:
+            continue
+        if defaut.is_scalar:
+            ligne[colonne.name] = defaut.arg
+        elif defaut.is_callable:
+            ligne[colonne.name] = defaut.arg(None)
+    ligne.update(valeurs)
+    session.execute(
+        modele.__table__.insert().values(
+            **{cle: valeur for cle, valeur in ligne.items() if cle in existantes}
+        )
+    )
+    return str(ligne["id"])
+
+
 def _two_graphs(session: Any, models: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     graphs = []
     for name in ("Alpha", "Beta"):
-        org = models.Organization(name=f"Preflight {name}")
-        session.add(org)
-        session.flush()
-        project = models.Project(
-            organization_id=org.id, reference=f"PF-{name}", name=f"Projet {name}"
+        org = _inserer(session, models.Organization, name=f"Preflight {name}")
+        project = _inserer(
+            session,
+            models.Project,
+            organization_id=org,
+            reference=f"PF-{name}",
+            name=f"Projet {name}",
         )
-        book = models.PriceBook(organization_id=org.id, name=f"Lib {name}")
-        session.add_all([project, book])
-        session.flush()
-        boq = models.BillOfQuantities(
-            organization_id=org.id, project_id=project.id, name=f"Métré {name}"
+        book = _inserer(session, models.PriceBook, organization_id=org, name=f"Lib {name}")
+        boq = _inserer(
+            session,
+            models.BillOfQuantities,
+            organization_id=org,
+            project_id=project,
+            name=f"Métré {name}",
         )
-        version = models.PriceBookVersion(organization_id=org.id, price_book_id=book.id)
-        session.add_all([boq, version])
-        session.flush()
-        graphs.append({"org": org.id, "project": project.id, "boq": boq.id, "version": version.id})
+        version = _inserer(
+            session, models.PriceBookVersion, organization_id=org, price_book_id=book
+        )
+        graphs.append({"org": org, "project": project, "boq": boq, "version": version})
     session.commit()
     return graphs[0], graphs[1]
 

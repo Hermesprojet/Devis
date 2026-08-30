@@ -270,6 +270,49 @@ class StockageLocal:
             )
         return candidat
 
+    def ecrire_octets(
+        self,
+        *,
+        organization_id: str,
+        dossier: str,
+        identifiant: str,
+        extension: str,
+        contenu: bytes,
+    ) -> OriginalStocke:
+        """Pose un artefact que l'APPLICATION a produit, et qu'elle connaît.
+
+        À distinguer de `ecrire`, qui reçoit un flux dont tout est allégué :
+        ici les octets viennent d'ici, leur type ne fait aucun doute, et il n'y
+        a ni plafond à opposer ni signature à vérifier. Ce qui reste identique
+        — et qui est l'essentiel — est la façon de les poser : un temporaire du
+        même dossier, `fsync`, puis un `os.replace` atomique. Aucun lecteur ne
+        peut voir un devis à moitié écrit.
+
+        Le chemin ne doit rien à personne : `dossier` est une constante du
+        code, et `identifiant` vient de `new_id`.
+        """
+        cible = self._racine / dossier / organization_id
+        cible.mkdir(parents=True, exist_ok=True)
+        descripteur, temporaire_nom = tempfile.mkstemp(dir=cible, prefix=".depot-", suffix=".part")
+        temporaire = Path(temporaire_nom)
+        try:
+            with os.fdopen(descripteur, "wb") as sortie:
+                sortie.write(contenu)
+                sortie.flush()
+                os.fsync(sortie.fileno())
+            definitif = cible / f"{identifiant}{extension}"
+            os.replace(temporaire, definitif)
+        except BaseException:
+            temporaire.unlink(missing_ok=True)
+            raise
+        return OriginalStocke(
+            storage_key=str(definitif.relative_to(self._racine)),
+            sha256=hashlib.sha256(contenu).hexdigest(),
+            byte_size=len(contenu),
+            media_type="application/pdf" if extension == ".pdf" else "application/octet-stream",
+            declared_media_type=None,
+        )
+
     def ecrire(
         self,
         *,

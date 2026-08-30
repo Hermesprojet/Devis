@@ -191,6 +191,11 @@ class TestTheDebtIsNamedAndBounded:
         "ImportBatch",
         "PriceBookVersion",
         "PriceItem",
+        # Le parcours commercial : un chantier désigne une fiche client, un
+        # devis émis désigne les trois — chantier, version, client — et aucun
+        # des trois ne peut venir d'une autre organisation.
+        "Project",
+        "IssuedQuote",
     }
 
     #: Phase 2A, hors périmètre de ce travail.

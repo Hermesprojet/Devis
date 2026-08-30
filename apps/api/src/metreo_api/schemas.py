@@ -346,6 +346,9 @@ class ProjectCreate(BaseModel):
 
     reference: NonBlank = Field(max_length=project_length("reference"))
     name: NonBlank = Field(max_length=project_length("name"))
+    #: La fiche du répertoire. Facultative : on crée souvent le chantier avant
+    #: d'avoir choisi à qui le devis sera adressé.
+    client_id: str | None = None
     client_reference: str | None = Field(
         default=None, max_length=project_length("client_reference")
     )
@@ -374,6 +377,7 @@ class ProjectUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: NonBlank | None = Field(default=None, max_length=project_length("name"))
+    client_id: str | None = None
     client_reference: str | None = Field(
         default=None, max_length=project_length("client_reference")
     )
@@ -389,9 +393,116 @@ class ProjectUpdate(BaseModel):
     status: Literal["draft", "studying", "submitted", "won", "lost", "archived"] | None = None
 
 
+def client_length(column: str) -> int:
+    """Longueur d'une colonne de `Client`, lue sur le modèle."""
+    from .models import Client
+
+    length = getattr(Client.__table__.columns[column].type, "length", None)
+    if length is None:  # pragma: no cover - colonne Text
+        raise KeyError(f"La colonne {column} ne porte pas de longueur.")
+    return int(length)
+
+
+class ClientCreate(BaseModel):
+    """Une fiche client. Seul le nom est exigé à la création.
+
+    Adresse, contact et numéro d'entreprise peuvent venir plus tard : on saisit
+    souvent un client au téléphone avant d'avoir sa lettre. Ce qui est exigé
+    plus tard, et là seulement, c'est ce qu'il faut pour ADRESSER un devis —
+    voir `issuance.client_suffisant`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: NonBlank = Field(max_length=client_length("name"))
+    company_number: str | None = Field(default=None, max_length=client_length("company_number"))
+    billing_address: str | None = Field(default=None, max_length=client_length("billing_address"))
+    postal_code: str | None = Field(default=None, max_length=client_length("postal_code"))
+    city: str | None = Field(default=None, max_length=client_length("city"))
+    country_code: str = Field(default="BE", min_length=2, max_length=2)
+    contact_name: str | None = Field(default=None, max_length=client_length("contact_name"))
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=client_length("phone"))
+    notes: str | None = None
+
+
+class ClientUpdate(BaseModel):
+    """Mise à jour d'une fiche — mêmes limites que la création.
+
+    `status` est ici : archiver une fiche est une modification comme une autre,
+    et le passage `active`/`archived` n'a pas besoin d'une route à lui.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: NonBlank | None = Field(default=None, max_length=client_length("name"))
+    company_number: str | None = Field(default=None, max_length=client_length("company_number"))
+    billing_address: str | None = Field(default=None, max_length=client_length("billing_address"))
+    postal_code: str | None = Field(default=None, max_length=client_length("postal_code"))
+    city: str | None = Field(default=None, max_length=client_length("city"))
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    contact_name: str | None = Field(default=None, max_length=client_length("contact_name"))
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=client_length("phone"))
+    notes: str | None = None
+    status: Literal["active", "archived"] | None = None
+
+
+class ClientOut(ApiModel):
+    id: str
+    name: str
+    company_number: str | None
+    billing_address: str | None
+    postal_code: str | None
+    city: str | None
+    country_code: str
+    contact_name: str | None
+    email: str | None
+    phone: str | None
+    notes: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuoteIssueRequest(BaseModel):
+    """Ce que l'émetteur décide, et rien de plus.
+
+    Le reste — numéro, date, instantanés — est établi par le serveur : ce sont
+    précisément les valeurs qu'un client ne doit pas pouvoir choisir.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    valid_until: date | None = None
+    terms: str | None = Field(default=None, max_length=4000)
+    #: Décision explicite, prise au moment d'émettre et figée dans l'instantané.
+    #: Le réglage de l'organisation en donne le défaut, jamais le dernier mot.
+    include_internal_costs: bool | None = None
+
+
+class IssuedQuoteOut(ApiModel):
+    id: str
+    number: str
+    project_id: str
+    estimate_id: str
+    estimate_version_id: str
+    client_id: str
+    client_name: str
+    issued_at: datetime
+    valid_until: date
+    terms: str | None
+    include_internal_costs: bool
+    pdf_sha256: str
+    pdf_byte_size: int
+    version_number: int
+    issued_by_email: str | None = None
+
+
 class ProjectOut(ApiModel):
     id: str
     reference: str
+    client_id: str | None
     client_reference: str | None
     name: str
     description: str | None
