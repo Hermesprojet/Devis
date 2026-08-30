@@ -1,0 +1,79 @@
+# Publier les deux images, identifiées par le SHA du commit.
+#
+# **Déclenchement manuel uniquement.** Ce n'est pas un oubli : publier une
+# image consomme du stockage de paquets sur le compte, et personne ne doit
+# créer cela à la place du propriétaire. Il déclenche quand il veut déployer.
+#
+# Les images sont étiquetées par le SHA complet du commit, et par rien d'autre.
+# Pas de `latest` : un `latest` rend le retour arrière impossible à nommer, et
+# deux instances peuvent tourner sur deux contenus différents sans que rien ne
+# le dise. Voir « Retour arrière » dans docs/EXPLOITATION.md.
+#
+# `docker` en ligne de commande plutôt que des actions tierces : c'est déjà
+# ainsi que le travail « Images Docker » construit ces deux mêmes images, et
+# cela évite d'épingler des actions que rien ici ne vérifie.
+
+name: Publier les images
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Commit à publier (SHA complet, branche ou étiquette). Par défaut, main."
+        required: false
+        default: main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publier:
+    name: Construire et publier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.revision }}
+
+      - name: Le SHA publié et le nom du dépôt
+        id: cible
+        # Le SHA résolu, et non l'entrée : « main » ne désigne pas le même
+        # commit d'un jour à l'autre, et une étiquette qui ne désigne pas un
+        # contenu fixe ne sert à rien pour un retour arrière.
+        #
+        # Le nom en minuscules : ghcr.io refuse une majuscule dans un nom
+        # d'image, et le propriétaire de ce dépôt en porte une. Sans cela, la
+        # publication échoue sur un message qui n'en dit pas la raison.
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "depot=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Se connecter au registre
+        # Le jeton n'apparaît ni dans une ligne de commande ni dans le journal :
+        # il entre par l'entrée standard.
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Construire et publier les deux images
+        env:
+          API_IMAGE: ghcr.io/${{ steps.cible.outputs.depot }}-api:${{ steps.cible.outputs.sha }}
+          WEB_IMAGE: ghcr.io/${{ steps.cible.outputs.depot }}-web:${{ steps.cible.outputs.sha }}
+        run: |
+          docker build -f infra/api.Dockerfile -t "$API_IMAGE" .
+          docker build -f infra/web.Dockerfile -t "$WEB_IMAGE" .
+          docker push "$API_IMAGE"
+          docker push "$WEB_IMAGE"
+          {
+            echo "### À reporter dans \`infra/staging.env\`"
+            echo
+            echo '```'
+            echo "API_IMAGE=$API_IMAGE"
+            echo "WEB_IMAGE=$WEB_IMAGE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Se déconnecter du registre
+        if: always()
+        run: docker logout ghcr.io
