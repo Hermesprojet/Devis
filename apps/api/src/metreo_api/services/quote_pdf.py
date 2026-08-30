@@ -39,6 +39,7 @@ COLONNES_INTERNES = (
 
 INTERLIGNE = 13.0
 TAILLE_LIGNE = 8.5
+TAILLE_CONDITIONS = 8.5
 
 
 def _date_fr(valeur: date | datetime | str) -> str:
@@ -161,11 +162,23 @@ def _entete_complet(
     gauche = moteur.MARGE
     droite = moteur.A4[0] - moteur.MARGE
     y = moteur.A4[1] - moteur.MARGE
+    #: L'identité de l'entreprise partage sa bande avec le cartouche du devis,
+    #: posé à `droite - 210`. Elle ne dispose donc pas de la pleine largeur —
+    #: et une raison sociale d'intercommunale la dépasse largement.
+    largeur_identite = droite - 210 - gauche - 12
+    #: Les blocs DESTINATAIRE et CHANTIER, eux, passent SOUS le cartouche.
+    largeur_pleine = droite - gauche
 
-    page.texte(
-        gauche, y - 14, str(organisation.get("name") or ""), police=moteur.HELVETICA_GRAS, taille=16
+    y = page.paragraphe(
+        gauche,
+        y - 14,
+        str(organisation.get("name") or ""),
+        largeur=largeur_identite,
+        police=moteur.HELVETICA_GRAS,
+        taille=16,
+        interligne=18,
     )
-    y -= 30
+    y -= 12
     for ligne in (
         organisation.get("legal_name") or "",
         (
@@ -175,8 +188,7 @@ def _entete_complet(
         ),
     ):
         if ligne:
-            page.texte(gauche, y, str(ligne), taille=9)
-            y -= 11
+            y = page.paragraphe(gauche, y, str(ligne), largeur=largeur_identite, interligne=11)
 
     haut_cartouche = moteur.A4[1] - moteur.MARGE - 6
     page.texte(droite - 210, haut_cartouche - 8, "DEVIS", police=moteur.HELVETICA_GRAS, taille=20)
@@ -191,58 +203,83 @@ def _entete_complet(
     y = min(y, haut_cartouche - 70) - 14
     page.texte(gauche, y, "DESTINATAIRE", police=moteur.HELVETICA_GRAS, taille=8)
     y -= 13
-    page.texte(gauche, y, str(client.get("name") or ""), police=moteur.HELVETICA_GRAS, taille=11)
-    y -= 13
+    y = page.paragraphe(
+        gauche,
+        y,
+        str(client.get("name") or ""),
+        largeur=largeur_pleine,
+        police=moteur.HELVETICA_GRAS,
+        taille=11,
+        interligne=13,
+    )
     if client.get("company_number"):
-        page.texte(gauche, y, f"N° d'entreprise : {client['company_number']}", taille=9)
-        y -= 11
+        y = page.paragraphe(
+            gauche,
+            y,
+            f"N° d'entreprise : {client['company_number']}",
+            largeur=largeur_pleine,
+            interligne=11,
+        )
     if client.get("contact_name"):
-        page.texte(gauche, y, f"À l'attention de {client['contact_name']}", taille=9)
-        y -= 11
+        y = page.paragraphe(
+            gauche,
+            y,
+            f"À l'attention de {client['contact_name']}",
+            largeur=largeur_pleine,
+            interligne=11,
+        )
     for ligne in _adresse(client, "billing_address"):
-        page.texte(gauche, y, ligne, taille=9)
-        y -= 11
+        y = page.paragraphe(gauche, y, ligne, largeur=largeur_pleine, interligne=11)
     contacts = " — ".join(
         part
         for part in ((client.get("email") or "").strip(), (client.get("phone") or "").strip())
         if part
     )
     if contacts:
-        page.texte(gauche, y, contacts, taille=9)
-        y -= 11
+        y = page.paragraphe(gauche, y, contacts, largeur=largeur_pleine, interligne=11)
 
     y -= 8
     page.texte(gauche, y, "CHANTIER", police=moteur.HELVETICA_GRAS, taille=8)
     y -= 13
-    page.texte(
+    y = page.paragraphe(
         gauche,
         y,
         f"{projet.get('reference', '')} — {projet.get('name', '')}",
+        largeur=largeur_pleine,
         police=moteur.HELVETICA_GRAS,
         taille=10,
+        interligne=12,
     )
-    y -= 12
     for ligne in _adresse(projet, "address"):
-        page.texte(gauche, y, ligne, taille=9)
-        y -= 11
+        y = page.paragraphe(gauche, y, ligne, largeur=largeur_pleine, interligne=11)
     if projet.get("client_reference"):
-        page.texte(gauche, y, f"Référence client : {projet['client_reference']}", taille=9)
-        y -= 11
-    page.texte(
+        y = page.paragraphe(
+            gauche,
+            y,
+            f"Référence client : {projet['client_reference']}",
+            largeur=largeur_pleine,
+            interligne=11,
+        )
+    y = page.paragraphe(
         gauche,
         y,
         f"Étude : {projet.get('estimate_name', '')} — version {projet.get('version_number', '')}",
-        taille=9,
+        largeur=largeur_pleine,
+        interligne=11,
     )
-    return y - 18
+    return y - 7
 
 
 def _entete_court(page: moteur.Page, numero: str, organisation: dict[str, Any]) -> float:
     y = moteur.A4[1] - moteur.MARGE
+    #: Le nom partage sa ligne avec « Devis N° … », posé à droite : on tronque
+    #: ici plutôt que de replier, car la ligne doit rester unique.
     page.texte(
         moteur.MARGE,
         y - 10,
-        str(organisation.get("name") or ""),
+        moteur.tronquer(
+            str(organisation.get("name") or ""), moteur.A4[0] - 2 * moteur.MARGE - 140, 11
+        ),
         police=moteur.HELVETICA_GRAS,
         taille=11,
     )
@@ -352,9 +389,10 @@ def _lignes_de_conditions(terms: str | None) -> list[str]:
     """Les conditions, déjà repliées : on doit les MESURER avant de les poser."""
     if not terms:
         return []
+    largeur = moteur.A4[0] - 2 * moteur.MARGE
     lignes: list[str] = []
     for paragraphe in terms.splitlines():
-        lignes += _replier(paragraphe, 105)
+        lignes += moteur.replier(paragraphe, largeur, TAILLE_CONDITIONS) or [""]
     return lignes
 
 
@@ -380,13 +418,19 @@ def _conditions_et_signatures(
         page.texte(gauche, y, "CONDITIONS", police=moteur.HELVETICA_GRAS, taille=8)
         y -= 12
         for morceau in conditions:
-            page.texte(gauche, y, morceau, taille=8.5)
+            page.texte(gauche, y, morceau, taille=TAILLE_CONDITIONS)
             y -= 10
 
     bas = max(y - 24, moteur.MARGE + 66)
     milieu = (gauche + droite) / 2
+    #: Deux cadres côte à côte : chaque nom tient dans SA moitié. Posé
+    #: entier, un nom long recouvrait le cadre voisin — les deux signatures
+    #: se chevauchaient sur le papier.
+    colonne = milieu - 24 - gauche
     page.texte(gauche, bas, "Bon pour accord — le client", police=moteur.HELVETICA_GRAS, taille=8)
-    page.texte(gauche, bas - 11, f"{client.get('name', '')}", taille=8)
+    page.texte(
+        gauche, bas - 11, moteur.tronquer(str(client.get("name") or ""), colonne, 8), taille=8
+    )
     page.texte(gauche, bas - 22, "Date et signature :", taille=8)
     page.ligne(gauche, bas - 44, milieu - 24, bas - 44)
 
@@ -394,41 +438,15 @@ def _conditions_et_signatures(
     page.texte(
         milieu + 12,
         bas - 11,
-        str(organisation.get("legal_name") or organisation.get("name") or ""),
+        moteur.tronquer(
+            str(organisation.get("legal_name") or organisation.get("name") or ""),
+            droite - milieu - 12,
+            8,
+        ),
         taille=8,
     )
     page.texte(milieu + 12, bas - 22, "Date et signature :", taille=8)
     page.ligne(milieu + 12, bas - 44, droite, bas - 44)
-
-
-def _replier(texte: str, largeur: int) -> list[str]:
-    """Replie un paragraphe sur plusieurs lignes, sans couper les mots.
-
-    Sauf un mot qui, à lui seul, dépasse la largeur : une référence de marché,
-    une URL, un identifiant collé. Le laisser entier le faisait déborder DANS
-    LA MARGE — le texte ne se perdait pas, il sortait du papier. On le coupe
-    alors franchement, ce qui est le moindre mal : un mot césuré se lit, un mot
-    qui sort de la page ne s'imprime pas.
-    """
-    if not texte.strip():
-        return [""]
-    lignes: list[str] = []
-    courante = ""
-    for mot in texte.split():
-        while len(mot) > largeur:
-            if courante:
-                lignes.append(courante)
-                courante = ""
-            lignes.append(mot[:largeur])
-            mot = mot[largeur:]
-        if courante and len(courante) + 1 + len(mot) > largeur:
-            lignes.append(courante)
-            courante = mot
-        else:
-            courante = f"{courante} {mot}".strip()
-    if courante:
-        lignes.append(courante)
-    return lignes
 
 
 def _pied(page: moteur.Page, numero: str, page_courante: int, total: int) -> None:

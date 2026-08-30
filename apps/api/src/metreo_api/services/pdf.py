@@ -74,11 +74,56 @@ def _nombre(valeur: float) -> str:
 
 
 def tronquer(texte: str, largeur: float, taille: float) -> str:
-    """Coupe un libellé qui déborderait de sa colonne, en le disant."""
+    """Coupe un libellé qui déborderait de sa colonne, en le disant.
+
+    Les points de suspension sont pris DANS le budget, pas ajoutés après :
+    `texte[:maximum - 1] + "..."` rendait `maximum + 2` caractères, et le
+    libellé dépassait encore de deux caractères la colonne qu'on venait de
+    lui mesurer. Mesuré sur le cadre de signature, où les deux caractères de
+    trop mordaient sur le cadre voisin.
+    """
     maximum = max(1, int(largeur / (taille * CHASSE_HELVETICA_APPROX)))
     if len(texte) <= maximum:
         return texte
-    return texte[: maximum - 1] + "..."
+    if maximum <= 3:
+        return texte[:maximum]
+    return texte[: maximum - 3] + "..."
+
+
+def replier(texte: str, largeur: float, taille: float) -> list[str]:
+    """Replie un texte sur la largeur disponible, sans couper les mots.
+
+    Sauf un mot qui, à lui seul, dépasse la ligne : une raison sociale
+    d'intercommunale, une référence de marché, une URL. Le laisser entier le
+    ferait sortir de la page — le texte serait dans le fichier, mais pas sur la
+    feuille. On le césure alors franchement : un mot coupé se lit, un mot hors
+    du papier ne s'imprime pas.
+
+    La largeur est estimée à la chasse MOYENNE d'Helvetica. C'est une
+    approximation, et elle suffit ici : il s'agit de décider où passer à la
+    ligne, pas de placer une colonne au point près.
+    """
+    maximum = max(1, int(largeur / (taille * CHASSE_HELVETICA_APPROX)))
+    if not texte.strip():
+        return []
+    lignes: list[str] = []
+    courante = ""
+    for mot_entier in texte.split():
+        mot = mot_entier
+        while len(mot) > maximum:
+            if courante:
+                lignes.append(courante)
+                courante = ""
+            lignes.append(mot[:maximum])
+            mot = mot[maximum:]
+        if courante and len(courante) + 1 + len(mot) > maximum:
+            lignes.append(courante)
+            courante = mot
+        else:
+            courante = f"{courante} {mot}".strip()
+    if courante:
+        lignes.append(courante)
+    return lignes
 
 
 @dataclass
@@ -99,6 +144,29 @@ class Page:
             + _texte_pdf(contenu)
             + b" Tj ET"
         )
+
+    def paragraphe(
+        self,
+        x: float,
+        y: float,
+        contenu: str,
+        *,
+        largeur: float,
+        police: str = HELVETICA,
+        taille: float = 9.0,
+        interligne: float | None = None,
+    ) -> float:
+        """Écrit un texte replié sur `largeur`, et rend l'ordonnée suivante.
+
+        Toute ligne d'en-tête passe par ici plutôt que par `texte` : une raison
+        sociale d'intercommunale fait cent vingt caractères, et posée d'un
+        bloc elle sortait de la marge droite.
+        """
+        pas = interligne if interligne is not None else taille + 2
+        for ligne in replier(contenu, largeur, taille):
+            self.texte(x, y, ligne, police=police, taille=taille)
+            y -= pas
+        return y
 
     def texte_a_droite(
         self, droite: float, y: float, contenu: str, *, police: str = COURIER, taille: float = 9.0

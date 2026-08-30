@@ -445,13 +445,71 @@ def test_une_reference_interminable_est_cesuree_plutot_que_de_sortir_de_la_page(
         ).content
     )
     assert "0" * 90 in texte, "la référence n'a pas été imprimée du tout"
-    assert max(len(ligne) for ligne in texte.splitlines()) <= 110, (
-        "une ligne dépasse la largeur du texte : elle sort de la page"
+    #: La largeur imprimable, en caractères, à la taille des conditions. Elle
+    #: est lue sur le moteur plutôt que recopiée : une marge modifiée ne doit
+    #: pas rendre ce contrôle silencieusement faux.
+    largeur_max = int(
+        (moteur_pdf.A4[0] - 2 * moteur_pdf.MARGE) / (8.5 * moteur_pdf.CHASSE_HELVETICA_APPROX)
     )
+    #: Le contrôle porte sur les lignes de la RÉFÉRENCE : `extraire_le_texte`
+    #: rend aussi les chaînes de métadonnées, qui ne sont pas dessinées.
+    trop_larges = [
+        ligne for ligne in texte.splitlines() if "0" * 20 in ligne and len(ligne) > largeur_max
+    ]
+    assert trop_larges == [], "une ligne dépasse la largeur du texte : elle sort de la page"
     #: Et ce qui SUIT la référence est toujours là : la césure replie, elle
     #: ne tronque pas. Le texte se poursuit à la ligne, d'où le contrôle sur
     #: le dernier mot plutôt que sur la phrase entière.
     assert "unique." in texte
+
+
+def test_une_raison_sociale_interminable_est_repliee_et_non_debordee(
+    seeded_client: TestClient, admin, estimate, version, pret
+) -> None:
+    """Le bloc destinataire ne tronque pas un nom : il le replie.
+
+    Reproduit : « Société Intercommunale de Développement Économique et
+    d'Aménagement du Territoire… » — cent vingt caractères, ce qui est courant
+    pour un pouvoir adjudicateur belge — était posé d'un bloc et sortait de la
+    marge droite. Tronquer serait pire : le destinataire d'un devis doit y
+    figurer ENTIER.
+    """
+    nom = (
+        "Société Intercommunale de Développement Économique et d'Aménagement "
+        "du Territoire de la Province du Brabant Wallon SCRL"
+    )
+    modifie = seeded_client.patch(
+        f"/api/v1/clients/{pret['id']}", headers=admin, json={"name": nom}
+    )
+    assert modifie.status_code == 200, modifie.text
+
+    devis = _emettre(seeded_client, admin, estimate, version).json()
+    texte = moteur_pdf.extraire_le_texte(
+        seeded_client.get(
+            f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=admin
+        ).content
+    )
+
+    #: Le nom entier est là — recollé, puisqu'il occupe désormais plusieurs
+    #: lignes. C'est bien un REPLI, pas une troncature.
+    aplati = " ".join(texte.split())
+    assert " ".join(nom.split()) in aplati, "la raison sociale a été tronquée"
+
+    lignes = texte.splitlines()
+    debut = nom[:24]
+    replie = [ligne for ligne in lignes if ligne.startswith(debut) and len(ligne) < len(nom)]
+    assert replie, "le nom a été posé d'un seul bloc, donc hors de la marge"
+
+    #: Et le cadre de signature du client, lui, tient dans SA moitié de page :
+    #: posé entier, il recouvrait le cadre de l'entreprise, à droite.
+    demi = int(
+        ((moteur_pdf.A4[0] - 2 * moteur_pdf.MARGE) / 2 - 24)
+        / (8 * moteur_pdf.CHASSE_HELVETICA_APPROX)
+    )
+    accord = lignes.index("Bon pour accord — le client")
+    assert len(lignes[accord + 1]) <= demi, (
+        "le nom sous « Bon pour accord » déborde sur le cadre de l'entreprise"
+    )
 
 
 def test_un_pdf_disparu_du_volume_donne_410_et_non_un_document_reconstruit(
