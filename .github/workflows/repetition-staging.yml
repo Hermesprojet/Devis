@@ -146,12 +146,20 @@ jobs:
         if: always()
         # Le script démonte déjà par `trap`. Ce filet attrape le cas où le
         # script lui-même n'aurait pas pu s'exécuter.
+        #
+        # Le nom de projet porte maintenant une marque propre à l'exécution :
+        # ce filet balaie donc TOUT ce qui commence par `metreo-repetition`, et
+        # non deux noms figés qui ne correspondraient plus à rien.
         run: |
-          for projet in metreo-repetition metreo-repetition-restaure; do
+          projets=$(docker ps -aq --filter "name=^metreo-repetition" \
+            --format '{{.Label "com.docker.compose.project"}}' | sort -u)
+          for projet in $projets; do
             docker ps -aq --filter "label=com.docker.compose.project=$projet" \
               | xargs -r docker rm -f || true
             docker volume ls -q --filter "label=com.docker.compose.project=$projet" \
               | xargs -r docker volume rm -f || true
           done
-          restants=$(docker ps -aq --filter "label=com.docker.compose.project=metreo-repetition" | wc -l)
-          test "$restants" -eq 0 && echo "aucune ressource de répétition restante"
+          restants=$(docker ps -aq --filter "name=^metreo-repetition" | wc -l)
+          volumes=$(docker volume ls -q | grep -c '^metreo-repetition' || true)
+          test "$restants" -eq 0 -a "$volumes" -eq 0 \
+            && echo "aucune ressource de répétition restante"

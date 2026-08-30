@@ -76,6 +76,11 @@ const ENVIRONNEMENT_API: Record<string, string> = {
   // L'adresse de l'APPLICATION : c'est le navigateur qui revient, et il
   // revient sur une page, pas sur l'API.
   METREO_OIDC_REDIRECT_URI: `${BASE_WEB}/`,
+  // Le stockage du banc vit dans SON dossier temporaire. Le défaut,
+  // `./var/storage`, est relatif au répertoire de lancement : l'API démarrant
+  // depuis `apps/api`, les pièces déposées par le parcours atterrissaient dans
+  // l'arbre du dépôt — mesuré. `ranger()` efface ce dossier avec le reste.
+  METREO_STORAGE_ROOT: join(DOSSIER_BANC, 'stockage'),
   // Les sources du dépôt, et non seulement le paquet installé : la recette
   // doit éprouver ce que porte l'arbre de travail.
   PYTHONPATH: [
@@ -297,4 +302,32 @@ export async function ranger(): Promise<void> {
   tuer(etat?.fournisseur)
   tuer(etat?.web)
   rmSync(DOSSIER_BANC, { recursive: true, force: true })
+  verifierDepotPropre()
+}
+
+/**
+ * Le dépôt doit être aussi propre après le banc qu'avant lui.
+ *
+ * `METREO_STORAGE_ROOT` envoie les pièces dans le dossier temporaire, mais un
+ * réglage se perd : ce contrôle est là pour que sa perte se voie tout de
+ * suite, et non le jour où un CCTP de client se retrouve dans un commit.
+ */
+function verifierDepotPropre(): void {
+  const stockage = join(DOSSIER_API, 'var', 'storage')
+  if (!existsSync(stockage)) return
+  const restes: string[] = []
+  const parcourir = (dossier: string): void => {
+    for (const entree of readdirSync(dossier, { withFileTypes: true })) {
+      const chemin = join(dossier, entree.name)
+      if (entree.isDirectory()) parcourir(chemin)
+      else restes.push(chemin)
+    }
+  }
+  parcourir(stockage)
+  if (restes.length > 0) {
+    throw new Error(
+      `Le banc a laissé ${restes.length} fichier(s) de stockage dans l'arbre du dépôt : ` +
+        `${restes.slice(0, 3).join(', ')}`,
+    )
+  }
 }

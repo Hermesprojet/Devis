@@ -306,12 +306,67 @@ def test_a_token_from_another_issuer_is_refused(provider: FakeProvider, settings
 
 def test_an_expired_token_is_refused(provider: FakeProvider, settings: Settings) -> None:
     metadata = oidc.discover(settings, client=provider.client())
-    jeton = provider.id_token(nonce="n", expires_in=-10)
+    # Au-DELÀ de la tolérance d'horloge : sans quoi ce test ne dirait plus si
+    # le jeton est refusé parce qu'il a expiré ou parce qu'on ne tolère rien.
+    perime = -(settings.oidc_clock_skew_seconds + 10)
+    jeton = provider.id_token(nonce="n", expires_in=perime)
     with pytest.raises(oidc.OidcError) as leve:
         oidc.verify_id_token(
             settings, metadata=metadata, id_token=jeton, nonce="n", jwk_client=provider.jwk_client()
         )
     assert leve.value.code == "token_expired"
+
+
+def test_a_provider_clock_slightly_ahead_does_not_break_every_login(
+    provider: FakeProvider, settings: Settings
+) -> None:
+    """Un fournisseur qui avance d'une minute reste utilisable.
+
+    Sans tolérance, PyJWT déclare « pas encore valide » un jeton daté du futur,
+    et PLUS AUCUNE connexion n'aboutit tant que les horloges divergent — mesuré
+    au banc OIDC : à +60 s, toutes les tentatives échouaient sur un motif qui ne
+    parlait pas d'heure.
+    """
+    metadata = oidc.discover(settings, client=provider.client())
+    jeton = provider.id_token(nonce="n", decalage=settings.oidc_clock_skew_seconds - 5)
+    revendications = oidc.verify_id_token(
+        settings, metadata=metadata, id_token=jeton, nonce="n", jwk_client=provider.jwk_client()
+    )
+    assert revendications.subject == "sujet-1"
+
+
+def test_a_provider_clock_far_ahead_is_refused_by_its_own_name(
+    provider: FakeProvider, settings: Settings
+) -> None:
+    """Au-delà de la tolérance, le refus nomme l'heure et non une fraude.
+
+    Confondre « daté du futur » avec « jeton invalide » envoyait chercher une
+    attaque là où il n'y a qu'un serveur de temps à régler.
+    """
+    metadata = oidc.discover(settings, client=provider.client())
+    jeton = provider.id_token(nonce="n", decalage=settings.oidc_clock_skew_seconds + 600)
+    with pytest.raises(oidc.OidcError) as leve:
+        oidc.verify_id_token(
+            settings, metadata=metadata, id_token=jeton, nonce="n", jwk_client=provider.jwk_client()
+        )
+    assert leve.value.code == "token_not_yet_valid"
+
+
+def test_a_token_barely_expired_still_passes_within_the_tolerance(
+    provider: FakeProvider, settings: Settings
+) -> None:
+    """La tolérance joue des deux côtés, et c'est voulu.
+
+    Un jeton périmé de quelques secondes vient d'une horloge en retard, pas
+    d'un rejeu : le refuser déconnecterait des gens sans motif qu'ils puissent
+    corriger.
+    """
+    metadata = oidc.discover(settings, client=provider.client())
+    jeton = provider.id_token(nonce="n", expires_in=-(settings.oidc_clock_skew_seconds - 5))
+    revendications = oidc.verify_id_token(
+        settings, metadata=metadata, id_token=jeton, nonce="n", jwk_client=provider.jwk_client()
+    )
+    assert revendications.subject == "sujet-1"
 
 
 def test_an_unsigned_token_is_refused(provider: FakeProvider, settings: Settings) -> None:

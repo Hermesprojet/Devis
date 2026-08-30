@@ -49,6 +49,15 @@ const fr: Dictionary = {
     "Ce compte n'est pas connu de Metreo. Un administrateur doit le créer avant la première connexion.",
   'login.error.unverified_email':
     "Le fournisseur d'identité n'a pas confirmé cette adresse e-mail.",
+  'login.error.expired_state':
+    'La demande de connexion a expiré. Recommencez : le bouton ci-dessus repart de zéro.',
+  'login.error.invalid_state':
+    'Cette demande de connexion a déjà servi. Recommencez depuis le bouton ci-dessus.',
+  'login.error.token_expired':
+    "Le fournisseur d'identité a rendu une réponse déjà périmée. Recommencez.",
+  'login.error.token_not_yet_valid':
+    "L'horloge du fournisseur d'identité et celle du serveur divergent trop. " +
+    'Recommencez ; si le refus persiste, prévenez votre administrateur.',
   'login.error.generic': 'La connexion a échoué.',
 
   'common.loading': 'Chargement…',

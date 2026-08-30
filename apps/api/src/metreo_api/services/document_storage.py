@@ -234,7 +234,15 @@ class StockageLocal:
     """
 
     def __init__(self, racine: str | os.PathLike[str]) -> None:
-        self._racine = Path(racine)
+        # RÉSOLU une fois pour toutes, ici, avant le premier octet écrit.
+        #
+        # Une racine relative — et le défaut, `./var/storage`, en est une —
+        # désigne un dossier différent selon le répertoire d'où le processus a
+        # été lancé. Mesuré : la suite de tests, lancée depuis `apps/api`,
+        # déposait ses originaux dans l'arbre de travail. Résoudre au montage
+        # rend la racine explicite dans les journaux, dans la sauvegarde et
+        # dans le message d'erreur, au lieu de dépendre du hasard du `cwd`.
+        self._racine = Path(racine).resolve()
 
     @property
     def racine(self) -> Path:
