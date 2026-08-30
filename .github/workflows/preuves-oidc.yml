@@ -68,12 +68,10 @@ jobs:
               -e 's/("(access_token|login_code|state|nonce|code|id_token)"[[:space:]]*:[[:space:]]*")[^"]*/\1<masqué>/g' \
               -e 's/(Bearer )[A-Za-z0-9._-]+/\1<masqué>/g'
           }
-          for service in api oidc proxy web migrate; do
-            echo "════════ $service ════════"
-            f="preuves/journaux/$service.log"
-            [ -f "$f" ] || { echo "(absent)"; continue; }
-            echo "-- lignes d'authentification et refus --"
-            grep -aiE '/auth/|oidc|"status_code": *[45]|" [45][0-9][0-9] |login' "$f" | masquer | tail -60 || true
-            echo "-- fin du journal --"
-            masquer < "$f" | tail -15
-          done
+          f=preuves/journaux/api.log
+          echo "════════ tout ce que l'API a dit qui n'est ni un accès ni une requête ════════"
+          grep -av 'uvicorn.access' "$f" | grep -av '"message": "http_request"' | masquer || true
+          echo
+          echo "════════ le fournisseur d'identité ════════"
+          wc -l preuves/journaux/oidc.log || true
+          masquer < preuves/journaux/oidc.log | tail -40 || true
