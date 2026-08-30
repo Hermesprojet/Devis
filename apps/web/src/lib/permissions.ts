@@ -22,6 +22,7 @@ export const PERMISSIONS = {
   pricebookWrite: 'pricebook:write',
   boqWrite: 'boq:write',
   estimateWrite: 'estimate:write',
+  documentWrite: 'document:write',
 } as const
 
 export type PermissionName = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]

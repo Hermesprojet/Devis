@@ -1,8 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN, CONSTAT, PILE_EXTERNE } from './banc'
+import { seConnecter } from './parcours'
 
 /**
  * Une organisation vide produit son premier devis, sans seed ni SQL.
@@ -32,16 +34,29 @@ const MONTANTS = {
 // Les garde-fous
 // --------------------------------------------------------------------------
 
-test('ce fichier n’emprunte aucun raccourci pour créer les données', () => {
+test('aucun scénario de cette suite n’emprunte de raccourci', () => {
   /**
-   * Le contrôle porte sur le TEXTE de ce fichier, pas sur une intention.
+   * Le contrôle porte sur le TEXTE des fichiers, pas sur une intention.
    *
    * Un parcours qui appellerait l'API directement, ou qui écrirait en base,
    * passerait au vert sans rien prouver de l'interface. Le seul moyen de
    * s'en assurer durablement est de refuser ces tournures ici, où quiconque
    * les ajouterait verrait le test tomber.
+   *
+   * TOUT le dossier est lu, scénarios ET fichiers d'aide, et non ce seul
+   * fichier : la garantie doit valoir pour ce qu'on ajoutera, sans quoi il
+   * suffirait d'écrire le raccourci dans un fichier voisin — ou, depuis que
+   * les gestes communs vivent dans `parcours.ts`, dans un fichier qui n'est
+   * même pas un scénario.
+   *
+   * `banc.ts` est la seule exception, et par son nom : il EST le banc. Il lui
+   * revient de migrer la base, de l'amorcer et de démarrer les serveurs, ce
+   * que la liste ci-dessous interdit à juste titre partout ailleurs.
    */
-  const source = readFileSync(__filename, 'utf8')
+  const source = readdirSync(__dirname)
+    .filter((nom) => nom.endsWith('.ts') && nom !== 'banc.ts')
+    .map((nom) => readFileSync(join(__dirname, nom), 'utf8'))
+    .join('\n')
   const interdits: ReadonlyArray<{ motif: RegExp; pourquoi: string }> = [
     { motif: /\brequest\.(post|patch|put|delete)\b/, pourquoi: 'appel direct à un point d’entrée métier' },
     { motif: /\bcontext\.request\b/, pourquoi: 'appel direct via le contexte Playwright' },
@@ -59,15 +74,6 @@ test('ce fichier n’emprunte aucun raccourci pour créer les données', () => {
 // --------------------------------------------------------------------------
 // Le parcours
 // --------------------------------------------------------------------------
-
-async function seConnecter(page: Page, adresse: string): Promise<void> {
-  /** La connexion réelle : celle du déploiement, par le fournisseur d'identité. */
-  await page.goto('/')
-  await page.getByRole('button', { name: /compte de l'entreprise/ }).click()
-  await page.locator('#email').fill(adresse)
-  await page.getByRole('button', { name: 'Se connecter' }).click()
-  await page.waitForURL(/\/projets$/)
-}
 
 /** Les montants tels que l'écran les affiche, lus dans le tableau des totaux. */
 async function totaux(page: Page): Promise<Record<string, string>> {

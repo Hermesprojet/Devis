@@ -133,11 +133,19 @@ def running_on_postgresql() -> bool:
 
 
 @pytest.fixture()
-def app_env(database_url: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def app_env(database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("METREO_DATABASE_URL", database_url)
     monkeypatch.setenv("METREO_ENVIRONMENT", "test")
     monkeypatch.setenv("METREO_AUTH_MODE", "dev")
     monkeypatch.setenv("METREO_JWT_SECRET", "test-secret-not-used-in-production-0123456789")
+    # La racine de stockage par défaut est RELATIVE au répertoire de travail :
+    # sans cette ligne, tout test qui dépose un fichier écrit dans
+    # `apps/api/var/storage/` — dans l'arbre du dépôt. Mesuré : la matrice
+    # d'autorisation, qui exerce chaque route avec un rôle permis, y avait
+    # laissé cinq originaux.
+    stockage = tmp_path / "stockage"
+    stockage.mkdir(exist_ok=True)
+    monkeypatch.setenv("METREO_STORAGE_ROOT", str(stockage))
 
     from metreo_api import config, db
 
