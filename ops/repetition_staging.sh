@@ -597,7 +597,13 @@ etape_devis() {
 				npx playwright test --config=playwright.premier-devis.config.ts
 	) >"$journal" 2>&1; then
 		ko "le parcours navigateur du premier devis a échoué"
-		detail "$(tail -12 "$journal")"
+		# Les DOUZE DERNIÈRES lignes de Playwright sont son pied de page — le
+		# chemin de la trace et la commande pour l'ouvrir. Mesuré : un échec
+		# n'affichait donc jamais sa cause, et il fallait rouvrir la trace pour
+		# apprendre quoi que ce soit. On remonte le bloc d'erreur lui-même.
+		detail "$(grep -aE "✘|Error|error:|expect|Timeout|✓ |›" "$journal" | tail -40)"
+		detail "--- fin du journal ---"
+		detail "$(tail -6 "$journal")"
 		return 1
 	fi
 	ok "une organisation vide a produit son premier devis, au navigateur seul"
