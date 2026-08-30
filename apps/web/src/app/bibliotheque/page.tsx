@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { BibliothequeVide } from '@/components/BibliothequeVide'
 import { ErrorNotice, Loading } from '@/components/Feedback'
+import { NouveauPrix } from '@/components/NouveauPrix'
 import { Shell } from '@/components/Shell'
 import {
   api,
@@ -30,26 +32,27 @@ export default function PriceBookPage() {
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    async function boot() {
-      try {
-        const loadedBooks = await api.priceBooks()
-        setBooks(loadedBooks)
-        const first = loadedBooks[0]
-        if (first) {
-          const loadedVersions = await api.priceBookVersions(first.id)
-          setVersions(loadedVersions)
-          const firstVersion = loadedVersions[0]
-          if (firstVersion) setVersionId(firstVersion.id)
-        }
-      } catch (caught) {
-        setError(caught)
-      } finally {
-        setReady(true)
+  const boot = useCallback(async () => {
+    try {
+      const loadedBooks = await api.priceBooks()
+      setBooks(loadedBooks)
+      const first = loadedBooks[0]
+      if (first) {
+        const loadedVersions = await api.priceBookVersions(first.id)
+        setVersions(loadedVersions)
+        const firstVersion = loadedVersions[0]
+        if (firstVersion) setVersionId(firstVersion.id)
       }
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setReady(true)
     }
-    void boot()
   }, [])
+
+  useEffect(() => {
+    void boot()
+  }, [boot])
 
   const loadItems = useCallback(
     async (query: string) => {
@@ -104,6 +107,16 @@ export default function PriceBookPage() {
     )
   }
 
+  if (books.length === 0) {
+    return (
+      <Shell>
+        <h1>{t('priceBook.title')}</h1>
+        <ErrorNotice error={error} />
+        <BibliothequeVide onCree={() => void boot()} />
+      </Shell>
+    )
+  }
+
   return (
     <Shell>
       <h1>{t('priceBook.title')}</h1>
@@ -132,6 +145,7 @@ export default function PriceBookPage() {
           }}
         />
         <div className="spacer" />
+        {versionId && <NouveauPrix versionId={versionId} onCree={() => void loadItems(search)} />}
         <a className="button" href="/modele_import_prix.csv" download>
           Modèle CSV
         </a>

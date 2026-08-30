@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react'
 
+import { Collaborateurs } from '@/components/Collaborateurs'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
+import { TauxDeTaxe } from '@/components/TauxDeTaxe'
 import { api, type Organization, type OrgSettings } from '@/lib/api'
 import { t } from '@/lib/i18n'
 
@@ -138,6 +140,10 @@ export default function SettingsPage() {
           <div className="notice info">{t('settings.masked')}</div>
         )}
       </div>
+
+      <TauxDeTaxe />
+
+      <Collaborateurs />
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Modules à venir</h2>

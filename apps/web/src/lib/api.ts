@@ -195,6 +195,20 @@ export const api = {
   organization: () => request<Organization>('/organization'),
   organizationSettings: () => request<OrgSettings>('/organization/settings'),
 
+  members: () => request<Member[]>('/organization/members'),
+  inviteMember: (body: Record<string, unknown>) =>
+    request<Member>('/organization/members', { method: 'POST', body }),
+  updateMember: (membershipId: string, body: Record<string, unknown>) =>
+    request<Member>(`/organization/members/${membershipId}`, { method: 'PATCH', body }),
+
+  taxRates: () => request<TaxRate[]>('/organization/tax-rates'),
+  createTaxRate: (body: Record<string, unknown>) =>
+    request<TaxRate>('/organization/tax-rates', { method: 'POST', body }),
+  updateTaxRate: (id: string, body: Record<string, unknown>) =>
+    request<TaxRate>(`/organization/tax-rates/${id}`, { method: 'PATCH', body }),
+  deleteTaxRate: (id: string) =>
+    request<void>(`/organization/tax-rates/${id}`, { method: 'DELETE' }),
+
   projects: (query = '') => request<Page<Project>>(`/projects${query}`),
   project: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (body: Record<string, unknown>) =>
@@ -208,6 +222,10 @@ export const api = {
     request<BoqItem>(`/boqs/${boqId}/items`, { method: 'POST', body }),
 
   priceBooks: () => request<PriceBook[]>('/price-books'),
+  createPriceBook: (body: Record<string, unknown>) =>
+    request<PriceBook>('/price-books', { method: 'POST', body }),
+  createPriceItem: (versionId: string, body: Record<string, unknown>) =>
+    request<PriceItem>(`/price-books/versions/${versionId}/items`, { method: 'POST', body }),
   priceBookVersions: (bookId: string) =>
     request<PriceBookVersion[]>(`/price-books/${bookId}/versions`),
   priceItems: (versionId: string, query = '') =>
@@ -225,6 +243,9 @@ export const api = {
       method: 'POST',
       body: { strategy, confirm: true },
     }),
+
+  createEstimate: (body: Record<string, unknown>) =>
+    request<Estimate>('/estimates', { method: 'POST', body }),
 
   estimates: (projectId?: string) =>
     request<Estimate[]>(`/estimates${projectId ? `?project_id=${projectId}` : ''}`),
@@ -357,6 +378,27 @@ export type BoqItem = {
   formula: string | null
   price_item_id: string | null
   composite_price_id: string | null
+}
+
+export type Member = {
+  id: string
+  user_id: string
+  email: string
+  full_name: string
+  role: string
+  role_label: string
+  is_active: boolean
+}
+
+export type TaxRate = {
+  id: string
+  code: string
+  label: string
+  rate: string
+  applies_from: string | null
+  applies_to: string | null
+  is_default: boolean
+  source: string | null
 }
 
 export type PriceBook = { id: string; name: string; currency: string; is_default: boolean }

@@ -25,6 +25,7 @@ from pydantic import (
 from metreo_domain import bounds
 from metreo_domain.money import canonical_text
 
+from .security.roles import Role
 from .services.price_contract import MAX_LEAD_TIME_DAYS, sql_length
 
 
@@ -191,6 +192,98 @@ class OrganizationSettingsUpdate(BaseModel):
     missing_price_policy: Literal["block", "warn"] | None = None
     quote_number_pattern: str | None = Field(default=None, max_length=60)
     show_internal_costs_in_client_pdf: bool | None = None
+
+
+class MemberOut(ApiModel):
+    """Un collaborateur de l'organisation, tel que les réglages le montrent."""
+
+    id: str
+    user_id: str
+    email: str
+    full_name: str
+    role: str
+    role_label: str
+    is_active: bool
+
+
+class MemberInvite(BaseModel):
+    """L'ajout d'un collaborateur — sans mot de passe, comme le bootstrap.
+
+    Rien n'est envoyé à cette adresse et aucun secret n'est créé : ce que l'on
+    inscrit ici, c'est le DROIT d'entrer. La personne se connectera par le
+    fournisseur d'identité, et la liaison se fera à sa première connexion sur
+    son adresse vérifiée.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr
+    full_name: NonBlank = Field(max_length=200)
+    role: Role
+
+
+class MemberUpdate(BaseModel):
+    """Changer le rôle d'un collaborateur, ou lui retirer l'accès.
+
+    L'accès se retire (``is_active``) et ne se supprime pas : les événements
+    d'audit désignent l'utilisateur qui les a produits, et effacer la personne
+    rendrait illisible l'historique qu'elle a écrit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Role | None = None
+    is_active: bool | None = None
+
+
+class TaxRateCreate(BaseModel):
+    """Saisie d'un taux de taxe par l'administrateur.
+
+    Metreo n'installe AUCUN taux au départ, et n'en devine aucun. Le taux
+    applicable, sa date d'effet et sa base légale sont une décision de
+    l'entreprise : les inscrire à sa place reviendrait à lui faire porter une
+    affirmation fiscale qu'elle n'a pas prise.
+
+    `rate` est une PROPORTION, pas un pourcentage : 21 % s'écrit `0.21`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: NonBlank = Field(max_length=30, description="Identifiant court, ex. « TVA-21 »")
+    label: NonBlank = Field(max_length=120, description="Libellé imprimé sur le devis")
+    rate: Decimal = _bounded(bounds.RATE)
+    applies_from: date | None = Field(
+        default=None, description="Premier jour d'application. Vide = depuis toujours."
+    )
+    applies_to: date | None = Field(
+        default=None, description="Dernier jour d'application. Vide = sans fin."
+    )
+    is_default: bool = Field(
+        default=True,
+        description="Appliqué aux nouvelles estimations tant qu'il est en vigueur.",
+    )
+    source: str | None = Field(
+        default=None,
+        max_length=255,
+        description="D'où vient ce taux. Metreo ne le valide pas juridiquement.",
+    )
+
+
+class TaxRateUpdate(BaseModel):
+    """Modification d'un taux. Le `code` n'est pas modifiable.
+
+    Un instantané de devis gelé conserve le code du taux appliqué : le changer
+    ferait mentir l'historique sans qu'aucune trace ne le dise.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: NonBlank | None = Field(default=None, max_length=120)
+    rate: Decimal | None = _bounded_opt(bounds.RATE)
+    applies_from: date | None = None
+    applies_to: date | None = None
+    is_default: bool | None = None
+    source: str | None = Field(default=None, max_length=255)
 
 
 class TaxRateOut(DecimalOut):

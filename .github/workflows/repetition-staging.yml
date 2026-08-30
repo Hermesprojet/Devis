@@ -87,6 +87,20 @@ jobs:
         # lui faut le même nom.
         run: echo "127.0.0.1 oidc" | sudo tee -a /etc/hosts
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Le navigateur de la répétition
+        # Le scénario principal produit le premier devis AU NAVIGATEUR, sur la
+        # pile réelle et derrière le proxy : il lui faut Playwright et un
+        # Chromium. Sans eux, la répétition retomberait sur un script, c'est-à-
+        # dire sur un parcours que personne ne peut suivre.
+        working-directory: apps/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
       - name: Répétition
         run: ops/repetition_staging.sh
 

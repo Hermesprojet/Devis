@@ -18,6 +18,10 @@ export const PERMISSIONS = {
   estimateFreeze: 'estimate:freeze',
   auditRead: 'audit:read',
   orgManage: 'org:manage',
+  userManage: 'user:manage',
+  pricebookWrite: 'pricebook:write',
+  boqWrite: 'boq:write',
+  estimateWrite: 'estimate:write',
 } as const
 
 export type PermissionName = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
