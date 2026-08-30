@@ -369,6 +369,15 @@ def test_le_pdf_imprime_le_client_le_chantier_et_les_totaux(
     assert projet["reference"] in texte
     assert "Total" in texte
 
+    #: Et les POSTES, avec leur numéro : un devis dont la colonne « Poste »
+    #: serait vide se lirait mal et se pointerait encore plus mal en réunion
+    #: de chantier. Reproduit sur un devis témoin composé à la main, dont le
+    #: jeu de lignes ne portait pas la clé que le tableau lit.
+    postes = seeded_client.get(f"/api/v1/boqs/{estimate['boq_id']}/items", headers=admin).json()
+    premier = next(p for p in postes if p["kind"] != "section")
+    assert premier["position"] in texte, "la colonne « Poste » n'imprime pas les numéros"
+    assert premier["designation"][:20] in texte
+
 
 def test_les_conditions_sont_configurables_et_non_gravees(
     seeded_client: TestClient, admin, estimate, version, pret

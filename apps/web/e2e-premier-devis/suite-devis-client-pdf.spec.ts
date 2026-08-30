@@ -166,7 +166,17 @@ test('un client réutilisable devient un devis émis, numéroté et télécharge
   expect(pdf.toString('latin1').toLowerCase()).not.toContain('<html')
 
   const texte = texteDuPdf(pdf)
-  for (const attendu of [numero, CLIENT.nom, CLIENT.ville, CHANTIER.reference, 'Acompte de 30 %']) {
+  for (const attendu of [
+    numero,
+    CLIENT.nom,
+    CLIENT.ville,
+    CHANTIER.reference,
+    'Acompte de 30 %',
+    // Le NUMÉRO du poste, pas seulement sa désignation : une colonne
+    // « Poste » vide se pointe mal en réunion de chantier.
+    '02.10',
+    'Terrassement pour égouttage',
+  ]) {
     expect(texte, `le PDF doit imprimer « ${attendu} »`).toContain(attendu)
   }
   // Aucun coût interne : c'est le cas par défaut, et c'est le cas dangereux.
