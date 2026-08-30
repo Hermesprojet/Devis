@@ -32,6 +32,7 @@ from .routers import (
     pricebooks,
     projects,
 )
+from .transactions import classer_les_routes
 
 logger = logging.getLogger("metreo.api")
 
@@ -185,6 +186,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(boq.router, prefix=prefix)
     app.include_router(estimates.router, prefix=prefix)
     app.include_router(audit_log.router, prefix=prefix)
+
+    # Le contrat transactionnel, vérifié au démarrage : chaque route sait à quelle
+    # famille elle appartient, et aucune route d'écriture n'a été oubliée.
+    classer_les_routes(app)
 
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:

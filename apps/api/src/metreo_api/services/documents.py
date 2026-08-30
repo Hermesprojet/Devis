@@ -27,6 +27,7 @@ from ..models import (
 )
 from ..schemas import ValidationDecisionCreate
 from ..security.auth import TenantContext
+from ..transactions import compenser
 from . import audit
 from .document_storage import StockageLocal
 from .locking import lock_owned
@@ -303,50 +304,56 @@ def add_revision(
         plafond=plafond,
         declared_media_type=declared_media_type,
     )
+    # Les octets sont posés ; la base ne le sait pas encore, et ne saura jamais
+    # les retirer. À partir d'ici et jusqu'à la validation, ce fichier n'existe
+    # QUE sous condition : si la transaction est annulée — par un refus, une
+    # contrainte, ou un `commit` qui échoue —, cette compensation le retire.
+    # Elle est idempotente : `supprimer` accepte un fichier déjà parti.
+    compenser(
+        session,
+        lambda: stockage.supprimer(original.storage_key),
+        f"retirer l'original {revision_id} du volume",
+    )
 
-    try:
-        numero = next_revision_number(
-            session, organization_id=context.organization_id, document_id=document_id
+    numero = next_revision_number(
+        session, organization_id=context.organization_id, document_id=document_id
+    )
+    # Le doublon est constaté APRÈS le verrou : deux dépôts simultanés du
+    # même contenu doivent en voir un seul passer, et le second l'apprendre.
+    deja = session.scalars(
+        select(DocumentRevision).where(
+            DocumentRevision.organization_id == context.organization_id,
+            DocumentRevision.document_id == document_id,
+            DocumentRevision.sha256 == original.sha256,
         )
-        # Le doublon est constaté APRÈS le verrou : deux dépôts simultanés du
-        # même contenu doivent en voir un seul passer, et le second l'apprendre.
-        deja = session.scalars(
-            select(DocumentRevision).where(
-                DocumentRevision.organization_id == context.organization_id,
-                DocumentRevision.document_id == document_id,
-                DocumentRevision.sha256 == original.sha256,
-            )
-        ).first()
-        if deja is not None:
-            raise RevisionRefusee(
-                "duplicate_content",
-                f"Ce contenu est déjà la révision {deja.revision_number} de ce document, "
-                "au bit près. Rien n'a été remplacé.",
-            )
+    ).first()
+    if deja is not None:
+        raise RevisionRefusee(
+            "duplicate_content",
+            f"Ce contenu est déjà la révision {deja.revision_number} de ce document, "
+            "au bit près. Rien n'a été remplacé.",
+        )
 
-        revision = DocumentRevision(
-            id=revision_id,
-            organization_id=context.organization_id,
-            document_id=document_id,
-            revision_number=numero,
-            sha256=original.sha256,
-            byte_size=original.byte_size,
-            media_type=original.media_type,
-            declared_media_type=original.declared_media_type,
-            storage_key=original.storage_key,
-            original_filename=filename or "document",
-            status="published",
-            published_at=utcnow(),
-            created_by=context.user.id,
-        )
-        session.add(revision)
-        session.flush()
-        # L'auteur, sur la réponse du dépôt comme sur celle de la liste : c'est
-        # la même vue, elle doit porter les mêmes champs.
-        revision.author_email = context.user.email  # type: ignore[attr-defined]
-    except BaseException:
-        stockage.supprimer(original.storage_key)
-        raise
+    revision = DocumentRevision(
+        id=revision_id,
+        organization_id=context.organization_id,
+        document_id=document_id,
+        revision_number=numero,
+        sha256=original.sha256,
+        byte_size=original.byte_size,
+        media_type=original.media_type,
+        declared_media_type=original.declared_media_type,
+        storage_key=original.storage_key,
+        original_filename=filename or "document",
+        status="published",
+        published_at=utcnow(),
+        created_by=context.user.id,
+    )
+    session.add(revision)
+    session.flush()
+    # L'auteur, sur la réponse du dépôt comme sur celle de la liste : c'est
+    # la même vue, elle doit porter les mêmes champs.
+    revision.author_email = context.user.email  # type: ignore[attr-defined]
 
     audit.record(
         session,

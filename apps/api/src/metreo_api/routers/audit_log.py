@@ -20,8 +20,9 @@ from ..schemas import (
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import audit
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(prefix="/audit", tags=["audit"])
+router = APIRouter(prefix="/audit", tags=["audit"], route_class=RouteTransactionnelle)
 
 
 def _sans_secret_commercial(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:

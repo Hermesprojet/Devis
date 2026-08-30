@@ -30,8 +30,9 @@ from ..models import ExternalIdentity, LoginTransaction, Membership, utcnow
 from ..schemas import OidcExchangeRequest, OidcStartOut, TokenResponse
 from ..security.auth import issue_token
 from ..services import oidc
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(prefix="/auth/oidc", tags=["auth"])
+router = APIRouter(prefix="/auth/oidc", tags=["auth"], route_class=RouteTransactionnelle)
 
 
 def _require_oidc(settings: Settings) -> None:
@@ -85,14 +86,10 @@ def start(
     except oidc.OidcError as exc:
         raise _erreur(exc) from exc
 
-    # VALIDER AVANT D'ANNONCER — voir la note du callback, plus bas.
-    #
-    # Cette URL porte le `state` de la transaction qu'on vient d'écrire. Le
-    # navigateur part au fournisseur et revient avec, sur une AUTRE requête.
-    # Si la validation n'a pas eu lieu, `_consume_transaction` ne trouve rien
-    # et refuse « invalid_state » une connexion parfaitement légitime.
-    # Mesuré au banc : une sur dix connexions concurrentes.
-    session.commit()
+    # Cette URL porte le `state` de la transaction qu'on vient d'écrire, et le
+    # navigateur reviendra avec lui sur une AUTRE requête. La validation a lieu
+    # avant l'envoi de la réponse — voir `transactions.py`, qui la fait pour
+    # toutes les routes classées en écriture. Cette route en est une.
     return OidcStartOut(authorization_url=url)
 
 
@@ -168,22 +165,12 @@ def callback(
     )
     retour_vers = transaction.return_to
 
-    # VALIDER AVANT D'ANNONCER. Ce `commit` explicite n'est pas une ceinture
-    # de plus sur celui de `session_scope` : c'est le seul qui ait lieu à temps.
-    #
-    # FastAPI exécute le code de sortie des dépendances `yield` — donc le
-    # `commit` de `session_scope` — APRÈS avoir envoyé la réponse. Mesuré : une
-    # dépendance dont la sortie dort une demi-seconde rend quand même la main
-    # au client en deux millisecondes.
-    #
-    # Or cette réponse est une redirection que le navigateur suit sur-le-champ,
-    # et la requête suivante — l'échange — cherche ce code par une AUTRE
-    # session. Sans ce commit, on annonce un code qui n'est pas encore en base :
-    # si le navigateur revient avant que la validation n'ait eu lieu, l'échange
-    # ne trouve rien et refuse une connexion parfaitement légitime. C'est la
-    # cause des connexions perdues en répétition de préproduction : un 401
-    # `invalid_login_code` sur un code émis quarante-sept millisecondes plus tôt.
-    session.commit()
+    # Ce que le navigateur reçoit ici, il le présentera dans les
+    # millisecondes qui suivent, et l'échange le cherchera par une autre
+    # session. C'est la course mesurée en répétition de préproduction : un 401
+    # sur un code émis quarante-sept millisecondes plus tôt. Elle est fermée
+    # par `RouteTransactionnelle`, qui valide avant que la redirection parte —
+    # voir `transactions.py`. Rien à valider à la main ici.
 
     parametres = {"login_code": code_de_connexion}
     if retour_vers:
@@ -248,13 +235,12 @@ def exchange(
 
     # Le code ne sert qu'une fois. Effacé ici, et non « marqué utilisé » : rien
     # ne doit pouvoir le retrouver, même par erreur de requête.
+    # L'usage unique du code ne vaut que si son effacement est validé avant que
+    # la session parte : un rejeu arrivé entre les deux le retrouverait posé.
+    # C'est encore `RouteTransactionnelle` qui s'en charge.
     transaction.login_code = None
     transaction.login_code_expires_at = None
-    # Troisième et dernier passage de témoin du parcours, et le plus sensible :
-    # l'usage unique du code ne vaut que si son effacement est validé. Un rejeu
-    # arrivé avant la validation trouverait le code encore là et ouvrirait une
-    # seconde session.
-    session.commit()
+    session.flush()
 
     jeton, duree = issue_token(
         user_id=transaction.user_id, organization_id=choisie, settings=settings

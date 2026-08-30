@@ -16,8 +16,9 @@ from ..db import session_scope
 from ..models import RegionProfile
 from ..schemas import HealthOut, RegionProfileOut, UnitOut
 from ..security.roles import ROLE_PERMISSIONS, Role
+from ..transactions import RouteTransactionnelle
 
-router = APIRouter(tags=["meta"])
+router = APIRouter(tags=["meta"], route_class=RouteTransactionnelle)
 
 
 @router.get("/health", response_model=HealthOut, summary="État du service")

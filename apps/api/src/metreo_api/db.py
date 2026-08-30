@@ -8,11 +8,13 @@ out (row-level security, PostGIS) until the Postgres-only phase.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Final
 
+from fastapi import Request
 from sqlalchemy import Numeric, String, create_engine, event
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -21,6 +23,7 @@ from sqlalchemy.types import TypeDecorator
 from metreo_domain.money import normalize_decimal
 
 from .config import get_settings
+from .transactions import compenser_apres_annulation
 
 #: Declared precision and scale of every stored decimal column.
 #:
@@ -156,14 +159,51 @@ def reset_engine() -> None:
     _session_factory = None
 
 
-def session_scope() -> Iterator[Session]:
-    """FastAPI dependency yielding a transactional session."""
+def session_scope(request: Request) -> Iterator[Session]:
+    """Dépendance FastAPI : la session de la requête.
+
+    Elle est posée sur `request.state` parce que c'est le seul endroit où
+    `RouteTransactionnelle` peut la retrouver — une dépendance ne se lit pas
+    depuis une classe de route, et un intergiciel ne voit pas les dépendances.
+
+    Le `commit` qui reste ici est un FILET, jamais le mécanisme : pour toute
+    route classée en écriture, la validation a déjà eu lieu avant l'envoi de la
+    réponse, et il ne trouve plus rien à valider. Il ne sert qu'à une route qui
+    aurait échappé au registre — et `_signaler_validation_tardive` le dit alors
+    à voix haute, parce qu'une écriture validée APRÈS la réponse est
+    exactement le défaut que ce modèle supprime.
+    """
     session = get_session_factory()()
+    request.state.session_metreo = session
     try:
         yield session
+        if session.new or session.dirty or session.deleted:
+            _signaler_validation_tardive(request, session)
         session.commit()
     except Exception:
+        # L'ordre compte : défaire la base d'abord, le volume ensuite. Une
+        # compensation qui s'exécuterait avant le rollback pourrait retirer un
+        # fichier que la transaction, finalement, conserve.
         session.rollback()
+        compenser_apres_annulation(session)
         raise
     finally:
         session.close()
+
+
+def _chemin_de(request: Request) -> str:
+    route = request.scope.get("route")
+    return str(getattr(route, "path", None) or request.url.path)
+
+
+def _signaler_validation_tardive(request: Request, session: Session) -> None:
+    """Une écriture encore en attente alors que la réponse est partie."""
+    logging.getLogger("metreo.api").error(
+        "validation_tardive",
+        extra={
+            "route": f"{request.method} {_chemin_de(request)}",
+            "nouvelles": len(session.new),
+            "modifiees": len(session.dirty),
+            "supprimees": len(session.deleted),
+        },
+    )
