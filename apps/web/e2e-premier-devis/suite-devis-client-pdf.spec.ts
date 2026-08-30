@@ -85,7 +85,9 @@ test('un client réutilisable devient un devis émis, numéroté et télécharge
   await page.goto('/clients')
   await page.getByRole('button', { name: 'Nouveau client' }).click()
   await page.getByLabel('Nom', { exact: true }).fill(CLIENT.nom)
-  await page.getByLabel("Numéro d'entreprise", { exact: true }).fill(CLIENT.numero)
+  // L'apostrophe des libellés est typographique (U+2019) : une apostrophe
+  // droite ne trouve rien, et l'échec accuse l'écran au lieu du test.
+  await page.getByLabel(/Numéro d.entreprise/).fill(CLIENT.numero)
   await page.getByLabel('Adresse de facturation').fill(CLIENT.adresse)
   await page.getByLabel('Code postal').fill(CLIENT.codePostal)
   await page.getByLabel('Localité').fill(CLIENT.ville)

@@ -38,8 +38,13 @@ function versFormulaire(fiche: Client): Formulaire {
   }
 }
 
-/** Une chaîne vide n'est pas une valeur : l'API veut `null`. */
-export function corpsDeFiche(formulaire: Formulaire): Record<string, unknown> {
+/**
+ * Une chaîne vide n'est pas une valeur : l'API veut `null`.
+ *
+ * Non exportée : Next.js n'accepte d'un fichier de page que ses exports
+ * réservés, et l'exporter faisait échouer la construction de production.
+ */
+function corpsDeFiche(formulaire: Formulaire): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(formulaire).map(([cle, valeur]) => [cle, valeur.trim() || null]),
   )
