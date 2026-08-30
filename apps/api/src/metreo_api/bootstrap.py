@@ -20,6 +20,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from pydantic import EmailStr, TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -43,9 +45,21 @@ def bootstrap(
     Rend le triplet et un booléen disant si quelque chose a été créé — pour
     que l'appelant puisse le dire sans avoir à comparer des états.
     """
+    # La MÊME validation que celle de la connexion, et pas un simple « @ ».
+    #
+    # Sans cela, `--admin-email admin@entreprise.invalid` était accepté, la
+    # ligne écrite en base, la commande annonçait un succès — et ce compte ne
+    # pouvait jamais se connecter : `.invalid` est un nom réservé que la
+    # validation d'adresse de l'API refuse. Le premier administrateur d'un
+    # déploiement neuf est précisément le compte qu'on ne peut pas se
+    # permettre de créer inutilisable : personne d'autre ne peut entrer pour
+    # le corriger.
     courriel = admin_email.strip().lower()
-    if not courriel or "@" not in courriel:
-        raise ValueError(f"Adresse d'administrateur invalide : {admin_email!r}")
+    try:
+        courriel = TypeAdapter(EmailStr).validate_python(courriel)
+    except PydanticValidationError as exc:
+        motif = exc.errors()[0].get("msg", "adresse refusée") if exc.errors() else "adresse refusée"
+        raise ValueError(f"Adresse d'administrateur invalide : {admin_email!r} — {motif}") from exc
     if not organization_name.strip():
         raise ValueError("Le nom de l'organisation ne peut pas être vide.")
 

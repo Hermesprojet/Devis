@@ -25,14 +25,14 @@ def test_it_creates_the_organisation_its_admin_and_the_link(migrated: None) -> N
         organisation, utilisateur, cree = bootstrap(
             session,
             organization_name="Organisation initiale",
-            admin_email="Admin@Example.Invalid",
+            admin_email="Admin@Example.Com",
             admin_full_name="Première administratrice",
         )
         session.commit()
 
         assert cree is True
         # L'adresse est normalisée : sinon deux comptes pour la même personne.
-        assert utilisateur.email == "admin@example.invalid"
+        assert utilisateur.email == "admin@example.com"
         appartenance = session.scalars(
             select(Membership).where(Membership.user_id == utilisateur.id)
         ).one()
@@ -56,7 +56,7 @@ def test_it_is_idempotent(migrated: None) -> None:
         bootstrap(
             session,
             organization_name="Organisation initiale",
-            admin_email="admin@example.invalid",
+            admin_email="admin@example.com",
             admin_full_name="Première administratrice",
         )
         session.commit()
@@ -66,7 +66,7 @@ def test_it_is_idempotent(migrated: None) -> None:
         _, _, cree = bootstrap(
             session,
             organization_name="Organisation initiale",
-            admin_email="admin@example.invalid",
+            admin_email="admin@example.com",
             admin_full_name="Première administratrice",
         )
         session.commit()
@@ -83,7 +83,7 @@ def test_it_reactivates_a_membership_that_was_switched_off(migrated: None) -> No
         _, utilisateur, _ = bootstrap(
             session,
             organization_name="Organisation initiale",
-            admin_email="admin@example.invalid",
+            admin_email="admin@example.com",
             admin_full_name="A",
         )
         session.commit()
@@ -96,7 +96,7 @@ def test_it_reactivates_a_membership_that_was_switched_off(migrated: None) -> No
         _, _, cree = bootstrap(
             session,
             organization_name="Organisation initiale",
-            admin_email="admin@example.invalid",
+            admin_email="admin@example.com",
             admin_full_name="A",
         )
         session.commit()
@@ -116,7 +116,7 @@ def test_it_creates_no_password_and_no_demonstration_data(migrated: None) -> Non
         bootstrap(
             session,
             organization_name="Organisation initiale",
-            admin_email="admin@example.invalid",
+            admin_email="admin@example.com",
             admin_full_name="A",
         )
         session.commit()
@@ -156,6 +156,92 @@ def test_an_empty_organisation_name_is_refused(migrated: None) -> None:
         bootstrap(
             session,
             organization_name="   ",
-            admin_email="admin@example.invalid",
+            admin_email="admin@example.com",
             admin_full_name="A",
         )
+
+
+def test_it_refuses_an_address_the_login_would_reject(migrated: None) -> None:
+    """Le premier administrateur ne doit pas pouvoir naître inutilisable.
+
+    `admin@entreprise.invalid` passait le contrôle « il y a un @ », la ligne
+    partait en base, la commande annonçait un succès — et ce compte ne pouvait
+    jamais se connecter : `.invalid` est un nom réservé que la validation
+    d'adresse de l'API refuse.
+
+    C'est le compte qu'on ne peut pas se permettre de créer cassé : personne
+    d'autre n'existe pour venir le corriger.
+    """
+    with _session() as session:
+        with pytest.raises(ValueError, match="Adresse d'administrateur invalide"):
+            bootstrap(
+                session,
+                organization_name="Entreprise",
+                admin_email="admin@entreprise.invalid",
+                admin_full_name="",
+            )
+        session.rollback()
+        # Rien n'a été écrit : un refus qui laisse une trace est un demi-refus.
+        assert session.scalars(select(Organization)).all() == []
+        assert session.scalars(select(User)).all() == []
+
+
+@pytest.mark.parametrize(
+    "adresse",
+    [
+        "admin@entreprise.invalid",
+        "admin@entreprise.test",
+        "admin@entreprise.localhost",
+        "admin",
+        "admin@",
+        "@entreprise.example",
+        "   ",
+    ],
+)
+def test_it_refuses_every_address_shape_the_api_would_refuse(migrated: None, adresse: str) -> None:
+    with _session() as session:
+        with pytest.raises(ValueError, match="Adresse d'administrateur invalide"):
+            bootstrap(
+                session,
+                organization_name="Entreprise",
+                admin_email=adresse,
+                admin_full_name="",
+            )
+        session.rollback()
+
+
+def test_a_documentation_domain_is_accepted(migrated: None) -> None:
+    """`.example` est réservé à la documentation et passe la validation.
+
+    C'est ce que les exemples doivent employer — et ce que la répétition
+    de préproduction emploie.
+    """
+    with _session() as session:
+        _, utilisateur, cree = bootstrap(
+            session,
+            organization_name="Entreprise",
+            admin_email="Premiere.Administratrice@entreprise.example",
+            admin_full_name="",
+        )
+        session.commit()
+        assert cree
+        # Normalisée en minuscules, comme la connexion la cherchera.
+        assert utilisateur.email == "premiere.administratrice@entreprise.example"
+
+
+def test_the_refusal_names_the_reason(migrated: None) -> None:
+    """Un refus qui ne dit pas pourquoi se contourne à l'aveugle.
+
+    Sans le motif, quelqu'un essaie une autre adresse au hasard plutôt que de
+    comprendre que `.invalid` est réservé.
+    """
+    with _session() as session:
+        with pytest.raises(ValueError) as capture:
+            bootstrap(
+                session,
+                organization_name="Entreprise",
+                admin_email="admin@entreprise.invalid",
+                admin_full_name="",
+            )
+        session.rollback()
+        assert "reserved" in str(capture.value) or "réserv" in str(capture.value)
