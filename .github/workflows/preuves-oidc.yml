@@ -46,6 +46,35 @@ jobs:
       - name: Ce que la répétition a conclu
         run: python3 -m json.tool preuves/rapport.json || cat preuves/rapport.json
 
+      - name: Chronologie du parcours de connexion
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re
+
+          MASQUE = re.compile(r"((?:code|login_code|state|nonce|token|id_token)=)[^&\" ]+")
+
+          lignes = []
+          for brut in pathlib.Path("preuves/journaux/api.log").read_text(errors="replace").splitlines():
+              corps = brut.split(" ", 2)[-1]
+              try:
+                  fait = json.loads(corps)
+              except Exception:
+                  lignes.append(("?", "BRUT", MASQUE.sub(r"\\1<masqué>", brut[-160:])))
+                  continue
+              if fait.get("logger") == "uvicorn.access":
+                  continue
+              horo = brut.split(" ")[2][11:23] if len(brut.split(" ")) > 2 else "?"
+              if fait.get("message") == "http_request":
+                  lignes.append((horo, f'{fait["status_code"]}', f'{fait["method"]:4s} {fait["path"]:34s} {fait["duration_ms"]:>7} ms  req={fait["request_id"][:8]}'))
+              else:
+                  m = MASQUE.sub(r"\\1<masqué>", str(fait.get("message"))[:150])
+                  lignes.append((horo, fait.get("level", "?"), f'{fait.get("logger","")}: {m}'))
+
+          interessant = [l for l in lignes if "/auth/" in l[2] or "oidc" in l[2].lower() or l[1] not in ("200", "303", "?")]
+          for horo, etat, texte in interessant:
+              print(f"{horo}  {etat:5s}  {texte}")
+          PY
+
       - name: Le parcours navigateur, en entier
         run: |
           # Masquage AVANT affichage. Ces valeurs sont consommées et périmées
