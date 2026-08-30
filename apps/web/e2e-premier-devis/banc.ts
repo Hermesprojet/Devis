@@ -50,6 +50,9 @@ export const ADMIN = process.env.METREO_BANC_ADMIN ?? 'admin@neuve.example'
 /** Où déposer les identifiants du devis produit, pour l'appelant qui en a besoin. */
 export const CONSTAT = process.env.METREO_BANC_CONSTAT || null
 
+/** Idem pour la pièce jointe : la répétition la relit après restauration. */
+export const CONSTAT_DOCUMENTS = process.env.METREO_BANC_CONSTAT_DOCUMENTS || null
+
 const RACINE_DEPOT = join(__dirname, '..', '..', '..')
 const DOSSIER_API = join(RACINE_DEPOT, 'apps', 'api')
 const DOSSIER_WEB = join(RACINE_DEPOT, 'apps', 'web')

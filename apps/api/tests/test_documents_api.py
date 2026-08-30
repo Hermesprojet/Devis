@@ -169,13 +169,17 @@ def test_owner_can_create_list_and_read_safe_document_metadata(
     assert forbidden_document.isdisjoint(detail.json())
     assert forbidden_document.isdisjoint(listing.json()[0])
     revision = revisions.json()[0]
-    assert {
-        "storage_key",
-        "original_filename",
-        "organization_id",
-        "created_by",
-    }.isdisjoint(revision)
+    # Ce qui ne sort JAMAIS : un chemin interne et un identifiant de tenant.
+    assert {"storage_key", "organization_id", "created_by"}.isdisjoint(revision)
     assert revision["sha256"] == "d" * 64
+    # Ce qui sort, depuis que des écrans les demandent : le nom du fichier tel
+    # qu'il a été déposé, et l'auteur du dépôt. Les masquer rendait la liste
+    # des documents illisible — on ne reconnaît pas une pièce de chantier à
+    # son UUID — et ces deux faits appartiennent à l'organisation qui les a
+    # produits. Le nom est neutralisé au dépôt : il ne peut pas rapporter de
+    # chemin.
+    assert revision["original_filename"] == "nom-client-confidentiel.pdf"
+    assert "author_email" in revision
 
 
 def test_viewer_reads_but_cannot_create_document(seeded_client: TestClient) -> None:

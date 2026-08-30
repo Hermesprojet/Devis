@@ -8,6 +8,7 @@ validation reason or extracted value.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -19,12 +20,15 @@ from ..models import (
     DocumentStepRun,
     ExtractionProposal,
     Project,
+    User,
     ValidationDecision,
+    new_id,
     utcnow,
 )
 from ..schemas import ValidationDecisionCreate
 from ..security.auth import TenantContext
 from . import audit
+from .document_storage import StockageLocal
 from .locking import lock_owned
 from .tenant import get_owned, owned_query
 
@@ -85,16 +89,20 @@ def list_documents(
     *,
     organization_id: str,
     project_id: str,
+    include_archived: bool = False,
 ) -> list[Document]:
-    """List active documents after proving ownership of the project."""
+    """Lister les documents d'un projet, après avoir prouvé qu'il est à nous.
+
+    Les archivés sont hors de la liste courante par défaut, et rendus sur
+    demande explicite : archiver range, cela ne détruit pas. `owned_query`
+    écarte déjà `deleted_at`, qui est une autre notion — aucune route ne le
+    pose, et l'archivage ne le touche pas.
+    """
     get_owned(session, Project, organization_id, project_id, label="Projet")
-    return list(
-        session.scalars(
-            owned_query(Document, organization_id)
-            .where(Document.project_id == project_id)
-            .order_by(Document.created_at.desc())
-        ).all()
-    )
+    query = owned_query(Document, organization_id).where(Document.project_id == project_id)
+    if not include_archived:
+        query = query.where(Document.status == "active")
+    return list(session.scalars(query.order_by(Document.created_at.desc())).all())
 
 
 def create_document(
@@ -151,7 +159,7 @@ def list_revisions(
 ) -> list[DocumentRevision]:
     """List safe revision metadata after a tenant-scoped parent lookup."""
     get_document(session, organization_id=organization_id, document_id=document_id)
-    return list(
+    revisions = list(
         session.scalars(
             select(DocumentRevision)
             .where(
@@ -161,6 +169,28 @@ def list_revisions(
             .order_by(DocumentRevision.revision_number.desc())
         ).all()
     )
+    _attacher_auteurs(session, revisions)
+    return revisions
+
+
+def _attacher_auteurs(session: Session, revisions: list[DocumentRevision]) -> None:
+    """Poser l'adresse de l'auteur sur chaque révision, en UNE requête.
+
+    Le schéma de sortie la lit comme un attribut ordinaire. Résoudre l'auteur
+    ligne par ligne ferait une requête par révision pour un écran qui les
+    affiche toutes.
+    """
+    identifiants = {r.created_by for r in revisions if r.created_by}
+    adresses: dict[str, str] = {}
+    if identifiants:
+        adresses = {
+            str(identifiant): str(courriel)
+            for identifiant, courriel in session.execute(
+                select(User.id, User.email).where(User.id.in_(identifiants))
+            ).all()
+        }
+    for revision in revisions:
+        revision.author_email = adresses.get(revision.created_by or "")  # type: ignore[attr-defined]
 
 
 def next_revision_number(
@@ -189,6 +219,223 @@ def next_revision_number(
         )
     )
     return int(current or 0) + 1
+
+
+class RevisionRefusee(Exception):
+    """Un dépôt refusé pour une raison métier, pas pour son contenu."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def get_revision(
+    session: Session,
+    *,
+    organization_id: str,
+    document_id: str,
+    revision_id: str,
+) -> DocumentRevision:
+    """La révision, ou 404 — jamais celle d'un autre document ni d'un autre tenant.
+
+    Le parent est vérifié d'abord : sans cela, un identifiant de révision
+    valide suffirait à traverser un document auquel l'appelant n'a pas accès.
+    """
+    get_document(session, organization_id=organization_id, document_id=document_id)
+    revision = session.scalars(
+        select(DocumentRevision).where(
+            DocumentRevision.organization_id == organization_id,
+            DocumentRevision.document_id == document_id,
+            DocumentRevision.id == revision_id,
+        )
+    ).one_or_none()
+    if revision is None:
+        raise RevisionRefusee("not_found", "Révision introuvable.")
+    return revision
+
+
+def add_revision(
+    session: Session,
+    *,
+    context: TenantContext,
+    document_id: str,
+    stockage: StockageLocal,
+    morceaux: Iterable[bytes],
+    filename: str | None,
+    declared_media_type: str | None,
+    plafond: int,
+) -> DocumentRevision:
+    """Attacher un original à un document, en une révision immuable de plus.
+
+    L'ordre est choisi, et c'est là tout le sujet :
+
+    1. le document est vérifié AVANT d'écrire quoi que ce soit — inutile de
+       recevoir 25 Mio pour découvrir ensuite qu'ils ne nous concernent pas ;
+    2. le fichier est écrit SANS tenir le moindre verrou. Un dépôt dure ; tenir
+       la ligne du document verrouillée pendant ce temps bloquerait tout autre
+       dépôt sur le même document ;
+    3. le numéro de révision n'est alloué qu'ensuite, sous verrou, et c'est
+       cette section courte qui sérialise deux dépôts simultanés ;
+    4. si l'insertion échoue, l'original qui vient d'être écrit est retiré :
+       un fichier sans ligne en base ne serait plus jamais retrouvable.
+
+    La révision naît `published`. Elle n'a pas d'état intermédiaire à décrire :
+    le fichier est complet et vérifié avant que la ligne n'existe. Les triggers
+    de la migration la rendent immuable dès cet instant, sur SQLite comme sur
+    PostgreSQL.
+    """
+    document = get_document(
+        session, organization_id=context.organization_id, document_id=document_id
+    )
+    if document.status != "active":
+        raise RevisionRefusee(
+            "document_archived",
+            "Ce document est archivé. Réactivez-le avant d'y joindre une révision.",
+        )
+
+    revision_id = new_id()
+    original = stockage.ecrire(
+        organization_id=context.organization_id,
+        document_id=document_id,
+        revision_id=revision_id,
+        morceaux=morceaux,
+        plafond=plafond,
+        declared_media_type=declared_media_type,
+    )
+
+    try:
+        numero = next_revision_number(
+            session, organization_id=context.organization_id, document_id=document_id
+        )
+        # Le doublon est constaté APRÈS le verrou : deux dépôts simultanés du
+        # même contenu doivent en voir un seul passer, et le second l'apprendre.
+        deja = session.scalars(
+            select(DocumentRevision).where(
+                DocumentRevision.organization_id == context.organization_id,
+                DocumentRevision.document_id == document_id,
+                DocumentRevision.sha256 == original.sha256,
+            )
+        ).first()
+        if deja is not None:
+            raise RevisionRefusee(
+                "duplicate_content",
+                f"Ce contenu est déjà la révision {deja.revision_number} de ce document, "
+                "au bit près. Rien n'a été remplacé.",
+            )
+
+        revision = DocumentRevision(
+            id=revision_id,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_number=numero,
+            sha256=original.sha256,
+            byte_size=original.byte_size,
+            media_type=original.media_type,
+            declared_media_type=original.declared_media_type,
+            storage_key=original.storage_key,
+            original_filename=filename or "document",
+            status="published",
+            published_at=utcnow(),
+            created_by=context.user.id,
+        )
+        session.add(revision)
+        session.flush()
+        # L'auteur, sur la réponse du dépôt comme sur celle de la liste : c'est
+        # la même vue, elle doit porter les mêmes champs.
+        revision.author_email = context.user.email  # type: ignore[attr-defined]
+    except BaseException:
+        stockage.supprimer(original.storage_key)
+        raise
+
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="document.revision_added",
+        object_type="document_revision",
+        object_id=revision.id,
+        summary=f"Révision {numero} déposée ({original.byte_size} octets)",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        # Des FAITS sur le fichier, jamais un fragment de son contenu : une
+        # empreinte, une taille, un type, et le type qu'annonçait le client.
+        payload={
+            "document_id": document_id,
+            "revision_number": numero,
+            "sha256": original.sha256,
+            "byte_size": original.byte_size,
+            "media_type": original.media_type,
+            "declared_media_type": original.declared_media_type,
+        },
+    )
+    return revision
+
+
+def record_download(
+    session: Session,
+    *,
+    context: TenantContext,
+    revision: DocumentRevision,
+) -> None:
+    """Qui a emporté quel original, et quand.
+
+    Un document de chantier peut être confidentiel : savoir qu'il est sorti,
+    et par qui, fait partie de ce que l'entreprise doit pouvoir montrer. Le
+    journal ne porte que des faits sur le fichier — jamais un octet de son
+    contenu, jamais un jeton.
+    """
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="document.downloaded",
+        object_type="document_revision",
+        object_id=revision.id,
+        summary=f"Révision {revision.revision_number} téléchargée",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        payload={
+            "document_id": revision.document_id,
+            "revision_number": revision.revision_number,
+            "sha256": revision.sha256,
+            "byte_size": revision.byte_size,
+        },
+    )
+
+
+def set_document_status(
+    session: Session,
+    *,
+    context: TenantContext,
+    document_id: str,
+    status: str,
+) -> Document:
+    """Archiver ou réactiver. Rien n'est détruit, ni en base ni sur le volume.
+
+    L'archivage sort le document des listes courantes ; ses révisions, son
+    historique et ses originaux restent intacts et téléchargeables. C'est la
+    seule forme de retrait qu'offre l'interface : aucune route ne supprime un
+    original, parce qu'un devis gelé peut le citer.
+    """
+    if status not in ("active", "archived"):
+        raise RevisionRefusee("invalid_status", "Statut inconnu.")
+    document = get_document(
+        session, organization_id=context.organization_id, document_id=document_id
+    )
+    if document.status == status:
+        return document
+    document.status = status
+    session.flush()
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="document.archived" if status == "archived" else "document.reactivated",
+        object_type="document",
+        object_id=document.id,
+        summary="Document archivé" if status == "archived" else "Document réactivé",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+    )
+    return document
 
 
 def claim_step_run(

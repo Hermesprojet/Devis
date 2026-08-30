@@ -101,7 +101,13 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
 
 #: Routes taking a file upload rather than a JSON body.
 MULTIPART: frozenset[str] = frozenset(
-    {"POST /api/v1/price-books/versions/{version_id}/imports/preview"}
+    {
+        "POST /api/v1/price-books/versions/{version_id}/imports/preview",
+        # Le dépôt d'un original est lui aussi un multipart. Le corps envoyé
+        # ci-dessous n'atteint jamais le disque : la route vérifie le document
+        # — donc le tenant — avant d'ouvrir le flux.
+        "POST /api/v1/documents/{document_id}/revisions",
+    }
 )
 
 #: A minimal, valid CSV for the multipart routes above.
@@ -128,6 +134,7 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
     bodies: dict[str, dict[str, Any]] = {
         "POST /api/v1/projects": {"reference": "X-001", "name": "Projet"},
         "POST /api/v1/projects/{project_id}/documents": {"title": "Cahier des charges"},
+        "PATCH /api/v1/documents/{document_id}": {"status": "archived"},
         "PATCH /api/v1/projects/{project_id}": {"name": "Renommé"},
         "POST /api/v1/projects/{project_id}/boqs": {"name": "Bordereau"},
         "POST /api/v1/boqs/{boq_id}/items": {

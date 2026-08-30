@@ -409,7 +409,11 @@ class DocumentRevision(TimestampMixin, Base):
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Le type lu dans les octets. C'est lui qui fait foi et qui est re-servi.
     media_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: Le type qu'annonçait le client. Gardé à part, jamais utilisé pour
+    #: décider : il ne sert qu'à expliquer un refus ou une incohérence.
+    declared_media_type: Mapped[str | None] = mapped_column(String(120))
     storage_key: Mapped[str] = mapped_column(String(512), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")

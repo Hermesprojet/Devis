@@ -583,7 +583,8 @@ etape_devis() {
 	fi
 
 	local constat="$TRAVAIL/devis-navigateur.json"
-	rm -f "$constat"
+	CONSTAT_DOCUMENTS="$TRAVAIL/documents-navigateur.json"
+	rm -f "$constat" "$CONSTAT_DOCUMENTS"
 
 	local journal="$JOURNAUX/parcours-navigateur.txt"
 	if ! (
@@ -592,6 +593,7 @@ etape_devis() {
 				METREO_BANC_ADMIN="$ADMIN" \
 				METREO_BANC_ORGANISATION="$ORGANISATION" \
 				METREO_BANC_CONSTAT="$constat" \
+				METREO_BANC_CONSTAT_DOCUMENTS="$CONSTAT_DOCUMENTS" \
 				npx playwright test --config=playwright.premier-devis.config.ts
 	) >"$journal" 2>&1; then
 		ko "le parcours navigateur du premier devis a échoué"
@@ -633,49 +635,70 @@ etape_devis() {
 }
 
 # ===========================================================================
-#  9. Le stockage persistant
+#  9. Le stockage persistant — de vraies pièces jointes
 # ===========================================================================
 #
-# Aucune route de l'application ne téléverse aujourd'hui : la phase 2A expose
-# les métadonnées documentaires et rien d'autre. Le volume existe pourtant, il
-# est monté, et `METREO_STORAGE_ROOT` le désigne.
-#
-# Ce qu'on éprouve ici est donc le MÉCANISME de persistance — volume monté,
-# accessible en écriture au processus non-root, survivant au remplacement des
-# conteneurs, capturé par la sauvegarde et rendu par la restauration — et non
-# une fonctionnalité produit qui n'existe pas encore. La distinction est dite
-# plutôt que masquée.
+# Cette étape écrivait elle-même un fichier dans le volume, faute de route de
+# téléversement : elle éprouvait le MÉCANISME de persistance, et le disait.
+# Il y a désormais une route, et le parcours navigateur vient de déposer un
+# CCTP et sa révision à la souris, à travers le proxy. Ce qui est éprouvé ici
+# n'est donc plus un mécanisme, mais les octets qu'un utilisateur a réellement
+# confiés au produit — et qu'il doit retrouver après un redémarrage, une
+# sauvegarde et une restauration.
 
-PIECE="/var/lib/metreo/piece-de-repetition.txt"
-EMPREINTE_PIECE=""
+#: Empreintes des originaux déposés, renseignées par `etape_stockage`, relues
+#: après redémarrage et après restauration.
+EMPREINTES_PIECES=""
+CONSTAT_DOCUMENTS=""
+
+#: Empreintes de TOUS les originaux du volume, une par ligne, triées, calculées
+#: par le processus applicatif dans son propre conteneur.
+empreintes_du_volume() {
+	local projet="${1:-$PROJET}"
+	docker compose --project-name "$projet" "${COMPOSITIONS[@]}" --env-file "$ENV_FICHIER" \
+		exec -T api sh -c \
+		"find /var/lib/metreo/documents -type f 2>/dev/null -exec sha256sum {} + | cut -d' ' -f1 | sort" \
+		2>/dev/null | tr -d '\r' | grep -E '^[0-9a-f]{64}$' | sort
+}
 
 etape_stockage() {
-	titre "Stockage persistant (mécanisme, en l'absence de route de téléversement)"
+	titre "Stockage persistant — les pièces déposées au navigateur"
 
-	local contenu="Pièce déposée par la répétition — devis $ESTIMATION_ID"
-	if dans_api sh -c "printf '%s' '$contenu' > $PIECE" 2>/dev/null; then
-		ok "un fichier a été écrit dans le volume par le processus applicatif"
-	else
-		ko "le volume de stockage n'est pas accessible en écriture"
+	if [[ ! -s "$CONSTAT_DOCUMENTS" ]]; then
+		ko "le parcours navigateur n'a pas rendu les empreintes des pièces jointes"
 		return 1
 	fi
 
-	EMPREINTE_PIECE=$(dans_api sh -c "sha256sum $PIECE | cut -d' ' -f1" 2>/dev/null | tr -d '\r')
-	if [[ -n "$EMPREINTE_PIECE" ]]; then
-		ok "empreinte de la pièce : ${EMPREINTE_PIECE:0:16}…"
-	else
-		ko "impossible de calculer l'empreinte de la pièce"
-	fi
+	local attendues
+	attendues=$(python3 -c '
+import json, sys
+print("\n".join(sorted(json.load(open(sys.argv[1]))["sha256"])))' "$CONSTAT_DOCUMENTS")
 
-	# Non-root : une image qui traitera des fichiers venant de tiers ne doit pas
+	EMPREINTES_PIECES=$(empreintes_du_volume)
+	if [[ -z "$EMPREINTES_PIECES" ]]; then
+		ko "aucun original dans le volume après le parcours"
+		return 1
+	fi
+	ok "$(wc -l <<<"$EMPREINTES_PIECES") original(aux) écrit(s) dans le volume par l'application"
+
+	# Les octets du disque sont comparés à l'empreinte calculée CÔTÉ CLIENT,
+	# et non à celle que le serveur aurait recalculée sur ses propres octets :
+	# c'est la seule comparaison qui prouve que rien n'a été transformé.
+	verifier "les originaux du volume portent les empreintes déposées" \
+		"$attendues" "$EMPREINTES_PIECES"
+
+	# Non-root : une image qui traite des fichiers venant de tiers ne doit pas
 	# les écrire en uid 0.
-	local uid
+	local uid proprietaire
 	uid=$(dans_api id -u 2>/dev/null | tr -d '\r')
 	if [[ "$uid" != "0" ]]; then
 		ok "le processus applicatif ne tourne pas en root (uid $uid)"
 	else
 		ko "le processus applicatif tourne en root"
 	fi
+	proprietaire=$(dans_api sh -c \
+		"find /var/lib/metreo/documents -type f | head -1 | xargs stat -c %u" 2>/dev/null | tr -d '\r')
+	verifier "les originaux appartiennent à ce même compte" "$uid" "$proprietaire"
 }
 
 # ===========================================================================
@@ -715,10 +738,9 @@ etape_redemarrage() {
 	verifier_montant "le total du devis est inchangé" "$TOTAL_HT" "$ht_apres"
 	verifier "l'empreinte de l'instantané est inchangée" "$EMPREINTE_DEVIS" "$empreinte_apres"
 
-	# Le stockage : la pièce doit être là, au même contenu.
-	local empreinte_piece_apres
-	empreinte_piece_apres=$(dans_api sh -c "sha256sum $PIECE 2>/dev/null | cut -d' ' -f1" | tr -d '\r')
-	verifier "la pièce déposée a survécu au redémarrage" "$EMPREINTE_PIECE" "$empreinte_piece_apres"
+	# Le stockage : les originaux doivent être là, aux mêmes octets.
+	verifier "les pièces jointes ont survécu au redémarrage" \
+		"$EMPREINTES_PIECES" "$(empreintes_du_volume)"
 
 	# Et la session reste valable : le jeton n'était adossé à aucune mémoire
 	# de processus.
@@ -936,12 +958,53 @@ with get_session_factory()() as s:
 	verifier "l'organisation est revenue" "$ORGANISATION" "$organisation"
 	verifier "le premier administrateur est revenu" "$ADMIN" "$courriel"
 
-	# La pièce déposée dans le stockage.
-	local piece_restauree
-	piece_restauree=$(docker compose --project-name "$PROJET_RESTAURE" "${COMPOSITIONS[@]}" \
-		--env-file "$ENV_FICHIER" exec -T api sh -c "sha256sum $PIECE 2>/dev/null | cut -d' ' -f1" \
-		| tr -d '\r')
-	verifier "la pièce du stockage est revenue à l'identique" "$EMPREINTE_PIECE" "$piece_restauree"
+	# Les pièces jointes : mêmes octets, dans une pile qui n'a jamais vu le
+	# navigateur qui les a déposées.
+	verifier "les originaux sont revenus à l'identique" \
+		"$EMPREINTES_PIECES" "$(empreintes_du_volume "$PROJET_RESTAURE")"
+
+	# Et surtout : ils se TÉLÉCHARGENT encore. Comparer des empreintes sur le
+	# disque ne dit rien de la route — un `storage_key` restauré qui ne
+	# désignerait plus rien rendrait 410 sans que le fichier ait bougé.
+	local telecharge
+	telecharge=$(docker compose --project-name "$PROJET_RESTAURE" "${COMPOSITIONS[@]}" \
+		--env-file "$ENV_FICHIER" exec -T \
+		-e METREO_DATABASE_URL="postgresql+psycopg://$utilisateur:$motdepasse@db:5432/metreo_restore_repetition" \
+		api python -c "
+import hashlib
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from metreo_api.db import get_session_factory
+from metreo_api.main import create_app
+from metreo_api.models import DocumentRevision
+
+with get_session_factory()() as session:
+    revisions = session.scalars(
+        select(DocumentRevision).order_by(DocumentRevision.revision_number)
+    ).all()
+    attendus = [(r.document_id, r.id, r.sha256) for r in revisions]
+
+# Le jeton du parcours reste valable : même secret de signature, mêmes comptes.
+entetes = {'Authorization': 'Bearer $JETON'}
+with TestClient(create_app()) as client:
+    for document_id, revision_id, empreinte in attendus:
+        reponse = client.get(
+            f'/api/v1/documents/{document_id}/revisions/{revision_id}/content',
+            headers=entetes,
+        )
+        obtenue = hashlib.sha256(reponse.content).hexdigest()
+        marque = 'ok' if reponse.status_code == 200 and obtenue == empreinte else 'ko'
+        print(f'{marque} {reponse.status_code} {obtenue}')
+" 2>/dev/null | tr -d '\r' | grep -E '^(ok|ko) ')
+
+	if [[ -z "$telecharge" ]]; then
+		ko "aucun téléchargement n'a pu être rejoué dans la pile restaurée"
+	elif grep -q '^ko ' <<<"$telecharge"; then
+		ko "un original restauré ne se télécharge pas à l'identique"
+		detail "$telecharge"
+	else
+		ok "$(grep -c '^ok ' <<<"$telecharge") original(aux) retéléchargé(s) à l'identique après restauration"
+	fi
 }
 
 # ===========================================================================
@@ -1056,7 +1119,7 @@ if ((${#ETAPES_KO[@]} > 0)); then
 fi
 
 python3 - "$RAPPORT" "${#ETAPES_OK[@]}" "${#ETAPES_KO[@]}" \
-	"$TOTAL_HT" "$EMPREINTE_DEVIS" "$EMPREINTE_PIECE" "$(basename "${ARCHIVE:-}")" <<'PY'
+	"$TOTAL_HT" "$EMPREINTE_DEVIS" "$(head -1 <<<"$EMPREINTES_PIECES")" "$(basename "${ARCHIVE:-}")" <<'PY'
 import json
 import sys
 

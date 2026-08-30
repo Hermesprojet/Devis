@@ -225,8 +225,13 @@ demo-guards: ## Éprouver les garde-fous de la démonstration, sans Docker
 	$(PY) -m pytest ops/tests/test_demonstration.py -q
 
 .PHONY: secrets
-secrets: ## Refuser un .env versionné ou un motif de secret évident
+secrets: ## Refuser un .env versionné, un secret évident ou un fichier téléversé
 	@if git ls-files | grep -E '(^|/)\.env$$'; then echo "Un .env est versionné." >&2; exit 1; fi
+	@# Le contenu déposé par les utilisateurs vit dans `METREO_STORAGE_ROOT`,
+	@# jamais dans l'historique : un CCTP client commité serait irrattrapable,
+	@# et une suppression RGPD ne pourrait plus rien pour lui.
+	@if git ls-files | grep -E '(^|/)(var/)?storage/documents/'; then \
+		echo "Du contenu téléversé est versionné." >&2; exit 1; fi
 	@if git grep -nEI '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})' \
 	     -- . ':!.github/workflows/ci.yml' ':!Makefile'; then \
 		echo "Motif de secret détecté." >&2; exit 1; fi

@@ -214,6 +214,68 @@ export const api = {
   createProject: (body: Record<string, unknown>) =>
     request<Project>('/projects', { method: 'POST', body }),
 
+  documents: (projectId: string, includeArchived = false) =>
+    request<DocumentSummary[]>(
+      `/projects/${projectId}/documents${includeArchived ? '?include_archived=true' : ''}`,
+    ),
+  createDocument: (projectId: string, body: Record<string, unknown>) =>
+    request<DocumentSummary>(`/projects/${projectId}/documents`, { method: 'POST', body }),
+  setDocumentStatus: (documentId: string, status: 'active' | 'archived') =>
+    request<DocumentSummary>(`/documents/${documentId}`, { method: 'PATCH', body: { status } }),
+  documentRevisions: (documentId: string) =>
+    request<DocumentRevision[]>(`/documents/${documentId}/revisions`),
+  revisionContentUrl: (documentId: string, revisionId: string) =>
+    `${API_URL}/documents/${documentId}/revisions/${revisionId}/content`,
+
+  /**
+   * Dépose un fichier, en rendant l'avancement de l'envoi.
+   *
+   * `XMLHttpRequest` et non `fetch` : seul le premier expose la progression de
+   * l'ENVOI. Sur 25 Mio derrière une connexion de chantier, une barre qui
+   * avance est la différence entre attendre et croire que c'est planté.
+   */
+  uploadRevision: (
+    documentId: string,
+    file: File,
+    onProgress?: (pourcent: number) => void,
+  ): Promise<DocumentRevision> =>
+    new Promise((resolve, reject) => {
+      const session = loadSession()
+      const corps = new FormData()
+      corps.append('file', file)
+      const requete = new XMLHttpRequest()
+      requete.open('POST', `${API_URL}/documents/${documentId}/revisions`)
+      if (session) requete.setRequestHeader('Authorization', `Bearer ${session.token}`)
+      requete.upload.onprogress = (evenement) => {
+        if (evenement.lengthComputable && onProgress) {
+          onProgress(Math.round((evenement.loaded / evenement.total) * 100))
+        }
+      }
+      requete.onload = () => {
+        let charge: unknown = null
+        try {
+          charge = JSON.parse(requete.responseText)
+        } catch {
+          charge = null
+        }
+        if (requete.status >= 200 && requete.status < 300) {
+          resolve(charge as DocumentRevision)
+          return
+        }
+        // La même enveloppe d'erreur que `request` : sans elle, l'utilisateur
+        // lirait « Erreur HTTP 422 » là où l'API nomme précisément le refus.
+        const detail = (charge as { detail?: unknown } | null)?.detail ?? {
+          message: `Erreur HTTP ${requete.status}`,
+        }
+        const erreur = new ApiError(requete.status, detail)
+        endSessionIfExpired(erreur)
+        reject(erreur)
+      }
+      requete.onerror = () => reject(new ApiError(0, { message: 'Envoi interrompu.' }))
+      requete.onabort = () => reject(new ApiError(0, { message: 'Envoi annulé.' }))
+      requete.send(corps)
+    }),
+
   boqs: (projectId: string) => request<Boq[]>(`/projects/${projectId}/boqs`),
   createBoq: (projectId: string, body: Record<string, unknown>) =>
     request<Boq>(`/projects/${projectId}/boqs`, { method: 'POST', body }),
@@ -378,6 +440,29 @@ export type BoqItem = {
   formula: string | null
   price_item_id: string | null
   composite_price_id: string | null
+}
+
+export type DocumentSummary = {
+  id: string
+  project_id: string
+  title: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export type DocumentRevision = {
+  id: string
+  document_id: string
+  revision_number: number
+  sha256: string
+  byte_size: number
+  media_type: string
+  original_filename: string
+  author_email: string | null
+  status: string
+  published_at: string | null
+  created_at: string
 }
 
 export type Member = {

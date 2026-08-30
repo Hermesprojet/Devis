@@ -450,8 +450,28 @@ class DocumentOut(ApiModel):
     updated_at: datetime
 
 
+class DocumentStatusUpdate(BaseModel):
+    """Archiver ou réactiver. Aucune suppression n'est exposée."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["active", "archived"]
+
+
 class DocumentRevisionOut(ApiModel):
-    """Métadonnées sûres : aucune clé de stockage ni chemin utilisateur."""
+    """Ce qu'une révision montre — et ce qu'elle ne montre pas.
+
+    `storage_key` et `organization_id` restent hors de la réponse : le premier
+    est un chemin interne que rien au dehors n'a à connaître, le second un
+    identifiant de tenant que le porteur du jeton n'a pas à lire.
+
+    `original_filename` et l'auteur, en revanche, sont rendus. Ils étaient
+    masqués tant qu'aucun écran ne les demandait ; une liste de documents sans
+    nom de fichier ni auteur n'est pas consultable, et ces deux faits
+    appartiennent à l'organisation qui a déposé le fichier. Le nom est
+    neutralisé au dépôt — réduit à son dernier segment, sans séparateur ni
+    caractère de contrôle — il ne peut donc pas rapporter de chemin.
+    """
 
     id: str
     document_id: str
@@ -459,6 +479,10 @@ class DocumentRevisionOut(ApiModel):
     sha256: str
     byte_size: int
     media_type: str
+    original_filename: str
+    #: L'adresse de qui a déposé, résolue par le service. `None` si le compte a
+    #: été retiré depuis : la révision, elle, ne disparaît pas avec lui.
+    author_email: str | None = None
     status: str
     published_at: datetime | None
     created_at: datetime

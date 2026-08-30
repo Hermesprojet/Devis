@@ -130,6 +130,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # aurait de bonnes raisons d'être caché pose son propre en-tête,
             # et celui-ci le respecte.
             response.headers.setdefault("Cache-Control", "no-store")
+            # Même raisonnement, et même portée : l'API sert désormais des
+            # octets déposés par des utilisateurs. Caddy pose déjà cet en-tête
+            # en préproduction, mais en développement et sur le banc de recette
+            # le navigateur parle directement à l'API — une protection qui
+            # dépend du déploiement n'en est pas une.
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
             logger.info(
                 "http_request",
                 extra={

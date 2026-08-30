@@ -27,7 +27,12 @@ dist/
 *.key
 
 # Local data
-/var/
+#
+# `var/` et non `/var/` : la racine de stockage par défaut est RELATIVE au
+# répertoire de travail, et `apps/api/var/storage/` échappait donc à la règle
+# ancrée. Un CCTP client commité par mégarde serait irrattrapable, et une
+# suppression RGPD ne pourrait plus rien pour lui.
+var/
 /storage/
 *.sqlite3
 *.db

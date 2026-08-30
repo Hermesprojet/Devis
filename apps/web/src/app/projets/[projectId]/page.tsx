@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
+import { DocumentsDuProjet } from '@/components/DocumentsDuProjet'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
 import {
@@ -174,6 +175,8 @@ export default function ProjectPage() {
         </span>
       </p>
       <ErrorNotice error={error} />
+
+      <DocumentsDuProjet projectId={projectId} />
 
       <h2>{t('boq.title')}</h2>
       {boqs.length === 0 ? (
