@@ -213,6 +213,16 @@ export const api = {
   project: (id: string) => request<Project>(`/projects/${id}`),
   createProject: (body: Record<string, unknown>) =>
     request<Project>('/projects', { method: 'POST', body }),
+  updateProject: (id: string, body: Record<string, unknown>) =>
+    request<Project>(`/projects/${id}`, { method: 'PATCH', body }),
+
+  clients: (query = '') => request<Client[]>(`/clients${query}`),
+  client: (id: string) => request<Client>(`/clients/${id}`),
+  createClient: (body: Record<string, unknown>) =>
+    request<Client>('/clients', { method: 'POST', body }),
+  updateClient: (id: string, body: Record<string, unknown>) =>
+    request<Client>(`/clients/${id}`, { method: 'PATCH', body }),
+  archiveClient: (id: string) => request<void>(`/clients/${id}`, { method: 'DELETE' }),
 
   documents: (projectId: string, includeArchived = false) =>
     request<DocumentSummary[]>(
@@ -320,6 +330,22 @@ export const api = {
       method: 'POST',
       body: { confirm: true, label: label ?? null },
     }),
+  issueQuote: (estimateId: string, versionId: string, body: Record<string, unknown>) =>
+    request<IssuedQuote>(`/estimates/${estimateId}/versions/${versionId}/issue`, {
+      method: 'POST',
+      body,
+    }),
+  issuedQuotes: (projectId: string) =>
+    request<IssuedQuote[]>(`/projects/${projectId}/issued-quotes`),
+  /**
+   * L'URL du PDF remis — à passer par `fetchExport`, jamais à un `<a href>`.
+   *
+   * La route exige le jeton porteur, et le jeton vit dans `sessionStorage` :
+   * un lien nu partirait sans en-tête et rapporterait un 401 que l'écran ne
+   * saurait pas expliquer.
+   */
+  issuedQuoteUrl: (quoteId: string) => `${API_URL}/issued-quotes/${quoteId}/document.pdf`,
+
   exportUrl: (estimateId: string, versionId: string, kind: 'csv' | 'internal' | 'quote') => {
     const suffix =
       kind === 'quote'
@@ -413,11 +439,55 @@ export type OrgSettings = {
   missing_price_policy: string
 }
 
+export type Client = {
+  id: string
+  name: string
+  company_number: string | null
+  billing_address: string | null
+  postal_code: string | null
+  city: string | null
+  country_code: string
+  contact_name: string | null
+  email: string | null
+  phone: string | null
+  notes: string | null
+  status: string
+}
+
+/** Ce qu'il faut à une fiche pour qu'un devis lui soit adressable. */
+export const CHAMPS_POUR_EMETTRE = ['name', 'billing_address', 'postal_code', 'city'] as const
+
+export function manqueAuClient(fiche: Client | null | undefined): string[] {
+  if (!fiche) return [...CHAMPS_POUR_EMETTRE]
+  return CHAMPS_POUR_EMETTRE.filter((champ) => !(fiche[champ] ?? '').trim())
+}
+
+export type IssuedQuote = {
+  id: string
+  number: string
+  project_id: string
+  estimate_id: string
+  estimate_version_id: string
+  client_id: string
+  client_name: string
+  issued_at: string
+  valid_until: string
+  terms: string | null
+  include_internal_costs: boolean
+  pdf_sha256: string
+  pdf_byte_size: number
+  version_number: number
+  issued_by_email: string | null
+}
+
 export type Project = {
   id: string
   reference: string
   client_reference: string | null
   name: string
+  /** La fiche du répertoire, quand le chantier en a une. */
+  client_id: string | null
+  /** Le nom libre d'avant le répertoire. Conservé, jamais converti d'office. */
   client_name: string | null
   city: string | null
   country_code: string

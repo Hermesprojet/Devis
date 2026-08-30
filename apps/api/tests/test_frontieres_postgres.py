@@ -144,3 +144,79 @@ def test_sur_postgres_une_creation_est_visible_d_une_autre_connexion_au_moment_d
     assert "PRJ-PG-VISIBLE" in dernier.vu, (
         f"Une autre connexion PostgreSQL ne voit pas encore le projet annoncé : {dernier}"
     )
+
+
+def test_le_verrou_de_sequence_serialise_deux_numerotations_concurrentes(
+    seeded: dict[str, str],
+) -> None:
+    """Deux connexions numérotent EN MÊME TEMPS et repartent avec deux numéros.
+
+    C'est le seul endroit où cette garantie se prouve. SQLite n'a pas de
+    `SELECT … FOR UPDATE` : il n'y montrerait que le dernier rempart —
+    `uq_issued_quote_number` rejetant la perdante, éprouvé dans
+    `test_devis_emis.py`. Ici, le verrou fait mieux que rejeter : la seconde
+    connexion ATTEND, relit un maximum désormais validé, et obtient le rang
+    suivant. Les deux émissions aboutissent, avec deux numéros distincts.
+
+    Le verrou porte sur la ligne `Organization`, dans le mode déjà utilisé par
+    la séquence d'audit (`FOR NO KEY UPDATE`). Réutiliser la même ligne et le
+    même mode est ce qui garantit l'absence de nouvel ordre de verrouillage,
+    donc de nouvel interblocage — voir `services/locking.py`.
+    """
+    import threading
+
+    from metreo_api.db import get_session_factory
+    from metreo_api.models import Organization
+    from metreo_api.services import issuance
+
+    with get_session_factory()() as lecture:
+        organisation = lecture.scalars(select(Organization.id)).first()
+    assert organisation
+
+    quand = issuance.maintenant()
+    motif = "DEV-{year}-{sequence:04d}"
+    #: `a_pris_le_verrou` sépare les deux étapes : la seconde connexion ne
+    #: démarre qu'une fois la première DÉJÀ sous verrou. Sans cela, les deux
+    #: pourraient s'exécuter l'une après l'autre et le test passerait sans
+    #: jamais avoir mis le verrou à l'épreuve.
+    a_pris_le_verrou = threading.Event()
+    resultats: dict[str, tuple[str, int, int]] = {}
+    erreurs: list[BaseException] = []
+
+    def premiere() -> None:
+        try:
+            with get_session_factory()() as session:
+                resultats["a"] = issuance.numeroter(
+                    session, organization_id=organisation, motif=motif, quand=quand
+                )
+                a_pris_le_verrou.set()
+                # Le verrou tient jusqu'à la validation : la seconde connexion
+                # attend ici, et non pas « peut-être ».
+                threading.Event().wait(0.5)
+                session.commit()
+        except BaseException as erreur:  # remonté par le fil principal
+            erreurs.append(erreur)
+            a_pris_le_verrou.set()
+
+    def seconde() -> None:
+        try:
+            assert a_pris_le_verrou.wait(timeout=30)
+            with get_session_factory()() as session:
+                resultats["b"] = issuance.numeroter(
+                    session, organization_id=organisation, motif=motif, quand=quand
+                )
+                session.commit()
+        except BaseException as erreur:
+            erreurs.append(erreur)
+
+    fils = [threading.Thread(target=premiere), threading.Thread(target=seconde)]
+    for fil in fils:
+        fil.start()
+    for fil in fils:
+        fil.join(timeout=60)
+        assert not fil.is_alive(), "une numérotation ne s'est jamais terminée"
+
+    assert not erreurs, erreurs
+    assert set(resultats) == {"a", "b"}
+    numeros = {resultats["a"][0], resultats["b"][0]}
+    assert len(numeros) == 2, f"le même numéro a été servi deux fois : {resultats}"

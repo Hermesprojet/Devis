@@ -23,6 +23,8 @@ export const PERMISSIONS = {
   boqWrite: 'boq:write',
   estimateWrite: 'estimate:write',
   documentWrite: 'document:write',
+  projectRead: 'project:read',
+  projectWrite: 'project:write',
 } as const
 
 export type PermissionName = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]

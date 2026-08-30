@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
+import { EmissionDuDevis } from '@/components/EmissionDuDevis'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
 import { api, type Computation, type EstimateLine } from '@/lib/api'
@@ -182,6 +183,8 @@ export default function EstimateVersionPage() {
           <button onClick={() => setConfirmingFreeze(false)}>{t('common.cancel')}</button>
         </div>
       )}
+
+      <EmissionDuDevis estimateId={estimateId} versionId={versionId} frozen={frozen} />
 
       <div className="card" style={{ padding: 0 }}>
         <table>

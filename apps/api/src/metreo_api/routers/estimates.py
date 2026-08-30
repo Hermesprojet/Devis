@@ -19,7 +19,6 @@ from ..models import (
     Estimate,
     EstimateVersion,
     IssuedQuote,
-    Organization,
     OrganizationSettings,
     PriceBookVersion,
     PriceItem,
@@ -532,11 +531,22 @@ def _stockage(settings: Settings) -> StockageLocal:
 
 
 def _refus_emission(exc: EmissionRefusee) -> HTTPException:
+    """Deux familles de refus, deux codes, et la même frontière partout.
+
+    409 quand c'est l'ÉTAT qui s'y oppose — version non gelée, chantier sans
+    fiche, fiche trop maigre, version déjà émise : le corps envoyé était
+    correct, c'est le monde qui n'est pas prêt, et l'écran doit inviter à agir
+    ailleurs. 422 quand c'est la DEMANDE qui est fautive — une validité déjà
+    passée : le corps se corrige sur place.
+
+    Le `code` reste ce que l'écran lit pour choisir son message ; le statut
+    HTTP dit seulement où se trouve la correction à faire.
+    """
     codes = {
         "version_not_frozen": status.HTTP_409_CONFLICT,
         "already_issued": status.HTTP_409_CONFLICT,
-        "client_required": status.HTTP_422_UNPROCESSABLE_ENTITY,
-        "client_incomplete": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "client_required": status.HTTP_409_CONFLICT,
+        "client_incomplete": status.HTTP_409_CONFLICT,
         "validity_in_the_past": status.HTTP_422_UNPROCESSABLE_ENTITY,
     }
     return HTTPException(
@@ -571,13 +581,11 @@ def issue_quote(
     project = get_owned(
         session, Project, context.organization_id, estimate.project_id, label="Projet"
     )
-    organization = get_owned(
-        session,
-        Organization,
-        context.organization_id,
-        context.organization_id,
-        label="Organisation",
-    )
+    # `context.organization` est déjà la ligne de CETTE organisation, chargée
+    # par l'authentification. `get_owned` ne convient pas ici : il filtre sur
+    # une colonne `organization_id` que la table `organizations` n'a pas — elle
+    # EST le tenant.
+    organization = context.organization
     reglages = session.get(OrganizationSettings, context.organization_id)
 
     defaut = bool(getattr(reglages, "show_internal_costs_in_client_pdf", False))
