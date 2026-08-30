@@ -253,6 +253,28 @@ def test_a_user_in_several_organisations_must_choose(oidc_client) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _transactions_visibles() -> int:
+    """Combien de transactions une session NEUVE voit — donc combien sont validées."""
+    from metreo_api.db import get_session_factory
+
+    with get_session_factory()() as session:
+        return len(list(session.scalars(select(LoginTransaction))))
+
+
+def _codes_encore_valables() -> int:
+    """Combien de codes de connexion une session neuve trouve encore posés."""
+    from metreo_api.db import get_session_factory
+
+    with get_session_factory()() as session:
+        return len(
+            list(
+                session.scalars(
+                    select(LoginTransaction).where(LoginTransaction.login_code.isnot(None))
+                )
+            )
+        )
+
+
 def _code_deja_en_base(message: dict) -> bool | None:
     """Le code annoncé dans `Location` est-il DÉJÀ trouvable par une autre session ?
 
@@ -314,19 +336,27 @@ def oidc_observe(seeded: dict[str, str], monkeypatch: pytest.MonkeyPatch):
 
     application = create_app()
     constats: list[bool | None] = []
+    #: Chemin → ce qu'une session neuve voyait à l'instant de la réponse.
+    releves: dict[str, object] = {}
 
     async def observateur(scope, receive, send):
         async def envoyer(message):
-            if message["type"] == "http.response.start" and scope.get("path", "").endswith(
-                "/oidc/callback"
-            ):
-                constats.append(_code_deja_en_base(message))
+            if message["type"] == "http.response.start":
+                chemin = scope.get("path", "")
+                if chemin.endswith("/oidc/callback"):
+                    constats.append(_code_deja_en_base(message))
+                    releves["callback"] = constats[-1]
+                elif chemin.endswith("/oidc/start"):
+                    releves["start"] = _transactions_visibles()
+                elif chemin.endswith("/oidc/exchange"):
+                    releves["exchange"] = _transactions_visibles()
+                    releves["exchange_codes"] = _codes_encore_valables()
             await send(message)
 
         await application(scope, receive, envoyer)
 
     with TestClient(observateur) as client:
-        yield client, provider, constats
+        yield client, provider, constats, releves
 
 
 def test_le_code_de_connexion_est_valide_en_base_avant_d_etre_annonce(oidc_observe) -> None:
@@ -341,7 +371,7 @@ def test_le_code_de_connexion_est_valide_en_base_avant_d_etre_annonce(oidc_obser
     Il échoue sur ce mécanisme précis : sans le `commit` explicite du callback,
     l'observateur regarde la base au bon instant et n'y trouve rien.
     """
-    client, provider, constats = oidc_observe
+    client, provider, constats, _ = oidc_observe
     client.get("/api/v1/auth/oidc/start")
     state, nonce = _etat_courant("state"), _etat_courant("nonce")
     provider.authorize(
@@ -368,7 +398,7 @@ def test_le_code_de_connexion_est_valide_en_base_avant_d_etre_annonce(oidc_obser
 
 def test_le_code_annonce_s_echange_aussitot_meme_par_une_autre_session(oidc_observe) -> None:
     """Et il s'échange vraiment — la conséquence, après le mécanisme."""
-    client, provider, _ = oidc_observe
+    client, provider, _, _ = oidc_observe
     client.get("/api/v1/auth/oidc/start")
     state, nonce = _etat_courant("state"), _etat_courant("nonce")
     provider.authorize(
@@ -386,3 +416,55 @@ def test_le_code_annonce_s_echange_aussitot_meme_par_une_autre_session(oidc_obse
     code = parse_qs(urlsplit(retour.headers["location"]).query)["login_code"][0]
     echange = client.post("/api/v1/auth/oidc/exchange", json={"login_code": code})
     assert echange.status_code == 200, echange.text
+
+
+def test_les_trois_passages_de_temoin_sont_valides_avant_d_etre_annonces(oidc_observe) -> None:
+    """Le parcours entier, à chacun de ses trois points de bascule.
+
+    À chaque fois, l'API rend au navigateur quelque chose qu'il présentera à la
+    requête SUIVANTE, laquelle interrogera la base par une autre session. Si la
+    validation n'a pas encore eu lieu, cette requête refuse un parcours
+    légitime. C'est arrivé deux fois, à deux points différents :
+
+      - `/start` annonce un `state` — refus `invalid_state` au retour, mesuré
+        sur une connexion concurrente sur dix ;
+      - `/callback` annonce un code de connexion — refus `invalid_login_code`
+        à l'échange, mesuré en répétition de préproduction ;
+      - `/exchange` efface ce code — un rejeu arrivé avant la validation le
+        retrouverait et ouvrirait une seconde session.
+
+    Ce test regarde la base à l'instant de `http.response.start`, par une
+    session neuve, aux trois endroits.
+    """
+    client, provider, _, releves = oidc_observe
+
+    client.get("/api/v1/auth/oidc/start")
+    assert releves["start"] == 1, (
+        "La transaction de connexion n'est pas validée quand l'URL qui porte son "
+        f"`state` part vers le navigateur : {releves['start']} transaction(s) visible(s)."
+    )
+
+    state, nonce = _etat_courant("state"), _etat_courant("nonce")
+    provider.authorize(
+        "code-temoins",
+        subject="s-temoins",
+        email="admin@dubois.demo",
+        email_verified=True,
+        nonce=nonce,
+    )
+    retour = client.get(
+        "/api/v1/auth/oidc/callback",
+        params={"code": "code-temoins", "state": state},
+        follow_redirects=False,
+    )
+    assert releves["callback"] is True, (
+        "Le code de connexion n'est pas validé quand il est annoncé."
+    )
+
+    code = parse_qs(urlsplit(retour.headers["location"]).query)["login_code"][0]
+    echange = client.post("/api/v1/auth/oidc/exchange", json={"login_code": code})
+    assert echange.status_code == 200, echange.text
+    assert releves["exchange_codes"] == 0, (
+        "Le code de connexion est encore posé en base quand la session part vers le "
+        "navigateur : un rejeu arrivé maintenant en ouvrirait une seconde."
+    )

@@ -84,6 +84,15 @@ def start(
         url = oidc.start(session, settings, metadata=metadata, return_to=_safe_return_to(return_to))
     except oidc.OidcError as exc:
         raise _erreur(exc) from exc
+
+    # VALIDER AVANT D'ANNONCER — voir la note du callback, plus bas.
+    #
+    # Cette URL porte le `state` de la transaction qu'on vient d'écrire. Le
+    # navigateur part au fournisseur et revient avec, sur une AUTRE requête.
+    # Si la validation n'a pas eu lieu, `_consume_transaction` ne trouve rien
+    # et refuse « invalid_state » une connexion parfaitement légitime.
+    # Mesuré au banc : une sur dix connexions concurrentes.
+    session.commit()
     return OidcStartOut(authorization_url=url)
 
 
@@ -241,7 +250,11 @@ def exchange(
     # ne doit pouvoir le retrouver, même par erreur de requête.
     transaction.login_code = None
     transaction.login_code_expires_at = None
-    session.flush()
+    # Troisième et dernier passage de témoin du parcours, et le plus sensible :
+    # l'usage unique du code ne vaut que si son effacement est validé. Un rejeu
+    # arrivé avant la validation trouverait le code encore là et ouvrirait une
+    # seconde session.
+    session.commit()
 
     jeton, duree = issue_token(
         user_id=transaction.user_id, organization_id=choisie, settings=settings
