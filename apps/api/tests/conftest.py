@@ -27,6 +27,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 API_ROOT = Path(__file__).resolve().parents[1]
+#: La racine de l'arbre de travail : rien de ce que la suite écrit n'a le
+#: droit d'y atterrir.
+RACINE_DEPOT = API_ROOT.parents[1]
 
 #: PostgreSQL URL the suite should run against, when asked.
 TEST_DATABASE_URL = os.environ.get("METREO_TEST_DATABASE_URL", "").strip()
@@ -143,8 +146,15 @@ def app_env(database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     # `apps/api/var/storage/` — dans l'arbre du dépôt. Mesuré : la matrice
     # d'autorisation, qui exerce chaque route avec un rôle permis, y avait
     # laissé cinq originaux.
-    stockage = tmp_path / "stockage"
+    stockage = (tmp_path / "stockage").resolve()
     stockage.mkdir(exist_ok=True)
+    # Vérifié AVANT le premier octet, et non constaté après coup : `.gitignore`
+    # n'est qu'une seconde barrière, et une seconde barrière ne protège de rien
+    # quand la première n'existe pas.
+    assert RACINE_DEPOT not in stockage.parents, (
+        f"La racine de stockage du test est dans l'arbre du dépôt : {stockage}. "
+        "Un test qui écrit là finit par faire commiter un original."
+    )
     monkeypatch.setenv("METREO_STORAGE_ROOT", str(stockage))
 
     from metreo_api import config, db
@@ -154,6 +164,38 @@ def app_env(database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     yield
     db.reset_engine()
     config.get_settings.cache_clear()
+
+
+def _originaux_dans_le_depot() -> list[str]:
+    """Tout fichier déposé sous un `var/storage` de l'arbre de travail."""
+    trouves: list[str] = []
+    for stockage in RACINE_DEPOT.rglob("var/storage"):
+        if ".git" in stockage.parts or "node_modules" in stockage.parts:
+            continue
+        trouves += [str(f.relative_to(RACINE_DEPOT)) for f in stockage.rglob("*") if f.is_file()]
+    return sorted(trouves)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def aucun_original_dans_le_depot() -> Iterator[None]:
+    """Le dépôt doit être aussi propre après la suite qu'avant elle.
+
+    Cette garde ne remplace pas l'isolation par test : elle la CONTRÔLE. Un
+    test qui construirait son propre `StockageLocal` sur un chemin relatif
+    échapperait à `app_env` ; il n'échappe pas à ceci.
+    """
+    avant = _originaux_dans_le_depot()
+    yield
+    apres = _originaux_dans_le_depot()
+    nouveaux = sorted(set(apres) - set(avant))
+    assert not nouveaux, (
+        "La suite a écrit des fichiers de stockage dans l'arbre du dépôt :\n  "
+        + "\n  ".join(nouveaux)
+    )
+    assert not apres, (
+        "Des fichiers de stockage traînent dans l'arbre du dépôt (antérieurs à "
+        "cette suite, mais tout aussi indésirables) :\n  " + "\n  ".join(apres)
+    )
 
 
 def _upgrade(database_url: str) -> None:

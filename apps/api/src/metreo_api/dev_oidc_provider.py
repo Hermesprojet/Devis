@@ -32,7 +32,7 @@ def _b64u(entier: int) -> str:
     return base64.urlsafe_b64encode(brut).rstrip(b"=").decode()
 
 
-def create_provider_app(issuer: str, *, client_id: str) -> FastAPI:
+def create_provider_app(issuer: str, *, client_id: str, decalage_secondes: int = 0) -> FastAPI:
     application = FastAPI(title="Fournisseur OIDC de recette", docs_url=None, redoc_url=None)
 
     @application.get("/.well-known/openid-configuration")
@@ -104,7 +104,11 @@ def create_provider_app(issuer: str, *, client_id: str) -> FastAPI:
         donnees = _CODES.pop(code, None)
         if donnees is None:
             raise HTTPException(status_code=400, detail={"error": "invalid_grant"})
-        maintenant = int(time.time())
+        # `decalage_secondes` simule une horloge de fournisseur qui avance ou
+        # retarde. Sans lui, aucun banc ne peut éprouver ce que l'application
+        # fait d'un jeton daté de travers — et c'est le premier reproche fait
+        # aux connexions qui échouent « sans raison » en exploitation.
+        maintenant = int(time.time()) + decalage_secondes
         id_token = jwt.encode(
             {
                 "iss": issuer,
@@ -153,10 +157,17 @@ def main() -> int:  # pragma: no cover - point d'entrée
     # accepte n'importe quelle adresse sans mot de passe, et ne doit s'ouvrir
     # au réseau que lorsqu'on le demande explicitement.
     parseur.add_argument("--host", default="127.0.0.1")
+    # Décalage d'horloge simulé, en secondes, positif ou négatif. Outil de banc
+    # uniquement : il ne sert qu'à dater les jetons de travers.
+    parseur.add_argument("--decalage-secondes", type=int, default=0)
     arguments = parseur.parse_args()
     issuer = arguments.issuer or f"http://127.0.0.1:{arguments.port}"
     uvicorn.run(
-        create_provider_app(issuer, client_id=arguments.client_id),
+        create_provider_app(
+            issuer,
+            client_id=arguments.client_id,
+            decalage_secondes=arguments.decalage_secondes,
+        ),
         host=arguments.host,
         port=arguments.port,
         log_level="warning",

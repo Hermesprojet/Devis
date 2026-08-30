@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     #: Fenêtre de validité d'une demande de connexion, entre le départ vers le
     #: fournisseur et le retour. Au-delà, `state` est considéré périmé.
     oidc_transaction_ttl_seconds: int = 600
+    #: Tolérance d'horloge acceptée sur les dates du jeton d'identité.
+    #:
+    #: Deux machines n'ont jamais exactement la même heure. Sans tolérance, un
+    #: fournisseur dont l'horloge avance d'une seule seconde date son jeton
+    #: dans le futur, PyJWT le déclare « pas encore valide », et PLUS AUCUNE
+    #: connexion n'aboutit — mesuré au banc : à +60 s, les quatorze scénarios
+    #: échouent sur « Jeton d'identité invalide », sans que rien n'indique
+    #: l'heure. Soixante secondes est la valeur d'usage ; elle reste réglable
+    #: pour un fournisseur qu'on sait plus ou moins bien synchronisé.
+    oidc_clock_skew_seconds: int = 60
 
     # Storage --------------------------------------------------------------
     storage_root: str = "./var/storage"

@@ -83,8 +83,12 @@ class FakeProvider:
         signer: Any = None,
         name: str = "Administrateur",
         expires_in: int = 300,
+        decalage: int = 0,
     ) -> str:
-        maintenant = int(time.time())
+        # `decalage` déplace l'horloge du fournisseur, en secondes. Deux
+        # machines n'ont jamais la même heure ; sans ce réglage, aucun test ne
+        # peut dire ce que l'application fait d'un jeton daté de travers.
+        maintenant = int(time.time()) + decalage
         charge: dict[str, Any] = {
             "iss": issuer or self.issuer,
             "sub": subject,

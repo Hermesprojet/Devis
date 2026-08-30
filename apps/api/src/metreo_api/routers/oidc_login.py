@@ -84,6 +84,15 @@ def start(
         url = oidc.start(session, settings, metadata=metadata, return_to=_safe_return_to(return_to))
     except oidc.OidcError as exc:
         raise _erreur(exc) from exc
+
+    # VALIDER AVANT D'ANNONCER — voir la note du callback, plus bas.
+    #
+    # Cette URL porte le `state` de la transaction qu'on vient d'écrire. Le
+    # navigateur part au fournisseur et revient avec, sur une AUTRE requête.
+    # Si la validation n'a pas eu lieu, `_consume_transaction` ne trouve rien
+    # et refuse « invalid_state » une connexion parfaitement légitime.
+    # Mesuré au banc : une sur dix connexions concurrentes.
+    session.commit()
     return OidcStartOut(authorization_url=url)
 
 
@@ -152,15 +161,33 @@ def callback(
     # travailler quelqu'un dans la mauvaise sans qu'il l'ait voulu.
     if len(appartenances) == 1:
         transaction.organization_id = appartenances[0].organization_id
-    transaction.login_code = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+    code_de_connexion = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode()
+    transaction.login_code = code_de_connexion
     transaction.login_code_expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(
         seconds=settings.oidc_login_code_ttl_seconds
     )
-    session.flush()
+    retour_vers = transaction.return_to
 
-    parametres = {"login_code": transaction.login_code}
-    if transaction.return_to:
-        parametres["return_to"] = transaction.return_to
+    # VALIDER AVANT D'ANNONCER. Ce `commit` explicite n'est pas une ceinture
+    # de plus sur celui de `session_scope` : c'est le seul qui ait lieu à temps.
+    #
+    # FastAPI exécute le code de sortie des dépendances `yield` — donc le
+    # `commit` de `session_scope` — APRÈS avoir envoyé la réponse. Mesuré : une
+    # dépendance dont la sortie dort une demi-seconde rend quand même la main
+    # au client en deux millisecondes.
+    #
+    # Or cette réponse est une redirection que le navigateur suit sur-le-champ,
+    # et la requête suivante — l'échange — cherche ce code par une AUTRE
+    # session. Sans ce commit, on annonce un code qui n'est pas encore en base :
+    # si le navigateur revient avant que la validation n'ait eu lieu, l'échange
+    # ne trouve rien et refuse une connexion parfaitement légitime. C'est la
+    # cause des connexions perdues en répétition de préproduction : un 401
+    # `invalid_login_code` sur un code émis quarante-sept millisecondes plus tôt.
+    session.commit()
+
+    parametres = {"login_code": code_de_connexion}
+    if retour_vers:
+        parametres["return_to"] = retour_vers
     return _retour(**parametres)
 
 
@@ -223,7 +250,11 @@ def exchange(
     # ne doit pouvoir le retrouver, même par erreur de requête.
     transaction.login_code = None
     transaction.login_code_expires_at = None
-    session.flush()
+    # Troisième et dernier passage de témoin du parcours, et le plus sensible :
+    # l'usage unique du code ne vaut que si son effacement est validé. Un rejeu
+    # arrivé avant la validation trouverait le code encore là et ouvrirait une
+    # seconde session.
+    session.commit()
 
     jeton, duree = issue_token(
         user_id=transaction.user_id, organization_id=choisie, settings=settings

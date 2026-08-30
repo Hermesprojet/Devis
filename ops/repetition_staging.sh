@@ -27,8 +27,19 @@ set -uo pipefail
 RACINE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$RACINE"
 
-PROJET="metreo-repetition"
-PROJET_RESTAURE="metreo-repetition-restaure"
+# Un SUFFIXE propre à cette exécution.
+#
+# Deux répétitions qui se suivent sur la même machine partageaient jusqu'ici
+# leurs noms de projet, donc leurs volumes. `down --volumes` les efface bien,
+# mais une exécution interrompue avant son démontage laissait derrière elle un
+# volume que la suivante adoptait — et cette suivante ne partait plus d'une
+# préproduction neuve sans que rien ne le dise. Cinq répétitions d'affilée ne
+# prouvent quelque chose qu'à cette condition.
+#
+# `MARQUE` reste réglable pour rejouer un démontage à la main.
+MARQUE="${MARQUE:-$(date +%s)-$$}"
+PROJET="metreo-repetition-$MARQUE"
+PROJET_RESTAURE="metreo-repetition-restaure-$MARQUE"
 
 COMPOSITIONS=(-f infra/docker-compose.staging.yml -f infra/docker-compose.repetition.yml)
 ENV_FICHIER="${ENV_FICHIER:-$RACINE/infra/repetition.env}"

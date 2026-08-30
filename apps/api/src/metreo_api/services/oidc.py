@@ -271,7 +271,20 @@ def verify_id_token(
             audience=settings.oidc_client_id,
             issuer=metadata.issuer,
             options={"require": ["exp", "iat", "sub", "aud", "iss"]},
+            # La tolérance d'horloge s'applique à `exp`, `iat` et `nbf`. Sans
+            # elle, un fournisseur qui avance d'une seconde émet un jeton daté
+            # du futur, que PyJWT refuse comme « pas encore valide » — et plus
+            # personne ne se connecte, sans que le motif parle d'heure.
+            leeway=settings.oidc_clock_skew_seconds,
         )
+    except jwt.ImmatureSignatureError as erreur:
+        # Distinct de l'expiration, et nommé : « pas encore valide » désigne
+        # une horloge, pas un jeton fabriqué. Confondre les deux envoyait
+        # chercher une attaque là où il fallait régler un serveur de temps.
+        raise OidcError(
+            "token_not_yet_valid",
+            "Le jeton d'identité est daté du futur : les horloges divergent.",
+        ) from erreur
     except jwt.ExpiredSignatureError as erreur:
         raise OidcError("token_expired", "Le jeton d'identité a expiré.") from erreur
     except jwt.InvalidAudienceError as erreur:
