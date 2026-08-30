@@ -80,6 +80,31 @@ verifier() {
 	return 1
 }
 
+# Deux MONTANTS, comparés comme des nombres et non comme des chaînes.
+#
+# « 23080.10 » et « 23080.1 » désignent la même somme ; le premier vient de
+# l'API, qui rend le montant tel qu'il s'imprime, le second de la colonne
+# NUMERIC relue par le pilote. Les comparer caractère par caractère faisait
+# échouer la restauration dès que le total finissait par un zéro — mesuré, et
+# indépendant de la restauration elle-même, qui avait parfaitement rendu la
+# bonne valeur.
+verifier_montant() {
+	local libelle="$1" attendu="$2" obtenu="$3"
+	if python3 -c '
+import sys
+from decimal import Decimal, InvalidOperation
+try:
+    sys.exit(0 if Decimal(sys.argv[1]) == Decimal(sys.argv[2]) else 1)
+except InvalidOperation:
+    sys.exit(1)
+' "$attendu" "$obtenu"; then
+		ok "$libelle"
+		return 0
+	fi
+	ko "$libelle — attendu « $attendu », obtenu « $obtenu »"
+	return 1
+}
+
 compose() { docker compose --project-name "$PROJET" "${COMPOSITIONS[@]}" --env-file "$ENV_FICHIER" "$@"; }
 
 # ---------------------------------------------------------------------------
@@ -687,7 +712,7 @@ etape_redemarrage() {
 	local ht_apres empreinte_apres
 	ht_apres=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["total_ht"])' "$apres")
 	empreinte_apres=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["snapshot_sha256"])' "$apres")
-	verifier "le total du devis est inchangé" "$TOTAL_HT" "$ht_apres"
+	verifier_montant "le total du devis est inchangé" "$TOTAL_HT" "$ht_apres"
 	verifier "l'empreinte de l'instantané est inchangée" "$EMPREINTE_DEVIS" "$empreinte_apres"
 
 	# Le stockage : la pièce doit être là, au même contenu.
@@ -906,7 +931,7 @@ with get_session_factory()() as s:
 
 	IFS='|' read -r etat total empreinte organisation courriel <<<"$restaure"
 	verifier "le devis restauré est toujours gelé" "frozen" "$etat"
-	verifier "le total du document est celui d'avant la sauvegarde" "$TOTAL_HT" "$total"
+	verifier_montant "le total du document est celui d'avant la sauvegarde" "$TOTAL_HT" "$total"
 	verifier "l'empreinte de l'instantané est identique" "$EMPREINTE_DEVIS" "$empreinte"
 	verifier "l'organisation est revenue" "$ORGANISATION" "$organisation"
 	verifier "le premier administrateur est revenu" "$ADMIN" "$courriel"
