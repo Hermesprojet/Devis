@@ -177,8 +177,12 @@ export default function EstimateVersionPage() {
         {internal && exportInternal.available && (
           <button onClick={() => void download('internal')}>{t('estimate.exportInternal')}</button>
         )}
+        {/* Un APERÇU, et le bouton le dit : le document remis au client est le
+            PDF du devis émis, seul à être figé, numéroté et immuable. */}
         {exportClient.available && (
-          <button onClick={() => void download('quote')}>{t('estimate.quotePreview')}</button>
+          <button onClick={() => void download('quote')} title={t('estimate.quotePreviewHint')}>
+            {t('estimate.quotePreview')}
+          </button>
         )}
         <div className="spacer" />
         {freezing.available && (

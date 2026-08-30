@@ -143,6 +143,9 @@ const fr: Dictionary = {
   'estimate.exportCsv': 'Export CSV',
   'estimate.exportInternal': 'Export interne',
   'estimate.quotePreview': 'Aperçu du devis',
+  'estimate.quotePreviewHint':
+    'Aperçu interne, recalculé à chaque ouverture. Le document remis au client est le '
+    + 'PDF du devis émis : lui seul porte un numéro, une date et un contenu figé.',
   'estimate.documentTotalUnknown':
     "Cette version a été gelée avant l'enregistrement des totaux du document. "
     + 'Ouvrez le devis pour en connaître le montant imprimé.',
