@@ -402,12 +402,25 @@ def _conditions_et_signatures(
 
 
 def _replier(texte: str, largeur: int) -> list[str]:
-    """Replie un paragraphe sur plusieurs lignes, sans couper les mots."""
+    """Replie un paragraphe sur plusieurs lignes, sans couper les mots.
+
+    Sauf un mot qui, à lui seul, dépasse la largeur : une référence de marché,
+    une URL, un identifiant collé. Le laisser entier le faisait déborder DANS
+    LA MARGE — le texte ne se perdait pas, il sortait du papier. On le coupe
+    alors franchement, ce qui est le moindre mal : un mot césuré se lit, un mot
+    qui sort de la page ne s'imprime pas.
+    """
     if not texte.strip():
         return [""]
     lignes: list[str] = []
     courante = ""
     for mot in texte.split():
+        while len(mot) > largeur:
+            if courante:
+                lignes.append(courante)
+                courante = ""
+            lignes.append(mot[:largeur])
+            mot = mot[largeur:]
         if courante and len(courante) + 1 + len(mot) > largeur:
             lignes.append(courante)
             courante = mot

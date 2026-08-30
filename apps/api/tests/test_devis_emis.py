@@ -426,6 +426,34 @@ def test_des_conditions_longues_passent_a_la_page_suivante_au_lieu_de_disparaitr
     assert texte.index("Article 25.") < texte.index("Bon pour accord")
 
 
+def test_une_reference_interminable_est_cesuree_plutot_que_de_sortir_de_la_page(
+    seeded_client: TestClient, admin, estimate, version, pret
+) -> None:
+    """Un mot plus large que la colonne débordait DANS LA MARGE.
+
+    Une référence de marché ou un identifiant collé n'a pas d'espace où se
+    replier. Le laisser entier le faisait sortir du papier : le texte était
+    bien dans le fichier, mais pas sur la feuille imprimée.
+    """
+    reference = "MP" + "0" * 200
+    devis = _emettre(
+        seeded_client, admin, estimate, version, terms=f"Marché : {reference} — lot unique."
+    ).json()
+    texte = moteur_pdf.extraire_le_texte(
+        seeded_client.get(
+            f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=admin
+        ).content
+    )
+    assert "0" * 90 in texte, "la référence n'a pas été imprimée du tout"
+    assert max(len(ligne) for ligne in texte.splitlines()) <= 110, (
+        "une ligne dépasse la largeur du texte : elle sort de la page"
+    )
+    #: Et ce qui SUIT la référence est toujours là : la césure replie, elle
+    #: ne tronque pas. Le texte se poursuit à la ligne, d'où le contrôle sur
+    #: le dernier mot plutôt que sur la phrase entière.
+    assert "unique." in texte
+
+
 def test_un_pdf_disparu_du_volume_donne_410_et_non_un_document_reconstruit(
     seeded_client: TestClient, admin, estimate, version, pret
 ) -> None:
