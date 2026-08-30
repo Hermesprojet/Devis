@@ -1,0 +1,79 @@
+# Rouvrir les preuves d'une répétition déjà exécutée.
+#
+# Les artefacts d'un run sont téléchargeables depuis un runner, jamais depuis
+# le poste d'analyse : ce travail ne fait que les rouvrir, les nettoyer de tout
+# secret, et les recopier dans son propre journal, qui, lui, se lit.
+#
+# Branche jetable. Ce fichier n'a pas vocation à rejoindre `main`.
+name: Preuves d'une répétition passée
+
+on:
+  push:
+    branches: ["claude/preuves**"]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  preuves:
+    name: Preuves ${{ matrix.etiquette }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - etiquette: "446c5ca ROUGE"
+            artefact: 9730185484
+          - etiquette: "0331c40 ROUGE"
+            artefact: 9734360021
+          - etiquette: "7b2895c ROUGE"
+            artefact: 9734487757
+          - etiquette: "b19d85b VERTE"
+            artefact: 9734123244
+    steps:
+      - name: Rouvrir l'artefact
+        env:
+          JETON: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -sSL -H "Authorization: Bearer $JETON" \
+            -o artefact.zip \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ matrix.artefact }}/zip"
+          mkdir -p preuves && unzip -q artefact.zip -d preuves
+          find preuves -type f | sort
+
+      - name: Ce que la répétition a conclu
+        run: python3 -m json.tool preuves/rapport.json || cat preuves/rapport.json
+
+      - name: Le parcours navigateur, en entier
+        run: |
+          # Masquage AVANT affichage. Ces valeurs sont consommées et périmées
+          # depuis longtemps, mais un secret périmé reste un secret : on ne
+          # prend pas l'habitude de les recopier dans un journal public.
+          masquer() {
+            sed -E \
+              -e 's/((code|login_code|state|nonce|code_verifier|code_challenge|access_token|token|client_secret|id_token)=)[^&" ]+/\1<masqué>/g' \
+              -e 's/("(access_token|login_code|state|nonce|code|id_token)"[[:space:]]*:[[:space:]]*")[^"]*/\1<masqué>/g' \
+              -e 's/(Bearer )[A-Za-z0-9._-]+/\1<masqué>/g'
+          }
+          f=preuves/journaux/parcours-navigateur.txt
+          if [ -f "$f" ]; then masquer < "$f"; else echo "(absent)"; fi
+
+      - name: Ce que l'API a répondu
+        run: |
+          masquer() {
+            sed -E \
+              -e 's/((code|login_code|state|nonce|code_verifier|code_challenge|access_token|token|client_secret|id_token)=)[^&" ]+/\1<masqué>/g' \
+              -e 's/("(access_token|login_code|state|nonce|code|id_token)"[[:space:]]*:[[:space:]]*")[^"]*/\1<masqué>/g' \
+              -e 's/(Bearer )[A-Za-z0-9._-]+/\1<masqué>/g'
+          }
+          for service in api oidc proxy web migrate; do
+            echo "════════ $service ════════"
+            f="preuves/journaux/$service.log"
+            [ -f "$f" ] || { echo "(absent)"; continue; }
+            echo "-- lignes d'authentification et refus --"
+            grep -aiE '/auth/|oidc|"status_code": *[45]|" [45][0-9][0-9] |login' "$f" | masquer | tail -60 || true
+            echo "-- fin du journal --"
+            masquer < "$f" | tail -15
+          done
