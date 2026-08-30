@@ -48,6 +48,12 @@ PUBLIC: frozenset[str] = frozenset(
         "GET /api/v1/roles",
         "GET /api/v1/region-profiles",
         "POST /api/v1/auth/dev-login",
+        # Le parcours de connexion lui-même : il ne peut pas exiger le jeton
+        # qu'il sert à obtenir. Sa protection est ailleurs — `state`, `nonce`,
+        # PKCE et la signature du fournisseur — et les tests OIDC l'exercent.
+        "GET /api/v1/auth/oidc/start",
+        "GET /api/v1/auth/oidc/callback",
+        "POST /api/v1/auth/oidc/exchange",
     }
 )
 
