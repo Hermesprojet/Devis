@@ -147,6 +147,27 @@ _classer(
     # Reprendre un devis remis se trace : c'est un document commercial, et
     # savoir qui en a repris une copie a la même valeur que savoir qui l'a émis.
     "GET /api/v1/issued-quotes/{quote_id}/document.pdf",
+    # Le cycle commercial. Chacune écrit au journal du devis, et chacune
+    # journalise : mettre un document entre les mains d'un client, ou
+    # enregistrer sa réponse, sont des actes qui s'expliquent après coup.
+    "POST /api/v1/issued-quotes/{quote_id}/share-links",
+    "DELETE /api/v1/issued-quotes/{quote_id}/share-links/{link_id}",
+    "POST /api/v1/issued-quotes/{quote_id}/events",
+    "POST /api/v1/issued-quotes/{quote_id}/events/{event_id}/correction",
+    # Le côté public. La réponse du client s'audite comme le reste ; la
+    # consultation, elle, n'écrit qu'au journal du devis — mais elle écrit,
+    # et son 200 ne doit pas partir avant que ce soit validé.
+    "POST /api/v1/public/quote/response",
+)
+
+# -- Écritures sans audit ----------------------------------------------------
+_classer(
+    Famille.ECRITURE,
+    # Ouvrir une session publique crée une ligne et rien d'autre. Elle n'est
+    # pas auditée : ce serait tracer la mécanique du cookie, pas un acte.
+    "POST /api/v1/public/quote-sessions",
+    # La première ouverture inscrit une consultation au journal du devis.
+    "GET /api/v1/public/quote",
 )
 
 # -- Écritures qui posent aussi des octets sur le volume ---------------------

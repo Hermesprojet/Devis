@@ -1446,6 +1446,189 @@ class IssuedQuote(TimestampMixin, Base):
 
 
 # --------------------------------------------------------------------------
+# Le cycle commercial d'un devis remis
+# --------------------------------------------------------------------------
+
+#: Les canaux par lesquels un devis circule ou une réponse revient.
+CANAUX_DE_DEVIS = ("public_link", "email", "phone", "meeting", "other")
+
+#: Ce qui peut arriver à un devis remis. Rien d'autre ne s'écrit.
+EVENEMENTS_DE_DEVIS = (
+    "link_created",
+    "link_revoked",
+    "transmitted",
+    "viewed",
+    "accepted",
+    "declined",
+    "correction",
+)
+
+#: Les deux seules réponses finales. Un devis n'en porte qu'une.
+DECISIONS = ("accepted", "declined")
+
+
+class QuoteEvent(TimestampMixin, Base):
+    """Ce qui est arrivé à un devis remis, dans l'ordre, et sans retour.
+
+    Le devis et son PDF ne bougent pas ; son ÉTAT commercial, lui, évolue. Cet
+    état n'est stocké nulle part : il se déduit de ces événements et de la date
+    du jour — c'est ce qui rend « Expiré » exact à la seconde sans tâche
+    planifiée, et ce qui interdit à un état enregistré de diverger de son
+    histoire.
+
+    **Rien ne se réécrit.** Une erreur de saisie interne se corrige par un
+    événement de type `correction` qui DÉSIGNE l'original et porte un motif
+    obligatoire ; l'original reste lisible, barré plutôt qu'effacé. Un
+    déclencheur refuse `UPDATE` et `DELETE` sur cette table : la promesse
+    « append-only » n'est pas une convention entre gens bien élevés.
+
+    Deux dates, jamais une seule. `effective_at` est le moment où la chose a eu
+    lieu — un accord donné au téléphone jeudi — et `recorded_at` celui où
+    quelqu'un l'a écrite ici, le lundi suivant. Les confondre ferait mentir la
+    chronologie sur l'un ou l'autre.
+    """
+
+    __tablename__ = "quote_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["issued_quote_id", "organization_id"],
+            ["issued_quotes.id", "issued_quotes.organization_id"],
+            name="fk_quote_events_quote_tenant",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "kind IN ('" + "','".join(EVENEMENTS_DE_DEVIS) + "')", name="ck_quote_event_kind"
+        ),
+        CheckConstraint(
+            "channel IS NULL OR channel IN ('" + "','".join(CANAUX_DE_DEVIS) + "')",
+            name="ck_quote_event_channel",
+        ),
+        #: Une correction sans motif ne corrige rien : elle efface sans dire
+        #: pourquoi. Et un motif sans correction n'a personne à désigner.
+        CheckConstraint(
+            "(corrects_event_id IS NULL AND correction_reason IS NULL) "
+            "OR (corrects_event_id IS NOT NULL AND correction_reason IS NOT NULL "
+            "AND kind = 'correction')",
+            name="ck_quote_event_correction",
+        ),
+        Index("ix_quote_events_quote", "issued_quote_id", "recorded_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    issued_quote_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("issued_quotes.id", ondelete="CASCADE"), nullable=False
+    )
+    #: L'empreinte du PDF au moment de l'événement. Recopiée plutôt que jointe :
+    #: elle prouve, dans la ligne même, DE QUEL document il est question.
+    pdf_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    channel: Mapped[str | None] = mapped_column(String(20))
+
+    #: Qui, dans l'entreprise, a provoqué l'événement. Absent quand il vient du
+    #: destinataire par le lien public — et c'est le point.
+    actor_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+    actor_email: Mapped[str | None] = mapped_column(String(255))
+
+    #: Ce que le répondant DÉCLARE de lui-même. Aucune vérification d'identité
+    #: n'est faite, et l'interface le dit : ce n'est pas une signature
+    #: électronique qualifiée.
+    respondent_name: Mapped[str | None] = mapped_column(String(200))
+    respondent_email: Mapped[str | None] = mapped_column(String(255))
+
+    comment: Mapped[str | None] = mapped_column(Text)
+
+    effective_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+    corrects_event_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("quote_events.id"))
+    correction_reason: Mapped[str | None] = mapped_column(Text)
+
+    request_id: Mapped[str | None] = mapped_column(String(64))
+
+
+class QuoteShareLink(TimestampMixin, Base):
+    """Le lien par lequel un destinataire consulte un devis, sans compte.
+
+    **Le secret n'est pas ici.** Seule son empreinte SHA-256 est stockée : une
+    copie de la base ne permet pas d'ouvrir un devis. Le secret brut n'est rendu
+    qu'une fois, à la création, et n'est jamais journalisé.
+
+    Le lien porte sa propre expiration, qui ne dépasse jamais la validité du
+    devis : un document périmé ne se consulte pas plus longtemps que ce que
+    l'entreprise a promis. La révocation est immédiate et vaut aussi pour les
+    sessions publiques déjà ouvertes — celles-ci désignent le lien, et un lien
+    révoqué les invalide toutes.
+    """
+
+    __tablename__ = "quote_share_links"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["issued_quote_id", "organization_id"],
+            ["issued_quotes.id", "issued_quotes.organization_id"],
+            name="fk_quote_share_links_quote_tenant",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_quote_share_links_id_organization"),
+        #: L'empreinte est l'identifiant de recherche : deux liens ne peuvent
+        #: pas partager la même, et la contrainte le tient.
+        UniqueConstraint("secret_sha256", name="uq_quote_share_link_secret"),
+        Index("ix_quote_share_links_quote", "issued_quote_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    issued_quote_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("issued_quotes.id", ondelete="CASCADE"), nullable=False
+    )
+    secret_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    revoked_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+    created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+
+
+class QuotePublicSession(Base):
+    """La session courte d'un destinataire, après échange du secret.
+
+    Elle vit dans un cookie `HttpOnly` : le secret du lien, lui, ne survit pas
+    à la première seconde de la page — il est lu dans le fragment, retiré de
+    l'historique, échangé, et oublié.
+
+    Comme le lien, seule l'empreinte du jeton est stockée. La session ne porte
+    aucun droit propre : elle désigne un lien, et tout ce que le lien perd —
+    révocation, expiration — elle le perd au même instant.
+    """
+
+    __tablename__ = "quote_public_sessions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["share_link_id", "organization_id"],
+            ["quote_share_links.id", "quote_share_links.organization_id"],
+            name="fk_quote_public_sessions_link_tenant",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("token_sha256", name="uq_quote_public_session_token"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    share_link_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("quote_share_links.id", ondelete="CASCADE"), nullable=False
+    )
+    token_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+# --------------------------------------------------------------------------
 # Audit
 # --------------------------------------------------------------------------
 

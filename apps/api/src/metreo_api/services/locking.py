@@ -80,6 +80,10 @@ LOCK_ORDER: tuple[str, ...] = (
     "PriceBookVersion",
     "Estimate",
     "EstimateVersion",
+    # Le devis remis vient après la version dont il est issu. Une décision
+    # commerciale — acceptation ou refus — le verrouille avant de lire son
+    # journal, ce qui sérialise deux réponses opposées simultanées.
+    "IssuedQuote",
 )
 
 #: Kept as an alias so callers read as intent rather than as sequence when they

@@ -196,6 +196,11 @@ class TestTheDebtIsNamedAndBounded:
         # des trois ne peut venir d'une autre organisation.
         "Project",
         "IssuedQuote",
+        # Le cycle commercial : le journal, le lien public et la session
+        # ouverte derrière lui restent tous dans leur organisation.
+        "QuoteEvent",
+        "QuoteShareLink",
+        "QuotePublicSession",
     }
 
     #: Phase 2A, hors périmètre de ce travail.

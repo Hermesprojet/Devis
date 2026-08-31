@@ -85,6 +85,16 @@ REFUS = (
 )
 
 
+def _litteral(texte: str) -> str:
+    """Un littéral SQL sûr, apostrophes doublées.
+
+    Ce message n'en porte pas, mais le suivant en portait une — « ne
+    s'efface » — et SQLite refusait le déclencheur sur une erreur de
+    syntaxe. Une garde ici plutôt qu'un message contraint là-bas.
+    """
+    return "'" + texte.replace("'", "''") + "'"
+
+
 def _table_issued_quotes(action: str) -> sa.Table:
     """La table telle que SQLite doit la reconstruire, actions comprises.
 
@@ -199,14 +209,14 @@ def _poser_le_declencheur() -> None:
             # La condition, et non un refus sec : une organisation supprimée
             # emporte ses devis, et c'est le seul cas admis.
             "WHEN EXISTS (SELECT 1 FROM organizations WHERE id = OLD.organization_id) "
-            f"BEGIN SELECT RAISE(ABORT, '{REFUS}'); END"
+            f"BEGIN SELECT RAISE(ABORT, {_litteral(REFUS)}); END"
         )
         return
     op.execute(
         "CREATE OR REPLACE FUNCTION metreo_conserver_les_devis_emis() RETURNS trigger AS $$\n"
         "BEGIN\n"
         "    IF EXISTS (SELECT 1 FROM organizations WHERE id = OLD.organization_id) THEN\n"
-        f"        RAISE EXCEPTION '{REFUS}'\n"
+        f"        RAISE EXCEPTION {_litteral(REFUS)}\n"
         "            USING ERRCODE = 'restrict_violation';\n"
         "    END IF;\n"
         "    RETURN OLD;\n"

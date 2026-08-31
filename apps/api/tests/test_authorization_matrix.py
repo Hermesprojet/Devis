@@ -70,6 +70,15 @@ PUBLIC: frozenset[str] = frozenset(
         "GET /api/v1/auth/oidc/start",
         "GET /api/v1/auth/oidc/callback",
         "POST /api/v1/auth/oidc/exchange",
+        # Le parcours du destinataire d'un devis. Il n'a pas de compte Metreo
+        # et n'en aura pas : son droit d'accès est le secret du lien, échangé
+        # une fois contre une session courte en cookie `HttpOnly`. Ces routes
+        # refusent tout ce qui ne porte pas cette session — mais elles ne
+        # peuvent pas exiger un jeton porteur, qui n'existe pas de son côté.
+        "POST /api/v1/public/quote-sessions",
+        "GET /api/v1/public/quote",
+        "GET /api/v1/public/quote/document.pdf",
+        "POST /api/v1/public/quote/response",
     }
 )
 
@@ -95,6 +104,7 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
         "GET /api/v1/estimates",
         "GET /api/v1/price-books",
         "GET /api/v1/projects",
+        "GET /api/v1/quotes",
         "GET /api/v1/organization/members",
         # Elle ne lit RIEN de l'organisation : elle applique un motif
         # proposé et rend le numéro qu'il produirait. Il n'y a donc aucun
@@ -146,6 +156,14 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
     bodies: dict[str, dict[str, Any]] = {
         "POST /api/v1/projects": {"reference": "X-001", "name": "Projet"},
         "POST /api/v1/projects/{project_id}/documents": {"title": "Cahier des charges"},
+        "POST /api/v1/issued-quotes/{quote_id}/share-links": {},
+        "POST /api/v1/issued-quotes/{quote_id}/events": {
+            "kind": "transmitted",
+            "channel": "email",
+        },
+        "POST /api/v1/issued-quotes/{quote_id}/events/{event_id}/correction": {
+            "reason": "Canal erroné",
+        },
         "PATCH /api/v1/documents/{document_id}": {"status": "archived"},
         "PATCH /api/v1/projects/{project_id}": {"name": "Renommé"},
         "POST /api/v1/projects/{project_id}/boqs": {"name": "Bordereau"},
@@ -420,7 +438,10 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
                 sequence_year=2026,
                 sequence_number=1,
                 issued_at=datetime(2026, 3, 1, 9, 0, 0),
-                valid_until=date(2026, 4, 1),
+                # Volontairement lointaine : la matrice doit pouvoir créer un
+                # lien de consultation quel que soit le jour où elle tourne, et
+                # un devis périmé ne se partage pas.
+                valid_until=date(2999, 12, 31),
                 organization_snapshot={"name": "Matrice"},
                 client_snapshot={"name": f"Client {reference}"},
                 project_snapshot={"reference": reference},
@@ -435,7 +456,23 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
     finally:
         session.close()
 
+    lien = client.post(
+        f"/api/v1/issued-quotes/{quote_id}/share-links", headers=headers, json={}
+    )
+    assert lien.status_code == 201, lien.text
+    transmis = client.post(
+        f"/api/v1/issued-quotes/{quote_id}/events",
+        headers=headers,
+        json={"kind": "transmitted", "channel": "email"},
+    )
+    assert transmis.status_code == 201, transmis.text
+    evenement = next(
+        e for e in transmis.json()["events"] if e["kind"] == "transmitted"
+    )
+
     return {
+        "share_link": lien.json()["link"]["id"],
+        "quote_event": evenement["id"],
         "tax_rate": taux.json()["id"],
         "membership": membre.json()["id"],
         "client": client_id,
@@ -477,6 +514,8 @@ _PARAM_TO_KEY = {
     "project_id": "project",
     "client_id": "client",
     "quote_id": "issued_quote",
+    "link_id": "share_link",
+    "event_id": "quote_event",
     "document_id": "document",
     "proposal_id": "proposal",
     "boq_id": "boq",

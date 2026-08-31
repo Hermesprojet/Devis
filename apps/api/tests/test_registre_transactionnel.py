@@ -216,13 +216,18 @@ def test_une_suppression_logique_est_visible_quand_le_204_part(observer) -> None
 
 
 def test_la_famille_ecriture_simple_est_le_parcours_de_connexion() -> None:
-    """Famille ÉCRITURE : trois routes, et elles sont observées ailleurs.
+    """Famille ÉCRITURE : cinq routes, et elles sont observées ailleurs.
 
     Le parcours de connexion écrit sans auditer. Son observation à
     `http.response.start` demande un faux fournisseur d'identité : elle vit
     dans `test_oidc_http_flow.py`, avec le reste du parcours, plutôt que
     recopiée ici. Ce test dit seulement quelles routes composent la famille,
-    pour qu'une quatrième ajoutée en douce ne passe pas inaperçue.
+    pour qu'une sixième ajoutée en douce ne passe pas inaperçue.
+
+    Les deux routes publiques du devis l'ont rejointe : ouvrir une session
+    crée une ligne, et la première consultation en inscrit une au journal du
+    devis. Ni l'une ni l'autre n'est un acte qu'on audite — auditer
+    l'ouverture d'un cookie tracerait la mécanique, pas la décision.
     """
     simples = sorted(
         f"{methode} {chemin}"
@@ -232,7 +237,9 @@ def test_la_famille_ecriture_simple_est_le_parcours_de_connexion() -> None:
     assert simples == [
         "GET /api/v1/auth/oidc/callback",
         "GET /api/v1/auth/oidc/start",
+        "GET /api/v1/public/quote",
         "POST /api/v1/auth/oidc/exchange",
+        "POST /api/v1/public/quote-sessions",
     ]
 
 
