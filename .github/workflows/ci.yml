@@ -281,6 +281,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Frontmatter, chemins cités, données volatiles
         run: python scripts/check_skills.py
+      - name: La documentation ne cite aucun chemin disparu
+        run: python scripts/verifier_chemins_documentes.py
       - name: Le dossier de vérification décrit un commit réel
         # docs/PHASE1_VERIFICATION.md porte des compteurs volontairement figés.
         # Ils n'ont de sens que rattachés à un commit qui existe.

@@ -49,6 +49,24 @@
 - Aucun identifiant de modèle d'IA dans un message de commit, un titre de PR ou
   un commentaire de code.
 
+## Chemins cités dans la documentation
+
+Les documents de `docs/` et les ADR emploient des **chemins abrégés**. La
+convention était appliquée partout et écrite nulle part, ce qui obligeait le
+lecteur à la deviner :
+
+| Préfixe écrit | Se lit depuis |
+| --- | --- |
+| `routers/`, `services/`, `security/`, `models.py`, `schemas.py`, `config.py`, `db.py`, `seed.py`, `main.py`, `transactions.py`, `logging_config.py` | `apps/api/src/metreo_api/` |
+| `adr/` | `docs/` |
+| tout le reste | la racine du dépôt |
+
+`scripts/verifier_chemins_documentes.py` résout ces préfixes et **refuse** un
+chemin cité qui n'existe pas. Il tourne dans le job « Skills du dépôt » de la
+CI. Un document qui cite un fichier disparu est une fausse piste laissée à la
+personne suivante : elle cherche, ne trouve pas, et cesse de faire confiance au
+reste du document.
+
 ## Revue
 
 Une modification est refusée si :
@@ -58,4 +76,7 @@ Une modification est refusée si :
 - un montant transite par un `float` ;
 - un écran présente comme disponible une fonction non implémentée ;
 - un test manque sur un comportement métier nouveau ;
-- une chaîne destinée à l'utilisateur est écrite en dur côté web hors de `t()`.
+- une chaîne destinée à l'utilisateur est écrite en dur côté web hors de `t()` ;
+- un document affirme un état du dépôt qui n'est plus vrai — une table absente
+  de `docs/DATA_MODEL.md`, un module absent de `docs/ARCHITECTURE.md`, un
+  répertoire décrit comme vide alors qu'il ne l'est plus.

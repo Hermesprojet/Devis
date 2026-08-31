@@ -56,7 +56,10 @@ test('une ligne de bordereau est ajoutée à un projet', async ({ page }) => {
   await page.getByText('2026-014').click()
   await expect(page.getByRole('heading', { name: 'Bordereau' })).toBeVisible()
 
-  const position = `9.${Date.now() % 1000}`
+  // Trois chiffres, toujours : `Date.now() % 1000` rend parfois « 5 », le poste
+  // devient « 9.5 », et l'assertion ci-dessous matche AUSSI l'option d'un prix
+  // unitaire à 9,50. Vu en échec, environ une fois sur cent.
+  const position = `9.${String(Date.now() % 1000).padStart(3, '0')}`
   // The form is always on screen; "Ajouter une ligne" is its heading, not a
   // button that reveals it.
   await expect(page.getByRole('heading', { name: 'Ajouter une ligne' })).toBeVisible()
@@ -66,7 +69,9 @@ test('une ligne de bordereau est ajoutée à un projet', async ({ page }) => {
   await page.getByLabel('Quantité', { exact: true }).fill('12')
   await page.getByRole('button', { name: 'Créer', exact: true }).click()
 
-  await expect(page.getByText(position)).toBeVisible()
+  // Une CELLULE, exactement : `getByText` cherche une sous-chaîne n'importe où
+  // dans la page, listes déroulantes comprises.
+  await expect(page.getByRole('cell', { name: position, exact: true })).toBeVisible()
 })
 
 // -- 4 and 5. CSV import: preview, refusal of invalid rows -----------------

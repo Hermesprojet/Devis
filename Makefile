@@ -171,8 +171,13 @@ lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	echo "constraints/api.txt régénéré ($$(grep -cvE '^#|^$$' constraints/api.txt) paquets)."
 
 .PHONY: skills
-skills: ## Contrôler les skills du dépôt
+skills: ## Contrôler les skills du dépôt et les chemins cités par la documentation
 	$(PY) scripts/check_skills.py
+	@# Même famille de contrôle, même cible : un chemin cité qui a disparu
+	@# envoie chercher ce qui n'est nulle part, et fait douter du reste du
+	@# document. Mesuré : `scripts/README.md` annonçait un répertoire vide
+	@# alors qu'il en portait sept.
+	$(PY) scripts/verifier_chemins_documentes.py
 
 .PHONY: web-typecheck
 web-typecheck: ## Vérification de types du front
