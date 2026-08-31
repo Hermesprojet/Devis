@@ -246,6 +246,39 @@ def test_region_packs_declare_their_status_and_disclaimer(seeded_client: TestCli
         assert pack["disclaimer"], pack["code"]
 
 
+def test_aucun_pack_ne_fixe_une_duree_de_conservation(seeded_client: TestClient):
+    """La règle est déclarée dans les quatre packs ; sa DURÉE ne l'est nulle part.
+
+    C'est la garantie qui empêche une durée d'apparaître par inadvertance —
+    par un défaut de colonne, un `or 7`, ou un pack rempli de mémoire. Une
+    durée de conservation est une règle réglementaire : elle a une source
+    officielle datée et une validation de spécialiste, et le dépôt n'en détient
+    aucune. Tant que `years` est `None`, la destruction est refusée, et le
+    refus conserve.
+
+    Le jour où une durée sourcée existera, elle arrivera par une NOUVELLE
+    `version` de pack — jamais par modification en place — et ce test dira
+    exactement où le contrat a changé.
+    """
+    packs = {pack["code"]: pack for pack in seeded_client.get("/api/v1/region-profiles").json()}
+    for code in ("BE-WAL", "BE-VLG", "BE-BRU", "FR"):
+        regle = packs[code]["rules"]["quote_retention"]
+        assert regle["enabled"] is True, code
+        assert regle["years"] is None, f"{code} fixe une durée sans source datée"
+        assert regle["requires_expert_validation"] is True, code
+        assert regle["note"], code
+    # Et tant qu'un pack ne cite aucune source DATÉE, il ne peut pas être
+    # présenté comme applicable. Les quatre portent aujourd'hui soit rien, soit
+    # un marque-page sans `checked_on` : ils restent donc `draft` ou `planned`,
+    # et c'est exactement ce qui interdit d'y lire une durée.
+    for code, pack in packs.items():
+        datees = [e for e in pack["sources"] if e.get("checked_on")]
+        if not datees:
+            assert pack["status"] in {"draft", "planned"}, (
+                f"{code} est présenté comme applicable sans une seule source datée"
+            )
+
+
 def test_every_response_carries_a_correlation_id(client: TestClient):
     response = client.get("/api/v1/health")
     assert response.headers["X-Request-Id"]

@@ -163,6 +163,14 @@ class OrganizationSettingsOut(DecimalOut):
     #: de refus quand le motif enregistré est devenu illisible.
     quote_number_preview: str = ""
     show_internal_costs_in_client_pdf: bool
+    #: Durée de conservation d'un devis émis, en années, avant que la
+    #: destruction de l'organisation puisse être demandée.
+    #:
+    #: `null` n'est pas « sans limite » : c'est « la question n'a pas été
+    #: tranchée », et dans cet état la destruction est REFUSÉE. Aucune valeur
+    #: par défaut n'est proposée : une durée de conservation est une règle
+    #: réglementaire, et le dépôt n'en détient aucune de datée et sourcée.
+    quote_retention_years: int | None = None
     ai_enabled: bool
 
 
@@ -205,6 +213,15 @@ class OrganizationSettingsUpdate(BaseModel):
     missing_price_policy: Literal["block", "warn"] | None = None
     quote_number_pattern: str | None = Field(default=None, max_length=60)
     show_internal_costs_in_client_pdf: bool | None = None
+    #: `exclude_unset` distingue ici deux choses que rien d'autre ne
+    #: distinguerait : le champ ABSENT laisse le réglage tel quel ; le champ
+    #: présent à `null` le remet explicitement à « non tranchée ». Pour ce
+    #: champ précis la nuance compte, puisque `null` y est une valeur de plein
+    #: droit et non une absence.
+    #:
+    #: `0` est admis — « aucune conservation minimale exigée » est une réponse
+    #: possible — mais il doit être écrit, jamais atteint par défaut.
+    quote_retention_years: int | None = Field(default=None, ge=0, le=100)
 
 
 class MemberOut(ApiModel):

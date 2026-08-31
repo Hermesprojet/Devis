@@ -522,6 +522,14 @@ export type OrgSettings = {
   /** Le numéro que ce motif produirait, rendu par le serveur. */
   quote_number_preview: string
   show_internal_costs_in_client_pdf: boolean
+  /**
+   * Durée de conservation d'un devis émis, en années, avant que la destruction
+   * de l'organisation puisse être demandée.
+   *
+   * `null` n'est pas « sans limite » : c'est « la question n'a pas été
+   * tranchée », et dans cet état la destruction est refusée côté serveur.
+   */
+  quote_retention_years: number | null
 }
 
 export type QuoteNumberPreview = {

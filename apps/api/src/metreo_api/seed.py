@@ -17,13 +17,12 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import get_settings
 from .db import get_session_factory
 from .models import (
-    AuditEvent,
     BillOfQuantities,
     BoqItem,
     CompositeComponentRow,
@@ -41,9 +40,34 @@ from .models import (
     TaxRateRow,
     User,
 )
-from .services import audit, estimating
+from .services import audit, conservation, estimating
+from .services.document_storage import StockageLocal
 
 DEMO_SOURCE = "Donnée de démonstration fictive — ne pas utiliser comme prix de marché"
+
+#: La conservation des devis émis : l'obligation est DÉCLARÉE, sa durée ne l'est pas.
+#:
+#: `years` reste `None` et le restera tant qu'une source officielle datée ne
+#: l'aura pas fixée. Ce n'est pas un oubli : une durée de conservation est une
+#: règle réglementaire, elle a un pays, une version, une date d'effet et une
+#: source. Écrire « 7 » ici — ou dans un défaut de colonne — serait rendre un
+#: avis juridique par une valeur par défaut, ce que ce dépôt ne fait nulle part
+#: ailleurs et ne commencera pas à faire pour celle-ci.
+#:
+#: Tant que `years` est `None`, `services/conservation.py` REFUSE de détruire
+#: quoi que ce soit. Le refus est la position sûre : il conserve.
+CONSERVATION_DES_DEVIS: dict[str, Any] = {
+    "enabled": True,
+    "years": None,
+    "requires_expert_validation": True,
+    "note": (
+        "La durée de conservation d'un devis émis et les conditions de son "
+        "effacement relèvent du droit applicable. Le pack déclare l'existence "
+        "de la question ; il ne fixe aucune durée tant qu'une source officielle "
+        "datée ne l'a pas établie et qu'un spécialiste ne l'a pas validée. "
+        "Sans durée réglée, la destruction d'une organisation est refusée."
+    ),
+}
 
 REGION_PACKS: list[dict[str, Any]] = [
     {
@@ -59,6 +83,7 @@ REGION_PACKS: list[dict[str, Any]] = [
             "detailed_quantities": "métré détaillé",
         },
         "rules": {
+            "quote_retention": CONSERVATION_DES_DEVIS,
             "soil_traceability": {
                 "enabled": True,
                 "note": (
@@ -101,6 +126,7 @@ REGION_PACKS: list[dict[str, Any]] = [
             "unit_price_schedule": "eenheidsprijzenlijst",
         },
         "rules": {
+            "quote_retention": CONSERVATION_DES_DEVIS,
             "soil_traceability": {"enabled": True, "requires_expert_validation": True},
             "identifiers": {
                 "company_number": {"pattern": r"^(BE)?0?\d{9}$", "label": "Ondernemingsnummer"}
@@ -117,7 +143,10 @@ REGION_PACKS: list[dict[str, Any]] = [
         "default_locale": "fr-BE",
         "locales": ["fr-BE", "nl-BE"],
         "terminology": {"boq": "métré", "specification": "cahier spécial des charges"},
-        "rules": {"soil_traceability": {"enabled": True, "requires_expert_validation": True}},
+        "rules": {
+            "quote_retention": CONSERVATION_DES_DEVIS,
+            "soil_traceability": {"enabled": True, "requires_expert_validation": True},
+        },
         "sources": [],
         "status": "draft",
         "disclaimer": "Pack régional non validé juridiquement.",
@@ -134,7 +163,10 @@ REGION_PACKS: list[dict[str, Any]] = [
             "unit_price_schedule": "BPU",
             "detailed_quantities": "DQE",
         },
-        "rules": {"identifiers": {"company_number": {"pattern": r"^\d{9}$", "label": "SIREN"}}},
+        "rules": {
+            "quote_retention": CONSERVATION_DES_DEVIS,
+            "identifiers": {"company_number": {"pattern": r"^\d{9}$", "label": "SIREN"}},
+        },
         "sources": [],
         "status": "planned",
         "disclaimer": (
@@ -783,8 +815,34 @@ def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
             ).all()
         )
         for organization in seeded:
-            session.execute(delete(AuditEvent).where(AuditEvent.organization_id == organization.id))
-            session.delete(organization)
+            # `issued_quotes.organization_id` retient en RESTRICT depuis
+            # `a5b6c7d8e9fa` : l'organisation ne part plus tant qu'un devis
+            # émis subsiste, et un déclencheur refuse de détruire ce devis sans
+            # purge inscrite. C'est voulu — c'était la dernière cascade qui
+            # effaçait un devis sans un mot.
+            #
+            # `--reset` emprunte donc la MÊME porte que tout le monde, avec le
+            # seul assouplissement nommé qu'elle admet : il ne touche que les
+            # organisations que ce module a semées, retrouvées par leur nom
+            # exact, et la ligne de registre reste écrite. Une réinitialisation
+            # de démonstration laisse ainsi la même trace qu'une destruction
+            # réelle, ce qui est exactement ce qu'on veut vérifier.
+            purge = conservation.demander(
+                session,
+                organization_id=organization.id,
+                reason="réinitialisation du jeu de démonstration (seed --reset)",
+                sans_retention=True,
+            )
+            conservation.executer(session, purge)
+            # Refermée, et pas laissée en `rows_deleted` : une purge qui ne se
+            # referme jamais s'accumulerait dans le registre en donnant à
+            # penser qu'elle a échoué. Le jeu de démonstration n'émet aucun
+            # devis, donc il n'y a rien à retirer du volume — mais le geste est
+            # le même que pour une purge réelle, et c'est ce qui le rend
+            # vérifiable.
+            conservation.retirer_les_fichiers(
+                session, purge, StockageLocal(get_settings().storage_root)
+            )
         # Flush the organisation deletes first: their ON DELETE CASCADE clears
         # the rows that still reference users (projects, estimates, audit).
         session.flush()

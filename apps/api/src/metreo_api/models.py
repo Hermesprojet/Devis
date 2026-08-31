@@ -118,6 +118,18 @@ class OrganizationSettings(TimestampMixin, Base):
         Boolean, nullable=False, default=False
     )
     ai_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Durée de conservation d'un devis émis, en années, AVANT que sa
+    #: destruction puisse être demandée.
+    #:
+    #: `None` n'est pas « pas de limite » : c'est « la question n'a pas été
+    #: tranchée ». La purge d'une organisation refuse alors de s'exécuter,
+    #: plutôt que d'appliquer une durée inventée. Aucune valeur par défaut
+    #: n'est posée ici, et c'est délibéré : une durée de conservation est une
+    #: règle réglementaire, elle a un pays, une version, une date d'effet et
+    #: une source officielle. Le dépôt n'en détient aucune (les packs
+    #: régionaux sont en `draft`, `sources` est vide), donc le code n'en
+    #: affirme aucune.
+    quote_retention_years: Mapped[int | None] = mapped_column(Integer)
 
     organization: Mapped[Organization] = relationship(back_populates="settings")
 
@@ -1358,11 +1370,17 @@ class IssuedQuote(TimestampMixin, Base):
     l'entreprise n'avait plus trace. Trois des cinq suppressions éprouvées se
     comportaient ainsi.
 
-    La seule suppression qui emporte encore un devis est celle de
-    l'organisation entière : elle reste `CASCADE`, et reste hors périmètre tant
-    qu'une politique de conservation n'a pas été décidée. Un déclencheur de
-    base refuse par ailleurs la suppression directe d'un devis tant que son
-    organisation existe — voir la révision `e3f4a5b6c7d8`.
+    **L'organisation non plus.** Elle emportait encore ses devis — mesuré : la
+    ligne partait, le journal d'audit qui en gardait trace partait avec, et le
+    PDF restait sur le volume. Une destruction motivée par un effacement
+    détruisait donc sa propre preuve tout en conservant le document. Depuis
+    `a5b6c7d8e9fa`, `organization_id` retient en `RESTRICT` lui aussi.
+
+    Détruire une organisation reste possible, mais par une seule porte
+    nommée : `services/conservation.py` inscrit au registre ce qu'elle va
+    détruire AVANT de le détruire, et cette inscription — qui survit à
+    l'organisation — est ce que le déclencheur de base exige pour laisser
+    passer la suppression d'un devis. Voir l'ADR 0006.
     """
 
     __tablename__ = "issued_quotes"
@@ -1394,8 +1412,21 @@ class IssuedQuote(TimestampMixin, Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: RESTRICT, et pas CASCADE : c'était la dernière porte par laquelle un
+    #: devis émis disparaissait sans un mot.
+    #:
+    #: Mesuré avant correction, sur base jetable : un `DELETE FROM
+    #: organizations` effaçait la ligne du devis, effaçait le journal d'audit
+    #: qui en gardait la trace, et laissait le PDF du client sur le volume,
+    #: octet pour octet. Une purge motivée par un effacement détruisait donc sa
+    #: propre preuve tout en conservant le document — exactement à l'envers.
+    #:
+    #: La destruction d'une organisation reste possible, mais elle passe
+    #: désormais par une seule porte nommée : `services/conservation.py`, qui
+    #: inscrit ce qu'elle va détruire AVANT de le détruire, dans un registre
+    #: qui, lui, survit à l'organisation.
     organization_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36), ForeignKey("organizations.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     project_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True
@@ -1672,3 +1703,68 @@ class AuditEvent(Base):
     hash_schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
     previous_hash: Mapped[str | None] = mapped_column(String(64))
     hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+#: Les états d'une purge d'organisation. Une purge s'inscrit AVANT d'agir, et se
+#: referme après : c'est ce qui la rend reprenable quand elle est interrompue.
+ETATS_DE_PURGE = ("requested", "rows_deleted", "completed", "failed")
+
+
+class OrganizationPurge(Base):
+    """Le registre des destructions d'organisation — et il leur survit.
+
+    Trois raisons de ne PAS le rattacher à `organizations` :
+
+    1. une purge doit laisser une trace après l'organisation, or le journal
+       d'audit porte un `organization_id` en CASCADE et meurt donc avec elle ;
+    2. la ligne doit rester lisible pour ACHEVER une purge interrompue : elle
+       nomme les fichiers restant à retirer du volume ;
+    3. un registre qui disparaît avec ce qu'il enregistre n'est pas un registre.
+
+    D'où l'absence de clé étrangère : `organization_id` est une colonne nue.
+    C'est délibéré, et c'est la seule table du dépôt dans ce cas.
+
+    **Ce que cette table ne contient pas**, tout aussi délibérément : aucun nom
+    d'organisation, de client, de chantier ni de personne. Un identifiant
+    technique, des empreintes et des chemins de stockage — qui ne sont que des
+    identifiants eux aussi. Le registre prouve qu'une destruction a eu lieu et
+    ce qu'elle portait ; il ne réintroduit pas ce qu'elle a effacé.
+    """
+
+    __tablename__ = "organization_purges"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('requested', 'rows_deleted', 'completed', 'failed')",
+            name="ck_organization_purge_status",
+        ),
+        Index("ix_organization_purges_org", "organization_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    #: Volontairement SANS ForeignKey : voir la note de classe.
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="requested")
+
+    #: Qui a demandé la destruction. L'utilisateur peut lui aussi disparaître :
+    #: son identifiant est donc copié, pas référencé.
+    requested_by: Mapped[str | None] = mapped_column(String(36))
+    requested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    #: Le motif déclaré. Borné, et jamais vide : une destruction sans raison
+    #: écrite n'est pas une destruction encadrée.
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    #: La durée de conservation appliquée, telle qu'elle était réglée au moment
+    #: de la demande. Recopiée et non relue : la politique peut changer ensuite,
+    #: la purge doit rester jugeable sur la règle qui l'a autorisée.
+    retention_years_applied: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    quote_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Ce qu'il y avait à détruire sur le volume : une entrée par devis, avec sa
+    #: clé de stockage et l'empreinte du PDF. C'est ce qui permet de terminer
+    #: une purge interrompue sans redécouvrir quoi que ce soit, et de dire
+    #: exactement ce qui a été détruit.
+    documents: Mapped[list] = mapped_column(SAJSON, nullable=False, default=list)
+    files_deleted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Ce que le volume a refusé de rendre, s'il a refusé. Vide est le cas normal.
+    files_failed: Mapped[list] = mapped_column(SAJSON, nullable=False, default=list)
