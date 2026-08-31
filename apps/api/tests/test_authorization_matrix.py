@@ -456,9 +456,7 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
     finally:
         session.close()
 
-    lien = client.post(
-        f"/api/v1/issued-quotes/{quote_id}/share-links", headers=headers, json={}
-    )
+    lien = client.post(f"/api/v1/issued-quotes/{quote_id}/share-links", headers=headers, json={})
     assert lien.status_code == 201, lien.text
     transmis = client.post(
         f"/api/v1/issued-quotes/{quote_id}/events",
@@ -466,9 +464,7 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
         json={"kind": "transmitted", "channel": "email"},
     )
     assert transmis.status_code == 201, transmis.text
-    evenement = next(
-        e for e in transmis.json()["events"] if e["kind"] == "transmitted"
-    )
+    evenement = next(e for e in transmis.json()["events"] if e["kind"] == "transmitted")
 
     return {
         "share_link": lien.json()["link"]["id"],
