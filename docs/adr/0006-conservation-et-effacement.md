@@ -138,7 +138,22 @@ empêche une durée d'apparaître par inadvertance.
    détruit un locataire entier a un rayon d'action considérable, et personne ne
    l'a demandée. La purge reste une opération de service, appelée par le code
    d'exploitation. Ouvrir une route serait une décision séparée.
-3. **L'anonymisation comme alternative à la destruction.** Écartée pour le PDF :
+3. **Une ligne `requested` laissée en plan garderait la porte entrouverte.**
+   Le déclencheur ouvre tant qu'une purge est `requested` ou `rows_deleted`
+   pour cette organisation. Une demande inscrite et JAMAIS exécutée
+   maintiendrait donc l'autorisation. En pratique les deux appelants —
+   `scripts/purger_organisation.py` et `seed --reset` — enchaînent `demander`
+   et `executer` dans la même transaction, si bien que `requested` ne survit
+   pas à un échec : il disparaît avec le reste. Mais rien dans le SCHÉMA ne
+   l'impose, et un futur appelant qui validerait la demande séparément
+   rouvrirait la brèche. Deux réponses possibles le jour où cela deviendra
+   nécessaire : borner la validité d'une demande dans le temps — au prix d'un
+   déclencheur qui lit l'horloge, ce qu'on évite — ou faire du passage à
+   `rows_deleted` une condition posée par le code appelant unique. Aucune des
+   deux n'est faite ici ; l'appelant unique est la protection actuelle, et
+   elle est nommée plutôt que supposée.
+
+4. **L'anonymisation comme alternative à la destruction.** Écartée pour le PDF :
    le document est immuable et son empreinte est la garantie tenue au client
    depuis le cycle commercial. Le modifier casserait le SHA-256, donc la
    garantie. Elle resterait envisageable pour les instantanés, et n'a pas été
