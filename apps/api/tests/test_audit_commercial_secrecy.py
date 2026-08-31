@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from metreo_api.schemas import CHAMPS_COMMERCIAUX_SENSIBLES, OrganizationSettingsOut
+from metreo_api.schemas import CHAMPS_COMMERCIAUX_SENSIBLES
 from metreo_api.security.roles import ROLE_PERMISSIONS, Permission, Role
 
 from .conftest import login
@@ -209,23 +209,8 @@ REGLAGES_NON_COMMERCIAUX = frozenset(
         "quote_number_pattern",
         "show_internal_costs_in_client_pdf",
         "ai_enabled",
-        # La durée de conservation ne dit rien d'un coût, d'une marge ni d'une
-        # politique de prix : elle dit combien de temps l'entreprise garde ce
-        # qu'elle a déjà envoyé à ses clients. C'est un réglage de gouvernance
-        # des données, et le masquer nuirait — la trace de qui l'a fixée, et à
-        # quelle valeur, est précisément ce qu'on veut pouvoir relire quand une
-        # destruction est contestée.
-        "quote_retention_years",
     }
 )
-
-#: Les réglages non commerciaux dont `null` est une VALEUR, pas un masque.
-#:
-#: `quote_retention_years` vaut `null` sur toute organisation neuve : la durée
-#: de conservation n'a pas été tranchée, et c'est l'état qui fait refuser une
-#: destruction. Exiger qu'il soit non nul pour prouver qu'il est lisible
-#: confondrait « absent » et « vide ».
-NULL_SIGNIFIANT = frozenset({"quote_retention_years"})
 
 
 def test_a_new_setting_cannot_be_added_without_deciding_if_it_is_sensitive() -> None:
@@ -283,14 +268,5 @@ def test_every_sensitive_setting_is_also_masked_on_the_settings_endpoint(
 
     # Et les réglages non commerciaux restent lisibles : masquer tout serait
     # une autre façon de casser la page « paramètres » pour ce rôle.
-    #
-    # « Lisible » se vérifie sur la PRÉSENCE de la clé, pas sur sa non-nullité.
-    # La nuance est arrivée avec `quote_retention_years`, dont `null` est une
-    # valeur de plein droit — « durée non tranchée », l'état d'une organisation
-    # neuve — et non un masque. Confondre les deux ferait rougir la suite pour
-    # un champ parfaitement lisible, et masquerait le jour où un vrai champ
-    # deviendrait nul sans raison.
-    for champ in REGLAGES_NON_COMMERCIAUX & set(OrganizationSettingsOut.model_fields):
-        assert champ in reglages, f"{champ} absent de la réponse : masqué à tort"
-    for champ in REGLAGES_NON_COMMERCIAUX & set(reglages) - NULL_SIGNIFIANT:
+    for champ in REGLAGES_NON_COMMERCIAUX & set(reglages):
         assert reglages[champ] is not None, f"{champ} masqué à tort"

@@ -118,18 +118,6 @@ class OrganizationSettings(TimestampMixin, Base):
         Boolean, nullable=False, default=False
     )
     ai_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    #: Durée de conservation d'un devis émis, en années, AVANT que sa
-    #: destruction puisse être demandée.
-    #:
-    #: `None` n'est pas « pas de limite » : c'est « la question n'a pas été
-    #: tranchée ». La purge d'une organisation refuse alors de s'exécuter,
-    #: plutôt que d'appliquer une durée inventée. Aucune valeur par défaut
-    #: n'est posée ici, et c'est délibéré : une durée de conservation est une
-    #: règle réglementaire, elle a un pays, une version, une date d'effet et
-    #: une source officielle. Le dépôt n'en détient aucune (les packs
-    #: régionaux sont en `draft`, `sources` est vide), donc le code n'en
-    #: affirme aucune.
-    quote_retention_years: Mapped[int | None] = mapped_column(Integer)
 
     organization: Mapped[Organization] = relationship(back_populates="settings")
 
@@ -1705,9 +1693,103 @@ class AuditEvent(Base):
     hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
-#: Les états d'une purge d'organisation. Une purge s'inscrit AVANT d'agir, et se
-#: referme après : c'est ce qui la rend reprenable quand elle est interrompue.
-ETATS_DE_PURGE = ("requested", "rows_deleted", "completed", "failed")
+#: Les états d'une purge d'organisation.
+#:
+#: `requested` n'autorise RIEN. C'est la correction de fond apportée après la
+#: première version : une demande inscrite y ouvrait la porte, et une demande
+#: abandonnée la laissait ouverte indéfiniment. Seul `executing` autorise, et
+#: seulement tant que sa fenêtre court.
+ETATS_DE_PURGE = ("requested", "executing", "rows_deleted", "completed", "failed")
+
+#: Combien de temps une autorisation d'exécution reste valable.
+#:
+#: Assez pour détruire les lignes d'une organisation et retirer ses fichiers ;
+#: trop court pour qu'une fenêtre oubliée devienne un droit permanent. La base
+#: compare cette borne à sa propre horloge, elle ne fait pas confiance à
+#: l'appelant.
+MINUTES_D_AUTORISATION = 15
+
+#: Pourquoi une organisation est détruite. Une liste FERMÉE, et c'est le point.
+#:
+#: Le champ était auparavant un texte libre de 500 caractères. Un registre
+#: censé prouver une destruction sans conserver ce qu'elle a effacé ne peut pas
+#: offrir une zone où l'on écrit « à la demande de M. Dupont, Terrassements
+#: Untel » — la donnée personnelle rentre alors par la porte prévue pour la
+#: faire sortir. Le code dit la CATÉGORIE ; la référence opaque, elle, permet
+#: de retrouver le dossier ailleurs, dans un système dont ce n'est pas le rôle
+#: de garantir l'effacement.
+MOTIFS_DE_PURGE = (
+    #: Le contrat qui liait l'entreprise à Metreo a pris fin.
+    "contract_ended",
+    #: Une personne concernée a demandé l'effacement.
+    "subject_request",
+    #: La durée de conservation décidée est échue et l'entreprise ne veut pas
+    #: conserver au-delà.
+    "retention_elapsed",
+    #: L'organisation était un doublon d'une autre.
+    "duplicate_organization",
+    #: Réinitialisation du jeu de démonstration.
+    "demo_reset",
+    #: Organisation créée pour une recette ou un banc d'essai.
+    "test_fixture",
+)
+
+
+class QuoteRetentionDecision(Base):
+    """Une décision de conservation : la durée, ET ce qui la fonde.
+
+    Un nombre d'années seul n'est pas une décision — c'est une opinion sans
+    auteur. La première version stockait exactement cela, un `Integer` nullable
+    sur les réglages de l'organisation, et rien n'obligeait quiconque à dire
+    d'où il sortait. Une durée de conservation engage l'entreprise : elle vient
+    d'un droit applicable, elle a une source, elle prend effet à une date, et
+    quelqu'un l'a validée. Les cinq éléments tiennent ou aucun ne tient.
+
+    **Versionnée, jamais modifiée en place.** Corriger une décision crée une
+    nouvelle ligne ; l'ancienne reste lisible. C'est le mécanisme déjà retenu
+    pour les packs régionaux, et pour la même raison : une purge exécutée hier
+    doit rester jugeable sur la règle qui l'autorisait, pas sur celle
+    d'aujourd'hui.
+
+    **Le dépôt n'en sème aucune.** Aucune migration, aucun `seed`, aucune
+    valeur par défaut n'en crée : elles viendraient d'un droit que ce dépôt ne
+    détient pas. Sans décision, la destruction est refusée — et le refus
+    conserve.
+    """
+
+    __tablename__ = "quote_retention_decisions"
+    __table_args__ = (
+        CheckConstraint("years >= 0 AND years <= 100", name="ck_retention_years_range"),
+        Index("ix_retention_decisions_org", "organization_id", "effective_from"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    #: La durée, en années calendaires.
+    years: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Le droit sous lequel elle est prise — `BE-WAL`, `FR`, un code de pack.
+    #: Deux entreprises soumises à deux droits n'ont pas la même durée, et une
+    #: durée sans juridiction ne dit pas de quoi elle parle.
+    jurisdiction: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: D'où elle sort. Le libellé nomme un TEXTE, pas une personne.
+    source_label: Mapped[str] = mapped_column(String(300), nullable=False)
+    source_url: Mapped[str | None] = mapped_column(String(500))
+    #: Quand la source a été consultée. Sans cette date, « la loi dit » n'est
+    #: pas vérifiable : les textes changent.
+    source_checked_on: Mapped[date] = mapped_column(Date, nullable=False)
+    #: À partir de quand la décision s'applique.
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+
+    #: Qui l'a validée, et quand. Un identifiant interne, jamais un nom saisi :
+    #: l'utilisateur peut disparaître, la référence reste un identifiant.
+    validated_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+    validated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+    note: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
 
 class OrganizationPurge(Base):
@@ -1724,18 +1806,28 @@ class OrganizationPurge(Base):
     D'où l'absence de clé étrangère : `organization_id` est une colonne nue.
     C'est délibéré, et c'est la seule table du dépôt dans ce cas.
 
-    **Ce que cette table ne contient pas**, tout aussi délibérément : aucun nom
-    d'organisation, de client, de chantier ni de personne. Un identifiant
-    technique, des empreintes et des chemins de stockage — qui ne sont que des
-    identifiants eux aussi. Le registre prouve qu'une destruction a eu lieu et
-    ce qu'elle portait ; il ne réintroduit pas ce qu'elle a effacé.
+    **Ce qu'elle ne contient pas**, tout aussi délibérément : aucun texte
+    libre. Un identifiant technique, un code de motif pris dans une liste
+    fermée, une référence opaque contrainte par la base, des empreintes et des
+    chemins de stockage. Le registre prouve qu'une destruction a eu lieu et ce
+    qu'elle portait ; il n'offre nulle part où réinscrire ce qu'elle a effacé.
     """
 
     __tablename__ = "organization_purges"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('requested', 'rows_deleted', 'completed', 'failed')",
+            "status IN ('requested', 'executing', 'rows_deleted', 'completed', 'failed')",
             name="ck_organization_purge_status",
+        ),
+        CheckConstraint(
+            "reason_code IN ('contract_ended', 'subject_request', 'retention_elapsed', "
+            "'duplicate_organization', 'demo_reset', 'test_fixture')",
+            name="ck_organization_purge_reason",
+        ),
+        #: Une autorisation n'existe pas sans sa borne, et réciproquement.
+        CheckConstraint(
+            "(authorized_at IS NULL) = (authorized_until IS NULL)",
+            name="ck_organization_purge_window",
         ),
         Index("ix_organization_purges_org", "organization_id"),
     )
@@ -1749,15 +1841,25 @@ class OrganizationPurge(Base):
     #: son identifiant est donc copié, pas référencé.
     requested_by: Mapped[str | None] = mapped_column(String(36))
     requested_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+    #: La fenêtre d'exécution. `NULL` tant qu'aucune n'a été ouverte, et une
+    #: purge sans fenêtre ouverte n'autorise aucune suppression — c'est la
+    #: condition que le déclencheur interroge, avec l'horloge de la BASE.
+    authorized_at: Mapped[datetime | None] = mapped_column(DateTime)
+    authorized_until: Mapped[datetime | None] = mapped_column(DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    #: Le motif déclaré. Borné, et jamais vide : une destruction sans raison
-    #: écrite n'est pas une destruction encadrée.
-    reason: Mapped[str] = mapped_column(String(500), nullable=False)
-    #: La durée de conservation appliquée, telle qu'elle était réglée au moment
-    #: de la demande. Recopiée et non relue : la politique peut changer ensuite,
-    #: la purge doit rester jugeable sur la règle qui l'a autorisée.
+    #: Le motif, pris dans `MOTIFS_DE_PURGE`. Une liste fermée, pas une phrase.
+    reason_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    #: Une référence de dossier, facultative et OPAQUE : ni espace, ni
+    #: ponctuation de phrase. La contrainte n'est pas cosmétique — c'est ce qui
+    #: empêche d'y écrire « demande de Jean Dupont » sans y penser.
+    reference: Mapped[str | None] = mapped_column(String(120))
+    #: La durée appliquée et la décision qui l'a fondée, recopiées. Recopiées
+    #: et non référencées : la décision vit dans l'organisation, elle meurt
+    #: avec elle, et la purge doit rester jugeable après.
     retention_years_applied: Mapped[int] = mapped_column(Integer, nullable=False)
+    retention_decision_id: Mapped[str | None] = mapped_column(String(36))
 
     quote_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     #: Ce qu'il y avait à détruire sur le volume : une entrée par devis, avec sa

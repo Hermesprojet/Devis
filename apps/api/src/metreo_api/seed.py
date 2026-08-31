@@ -830,9 +830,14 @@ def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
             purge = conservation.demander(
                 session,
                 organization_id=organization.id,
-                reason="réinitialisation du jeu de démonstration (seed --reset)",
+                reason_code="demo_reset",
                 sans_retention=True,
             )
+            # Demander n'autorise rien : la fenêtre s'ouvre explicitement ici,
+            # comme pour une destruction réelle. C'est ce qui rend le geste du
+            # reset représentatif — s'il pouvait détruire sans autorisation, il
+            # ne prouverait rien du mécanisme.
+            conservation.autoriser(session, purge)
             conservation.executer(session, purge)
             # Refermée, et pas laissée en `rows_deleted` : une purge qui ne se
             # referme jamais s'accumulerait dans le registre en donnant à

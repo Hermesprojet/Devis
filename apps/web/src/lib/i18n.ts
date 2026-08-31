@@ -303,21 +303,6 @@ const fr: Dictionary = {
   'settings.quoteNumberPattern': 'Motif',
   'settings.quoteNumberPreview': 'Aperçu',
   'settings.quoteNumberRefused': 'motif refusé',
-  'settings.retention': 'Conservation des devis émis',
-  'settings.retentionHint':
-    'Combien de temps un devis émis doit être conservé avant que la destruction de '
-    + 'l\u2019organisation puisse être demandée. Tant que la durée n\u2019est pas réglée, '
-    + 'aucune destruction n\u2019est possible : le refus conserve.',
-  'settings.retentionYears': 'Durée (années)',
-  'settings.retentionPlaceholder': 'non tranchée',
-  'settings.retentionUndecided': 'durée non tranchée — destruction refusée',
-  'settings.retentionSet': 'conservation exigée pendant {n} an(s)',
-  'settings.retentionInvalid':
-    'Indiquez un nombre entier d\u2019années entre 0 et 100, ou laissez vide.',
-  'settings.retentionSource':
-    'Aucune durée n\u2019est proposée par défaut. Une durée de conservation est une règle '
-    + 'réglementaire : elle demande une source officielle datée et la validation d\u2019un '
-    + 'spécialiste. L\u2019application ne la déduit pas à votre place.',
   'settings.rounding': 'Arrondis',
   'settings.markup': 'Coefficients',
   'settings.siteOverheads': 'Frais de chantier',

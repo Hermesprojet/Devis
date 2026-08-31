@@ -1,8 +1,8 @@
 # ADR 0006 — Conservation des devis émis et effacement d'une organisation
 
-- **Statut** : accepté pour la MÉCANIQUE ; la DURÉE reste ouverte et le reste
-  tant qu'une source officielle datée et une validation de spécialiste ne
-  l'auront pas fixée
+- **Statut** : accepté. La mécanique est décidée ; la DURÉE se prend
+  organisation par organisation, sous la forme structurée décrite en §5, et le
+  dépôt n'en fournit aucune
 - **Date** : 2026-08-31
 - **Remplace** : la réserve explicite de l'ADR implicite portée par la révision
   `e3f4a5b6c7d8` (« la purge d'une organisation reste hors périmètre tant que la
@@ -56,23 +56,48 @@ La table `organization_purges` est **la seule table du dépôt sans clé
 étrangère**, et c'est délibéré : `organization_id` y est une colonne nue. Un
 registre rattaché à ce qu'il enregistre disparaît avec lui et ne prouve rien.
 
-Elle porte le motif écrit, la durée appliquée, le nombre de devis, et pour
-chacun sa clé de stockage et l'empreinte de son PDF.
+Elle porte un code de motif, une référence facultative, la durée appliquée, le
+nombre de devis, et pour chacun sa clé de stockage et l'empreinte de son PDF.
 
-**Ce qu'elle ne porte pas**, tout aussi délibérément : aucun nom
-d'organisation, de client, de chantier ni de personne. Des identifiants
-techniques, des empreintes, des chemins — qui sont eux-mêmes des identifiants.
-Le registre prouve qu'une destruction a eu lieu et ce qu'elle portait ; il ne
-réintroduit pas ce que la destruction visait à effacer. Un test le vérifie en
-cherchant les noms réels dans la ligne sérialisée.
+**Aucun texte libre.** C'est une correction apportée après coup : le motif
+était d'abord une chaîne de 500 caractères. Un registre censé prouver une
+destruction sans conserver ce qu'elle a effacé ne peut pas offrir une zone où
+l'on écrit « à la demande de M. Dupont, Terrassements Untel » — la donnée
+personnelle rentre alors par la porte prévue pour la faire sortir.
 
-### 3. La ligne du registre EST l'autorisation
+Le motif est donc un code pris dans une liste fermée, tenue par une contrainte
+`CHECK` : `contract_ended`, `subject_request`, `retention_elapsed`,
+`duplicate_organization`, `demo_reset`, `test_fixture`. La référence est
+facultative et contrainte à une forme opaque — ni blanc ni ponctuation de
+phrase — de sorte qu'elle désigne un dossier ailleurs sans le raconter ici. La
+contrainte ne rend pas l'abus impossible ; elle le rend délibéré, ce qui est le
+maximum qu'un format puisse offrir. Un test vérifie qu'aucun nom réel ne se
+retrouve dans la ligne sérialisée.
 
-Le déclencheur de conservation ne demande plus « l'organisation existe-t-elle »
-— condition qui laissait justement passer la cascade — mais « une purge
-inscrite et active autorise-t-elle ceci ». La base elle-même refuse de détruire
-un devis dont la destruction n'a pas été écrite d'abord. `completed` ne figure
-pas parmi les statuts qui ouvrent : une purge refermée n'autorise plus rien.
+### 3. Une autorisation d'exécution bornée, vérifiée par la base
+
+Le déclencheur ne demande plus « l'organisation existe-t-elle » — la condition
+qui laissait justement passer la cascade. Une première correction lui a fait
+demander « une purge est-elle inscrite », ce qui était encore faux : **une
+demande n'est pas une autorisation**, et une demande abandonnée laissait la
+porte ouverte indéfiniment.
+
+Demander et autoriser sont donc deux gestes. `demander()` inscrit et n'ouvre
+rien. `autoriser()` ouvre une fenêtre de quinze minutes. Le déclencheur
+interroge :
+
+```sql
+status = 'executing' AND authorized_until > <horloge de la base>
+```
+
+**L'horloge est celle du serveur, jamais celle de l'appelant** — une fenêtre
+validée par qui la demande ne prouve rien, il suffirait de mentir sur l'heure.
+`now() AT TIME ZONE 'UTC'` sous PostgreSQL, `datetime('now')` sous SQLite.
+
+Quatre états ne permettent donc rien, et chacun a son test : une demande
+abandonnée (`requested`), une fenêtre expirée, une purge terminée
+(`completed`), une purge en échec (`failed`) — cette dernière même si sa borne
+est encore dans le futur, parce que c'est le statut qui décide en premier.
 
 ### 4. L'ordre : lignes d'abord, fichiers ensuite
 
@@ -88,23 +113,41 @@ registre nomme chaque fichier restant, `reprendre()` achève la purge sans rien
 redécouvrir, et l'opération est idempotente. Le premier produit un état qu'aucun
 écrit ne peut rattraper.
 
-### 5. La durée n'est pas décidée ici, et le code n'en invente pas
+### 5. Une décision structurée, jamais un nombre nu
 
-`OrganizationSettings.quote_retention_years` est nullable, **sans valeur par
-défaut**. `None` signifie « la question n'a pas été tranchée », jamais « sans
-limite » : la purge **refuse** alors de s'exécuter.
+Une première version stockait la durée dans un `Integer` nullable sur les
+réglages de l'organisation. C'était insuffisant, et pas seulement par prudence :
+**un nombre d'années seul n'est pas une décision, c'est une opinion sans
+auteur.** Rien n'obligeait quiconque à dire d'où sortait le chiffre, ni sous
+quel droit, ni depuis quand, ni qui l'avait validé.
 
-Les quatre packs régionaux déclarent la règle `quote_retention` avec
-`enabled: true`, `requires_expert_validation: true`, une note — et
-`years: null`. Conformément à **belgium-regulatory-pack**, une règle
-réglementaire n'existe que dans un pack versionné portant une `version`, une
-`effective_from`, des `sources` datées et un `disclaimer`. Aucun de ces packs
-ne cite de source datée ; ils restent `draft` ou `planned` ; aucune durée n'en
-sort.
+La table `quote_retention_decisions` exige les cinq éléments ensemble :
 
-Écrire « 7 » dans un défaut de colonne serait rendre un avis juridique par une
-valeur par défaut. Un test (`test_aucun_pack_ne_fixe_une_duree_de_conservation`)
-empêche une durée d'apparaître par inadvertance.
+| Élément | Pourquoi il ne peut pas manquer |
+| --- | --- |
+| `years` | la durée elle-même |
+| `jurisdiction` | deux entreprises sous deux droits n'ont pas la même durée |
+| `source_label` / `source_url` | « la loi dit » sans texte cité n'est pas vérifiable |
+| `source_checked_on` | les textes changent ; une source non datée périme en silence |
+| `effective_from` | une décision s'applique à partir d'une date, pas rétroactivement |
+| `validated_by` / `validated_at` | un identifiant interne, jamais un nom saisi |
+
+**Versionnée, jamais modifiée en place**, comme les packs régionaux et pour la
+même raison : une purge exécutée hier doit rester jugeable sur la règle qui
+l'autorisait. Corriger crée une ligne de plus ; l'ancienne reste lisible. La
+durée est de surcroît **recopiée** dans le registre de purge, parce que la
+décision vit dans l'organisation et meurt avec elle.
+
+**Le dépôt n'en sème aucune.** Ni migration, ni `seed`, ni valeur par défaut :
+elles viendraient d'un droit qu'il ne détient pas. Les quatre packs régionaux
+déclarent la règle `quote_retention` avec `enabled: true`,
+`requires_expert_validation: true` et **`years: null`** ; aucun ne cite de
+source datée, tous restent `draft` ou `planned`, et un test
+(`test_aucun_pack_ne_fixe_une_duree_de_conservation`) empêche une durée d'y
+apparaître par inadvertance.
+
+Sans décision en vigueur, la destruction est refusée. Le refus conserve, et
+conserver est la position sûre quand la règle est inconnue.
 
 ## Conséquences
 
@@ -120,40 +163,28 @@ empêche une durée d'apparaître par inadvertance.
 **Ce qui coûte.**
 
 - `seed --reset` ne peut plus supprimer ses organisations directement. Il
-  emprunte la même porte, avec le seul assouplissement nommé qu'elle admet
-  (`sans_retention=True`), réservé aux organisations que le module a semées et
-  retrouvées par leur nom exact. Les deux autres refus — organisation
-  inexistante, motif vide — continuent de s'appliquer, et la ligne de registre
-  est écrite comme pour une purge réelle.
-- Une organisation ne peut pas être détruite tant que sa durée de conservation
-  n'a pas été réglée. C'est voulu : le refus conserve, et conserver est la
-  position sûre quand la règle est inconnue.
+  emprunte la même porte, motif `demo_reset`, avec le seul assouplissement
+  nommé qu'elle admet (`sans_retention=True`) — réservé aux organisations que
+  ce module a semées et retrouvées par leur nom exact. Il ouvre et referme une
+  vraie fenêtre d'exécution : s'il pouvait détruire sans autorisation, il ne
+  prouverait rien du mécanisme.
+- Une organisation ne peut pas être détruite tant qu'une décision de
+  conservation complète n'a pas été prise pour elle. C'est voulu.
+- Prendre cette décision et exécuter une purge demandent l'accès au serveur :
+  ni l'une ni l'autre n'a de route HTTP.
 
 **Ce qui reste ouvert, et pour qui.**
 
-1. **La durée elle-même.** Elle demande une source officielle datée et une
-   validation de spécialiste. Elle arrivera par une **nouvelle `version`** de
-   pack, jamais par modification en place.
-2. **L'exposition d'une route d'API.** Aucune n'est créée : une route HTTP qui
-   détruit un locataire entier a un rayon d'action considérable, et personne ne
-   l'a demandée. La purge reste une opération de service, appelée par le code
-   d'exploitation. Ouvrir une route serait une décision séparée.
-3. **Une ligne `requested` laissée en plan garderait la porte entrouverte.**
-   Le déclencheur ouvre tant qu'une purge est `requested` ou `rows_deleted`
-   pour cette organisation. Une demande inscrite et JAMAIS exécutée
-   maintiendrait donc l'autorisation. En pratique les deux appelants —
-   `scripts/purger_organisation.py` et `seed --reset` — enchaînent `demander`
-   et `executer` dans la même transaction, si bien que `requested` ne survit
-   pas à un échec : il disparaît avec le reste. Mais rien dans le SCHÉMA ne
-   l'impose, et un futur appelant qui validerait la demande séparément
-   rouvrirait la brèche. Deux réponses possibles le jour où cela deviendra
-   nécessaire : borner la validité d'une demande dans le temps — au prix d'un
-   déclencheur qui lit l'horloge, ce qu'on évite — ou faire du passage à
-   `rows_deleted` une condition posée par le code appelant unique. Aucune des
-   deux n'est faite ici ; l'appelant unique est la protection actuelle, et
-   elle est nommée plutôt que supposée.
-
-4. **L'anonymisation comme alternative à la destruction.** Écartée pour le PDF :
+1. **La durée elle-même, organisation par organisation.** Le dépôt fournit la
+   forme, pas le contenu : il faut un texte, sa date de consultation et un
+   validateur. Aucune valeur ne sera devinée à la place de personne.
+2. **L'exposition d'une route d'API.** Aucune n'est créée, et un test tient la
+   frontière : une route HTTP qui détruit un locataire entier a un rayon
+   d'action considérable, et une route qui fixe une durée de conservation
+   engagerait l'entreprise sur un droit depuis un écran. Les deux se font par
+   `scripts/purger_organisation.py`. Ouvrir l'une ou l'autre serait une
+   décision séparée.
+3. **L'anonymisation comme alternative à la destruction.** Écartée pour le PDF :
    le document est immuable et son empreinte est la garantie tenue au client
    depuis le cycle commercial. Le modifier casserait le SHA-256, donc la
    garantie. Elle resterait envisageable pour les instantanés, et n'a pas été

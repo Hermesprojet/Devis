@@ -1,4 +1,4 @@
-"""Détruire une organisation devient un acte écrit, jamais une cascade.
+"""Détruire une organisation devient un acte écrit, autorisé et borné.
 
 **Le défaut, reproduit avant d'être corrigé.** Sur base PostgreSQL jetable, un
 `DELETE FROM organizations` portant un devis émis donnait :
@@ -9,15 +9,12 @@
 
 Trois faits, et c'est le troisième qui condamne le montage précédent : une
 purge motivée par un effacement **détruisait sa propre preuve tout en
-conservant le document du client**. Exactement à l'envers de ce qu'on attend
-d'un effacement.
+conservant le document du client**. Exactement à l'envers.
 
-La révision `e3f4a5b6c7d8` laissait volontairement ce cas ouvert — « tant
-qu'une politique de conservation n'est pas décidée ». Elle l'est ici, et elle
-tient en une phrase : **rien ne se détruit sans un écrit préalable qui dit ce
-qui va être détruit, et qui survit à la destruction.**
+La politique tient en une phrase : **rien ne se détruit sans un écrit
+préalable qui dit ce qui va être détruit, et qui survit à la destruction.**
 
-**Trois pièces.**
+**Quatre pièces.**
 
 1. `issued_quotes.organization_id` passe en `RESTRICT`. La dernière cascade
    silencieuse disparaît : `DELETE FROM organizations` échoue bruyamment tant
@@ -25,22 +22,24 @@ qui va être détruit, et qui survit à la destruction.**
 
 2. Une table `organization_purges`, **sans clé étrangère**, seule de ce cas
    dans le dépôt. Un registre rattaché à ce qu'il enregistre meurt avec lui.
-   Elle ne porte aucun nom : un identifiant technique, des empreintes, des
-   chemins de stockage. Elle prouve qu'une destruction a eu lieu et ce qu'elle
-   portait, sans réintroduire ce qu'elle a effacé.
+   Elle ne porte **aucun texte libre** : un code de motif pris dans une liste
+   fermée, une référence opaque contrainte par la base, des empreintes et des
+   chemins de stockage. Un registre censé prouver une destruction sans garder
+   ce qu'elle a effacé ne peut pas offrir une zone où l'on écrit un nom.
 
-3. Le déclencheur de conservation change de condition. Il ne demande plus « son
-   organisation existe-t-elle ? » — qui laissait passer la cascade — mais
-   « une purge en cours autorise-t-elle cette destruction ? ». **La ligne du
-   registre EST l'autorisation** : la base elle-même refuse de détruire un
-   devis dont la destruction n'a pas été inscrite d'abord.
+3. Une **autorisation d'exécution bornée**, et c'est elle que le déclencheur
+   interroge. Une demande seule — `requested` — n'autorise RIEN : une première
+   version ouvrait la porte dès l'inscription, et une demande abandonnée la
+   laissait ouverte indéfiniment. Seul `executing` autorise, et seulement tant
+   que `authorized_until` n'est pas dépassé selon l'horloge de la BASE, jamais
+   celle de l'appelant. Abandonnée, expirée, terminée, échouée : rien ne passe.
 
-**Ce que cette révision ne décide pas.** La DURÉE de conservation. C'est une
-règle réglementaire : elle a un pays, une version, une date d'effet et une
-source officielle datée, et le dépôt n'en détient aucune. La colonne
-`quote_retention_years` est donc nullable et sans valeur par défaut, et `NULL`
-signifie « non tranchée », pas « sans limite » : la purge refuse alors de
-s'exécuter plutôt que d'appliquer une durée inventée.
+4. Une table `quote_retention_decisions`. Un nombre d'années seul n'est pas une
+   décision, c'est une opinion sans auteur : la durée vient avec sa
+   juridiction, sa source, la date où cette source a été consultée, sa date
+   d'effet et son validateur. Le dépôt n'en sème AUCUNE — elles viendraient
+   d'un droit qu'il ne détient pas. Sans décision, la destruction est refusée,
+   et le refus conserve.
 """
 
 from __future__ import annotations
@@ -59,9 +58,11 @@ REFUS = (
     "inscrite au registre ; sans elle, il reste la trace de ce qui a été transmis"
 )
 
-#: Les statuts sous lesquels une purge autorise la destruction. `completed` n'y
-#: est pas : une purge refermée n'ouvre plus rien.
-EN_COURS = ("requested", "rows_deleted")
+#: Le SEUL statut sous lequel une purge autorise la destruction — et encore,
+#: seulement dans sa fenêtre. `requested` n'y est pas : une demande n'est pas
+#: une autorisation. `rows_deleted` non plus : il n'y a alors plus rien à
+#: détruire, et le laisser ouvert prolongerait un droit sans objet.
+EN_EXECUTION = "executing"
 
 
 def _litteral(texte: str) -> str:
@@ -73,8 +74,18 @@ def _litteral(texte: str) -> str:
     return "'" + texte.replace("'", "''") + "'"
 
 
-def _en_cours_sql() -> str:
-    return ", ".join(_litteral(etat) for etat in EN_COURS)
+def _maintenant(dialecte: str) -> str:
+    """L'horloge de la BASE, dans sa syntaxe.
+
+    C'est le point : une fenêtre validée par l'appelant ne prouve rien, il
+    suffirait de mentir sur l'heure. PostgreSQL rend un `timestamptz` là où la
+    colonne est naïve — d'où la conversion explicite en UTC, sans quoi la
+    comparaison décale du fuseau du serveur. SQLite compare des chaînes ISO de
+    largeur fixe, ce qui ordonne correctement.
+    """
+    if dialecte == "sqlite":
+        return "datetime('now')"
+    return "(now() AT TIME ZONE 'UTC')"
 
 
 def _table_issued_quotes(action_organisation: str) -> sa.Table:
@@ -206,12 +217,14 @@ def _poser_le_declencheur(*, avec_registre: bool) -> None:
         condition_sqlite = (
             "WHEN NOT EXISTS (SELECT 1 FROM organization_purges "
             "WHERE organization_id = OLD.organization_id "
-            f"AND status IN ({_en_cours_sql()})) "
+            f"AND status = {_litteral(EN_EXECUTION)} "
+            f"AND authorized_until > {_maintenant('sqlite')}) "
         )
         condition_pg = (
             "    IF NOT EXISTS (SELECT 1 FROM organization_purges\n"
             "                   WHERE organization_id = OLD.organization_id\n"
-            f"                     AND status IN ({_en_cours_sql()})) THEN\n"
+            f"                     AND status = {_litteral(EN_EXECUTION)}\n"
+            f"                     AND authorized_until > {_maintenant('postgresql')}) THEN\n"
         )
     else:
         condition_sqlite = (
@@ -263,24 +276,65 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=20), nullable=False),
         sa.Column("requested_by", sa.String(length=36), nullable=True),
         sa.Column("requested_at", sa.DateTime(), nullable=False),
+        # La fenêtre d'exécution. Nulle tant qu'aucune n'est ouverte — et une
+        # purge sans fenêtre n'autorise aucune suppression.
+        sa.Column("authorized_at", sa.DateTime(), nullable=True),
+        sa.Column("authorized_until", sa.DateTime(), nullable=True),
         sa.Column("completed_at", sa.DateTime(), nullable=True),
-        sa.Column("reason", sa.String(length=500), nullable=False),
+        # Un code, pas une phrase : voir la note de classe.
+        sa.Column("reason_code", sa.String(length=40), nullable=False),
+        sa.Column("reference", sa.String(length=120), nullable=True),
         sa.Column("retention_years_applied", sa.Integer(), nullable=False),
+        sa.Column("retention_decision_id", sa.String(length=36), nullable=True),
         sa.Column("quote_count", sa.Integer(), nullable=False),
         sa.Column("documents", sa.JSON(), nullable=False),
         sa.Column("files_deleted", sa.Integer(), nullable=False),
         sa.Column("files_failed", sa.JSON(), nullable=False),
         sa.CheckConstraint(
-            "status IN ('requested', 'rows_deleted', 'completed', 'failed')",
+            "status IN ('requested', 'executing', 'rows_deleted', 'completed', 'failed')",
             name="ck_organization_purge_status",
+        ),
+        sa.CheckConstraint(
+            "reason_code IN ('contract_ended', 'subject_request', 'retention_elapsed', "
+            "'duplicate_organization', 'demo_reset', 'test_fixture')",
+            name="ck_organization_purge_reason",
+        ),
+        sa.CheckConstraint(
+            "(authorized_at IS NULL) = (authorized_until IS NULL)",
+            name="ck_organization_purge_window",
         ),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_organization_purges_org", "organization_purges", ["organization_id"])
 
-    op.add_column(
-        "organization_settings",
-        sa.Column("quote_retention_years", sa.Integer(), nullable=True),
+    op.create_table(
+        "quote_retention_decisions",
+        sa.Column("id", sa.String(length=36), nullable=False),
+        sa.Column("organization_id", sa.String(length=36), nullable=False),
+        sa.Column("years", sa.Integer(), nullable=False),
+        sa.Column("jurisdiction", sa.String(length=10), nullable=False),
+        sa.Column("source_label", sa.String(length=300), nullable=False),
+        sa.Column("source_url", sa.String(length=500), nullable=True),
+        sa.Column("source_checked_on", sa.Date(), nullable=False),
+        sa.Column("effective_from", sa.Date(), nullable=False),
+        sa.Column("validated_by", sa.String(length=36), nullable=True),
+        sa.Column("validated_at", sa.DateTime(), nullable=False),
+        sa.Column("note", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.CheckConstraint("years >= 0 AND years <= 100", name="ck_retention_years_range"),
+        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["validated_by"], ["users.id"]),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_quote_retention_decisions_organization_id",
+        "quote_retention_decisions",
+        ["organization_id"],
+    )
+    op.create_index(
+        "ix_retention_decisions_org",
+        "quote_retention_decisions",
+        ["organization_id", "effective_from"],
     )
 
     _reposer_le_lien_a_l_organisation("RESTRICT")
@@ -295,6 +349,10 @@ def downgrade() -> None:
     _retirer_le_declencheur()
     _poser_le_declencheur(avec_registre=False)
 
-    op.drop_column("organization_settings", "quote_retention_years")
+    op.drop_index("ix_retention_decisions_org", table_name="quote_retention_decisions")
+    op.drop_index(
+        "ix_quote_retention_decisions_organization_id", table_name="quote_retention_decisions"
+    )
+    op.drop_table("quote_retention_decisions")
     op.drop_index("ix_organization_purges_org", table_name="organization_purges")
     op.drop_table("organization_purges")

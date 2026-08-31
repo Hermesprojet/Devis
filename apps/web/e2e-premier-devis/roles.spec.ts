@@ -43,44 +43,6 @@ test("l'administrateur compose son équipe depuis les réglages", async ({ page 
   await seDeconnecter(page)
 })
 
-test("la conservation des devis part de « non tranchée » et se décide à la main", async ({
-  page,
-}) => {
-  // Une organisation neuve ne porte AUCUNE durée de conservation, et l'écran
-  // le dit au lieu d'en suggérer une. C'est la moitié visible d'une décision
-  // prise ailleurs : une durée est une règle réglementaire, l'application ne
-  // la déduit pas, et tant qu'elle est absente le serveur refuse de détruire
-  // l'organisation. Voir ADR 0006 et `apps/api/tests/test_purge_encadree.py`.
-  await seConnecter(page, ADMIN)
-  await page.goto('/parametres')
-
-  const encart = page.getByTestId('conservation-des-devis')
-  await expect(encart).toBeVisible()
-
-  const etat = page.getByTestId('etat-de-conservation')
-  await expect(etat).toHaveAttribute('data-decidee', 'false')
-  await expect(etat).toContainText('non tranchée')
-
-  // Le champ est vide, et sa seule indication est un mot — jamais un nombre,
-  // qui se lirait comme une recommandation.
-  const champ = page.getByLabel('Durée (années)')
-  await expect(champ).toHaveValue('')
-  await expect(champ).toHaveAttribute('placeholder', 'non tranchée')
-
-  await champ.fill('10')
-  await encart.getByRole('button', { name: 'Enregistrer' }).click()
-  await expect(etat).toHaveAttribute('data-decidee', 'true')
-  await expect(etat).toContainText('10 an(s)')
-
-  // Et la décision se reprend : remettre le champ à vide REFERME la porte,
-  // ce qui n'est pas la même chose que de ne rien toucher.
-  await champ.fill('')
-  await encart.getByRole('button', { name: 'Enregistrer' }).click()
-  await expect(etat).toHaveAttribute('data-decidee', 'false')
-
-  await seDeconnecter(page)
-})
-
 test('un métreur utilise la configuration mais ne la modifie pas', async ({ page }) => {
   await seConnecter(page, METREUR)
 
