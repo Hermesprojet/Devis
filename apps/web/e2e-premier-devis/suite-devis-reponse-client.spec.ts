@@ -324,8 +324,12 @@ test('un refus et une réponse hors ligne se tracent aussi', async ({ page, brow
   const pageClient = await contexteClient.newPage()
   await pageClient.goto(url)
   await pageClient.getByTestId('choisir-refuser').click()
-  // Refuser n'oblige personne à se nommer.
-  await pageClient.getByLabel(/Motif/).fill('Budget reporté à l’exercice suivant.')
+  // Refuser n'oblige personne à se nommer. Le motif porte volontairement une
+  // balise : ce que le client écrit doit s'AFFICHER, jamais s'exécuter — chez
+  // lui comme, plus loin, dans la chronologie de l'entreprise.
+  await pageClient
+    .getByLabel(/Motif/)
+    .fill('Budget reporté <script>window.__xss = 1</script> à l’exercice suivant.')
   await pageClient.getByTestId('confirmer-reponse').click()
   await expect(pageClient.getByTestId('recu-decision')).toHaveText('Refusé')
   await contexteClient.close()
@@ -333,6 +337,12 @@ test('un refus et une réponse hors ligne se tracent aussi', async ({ page, brow
   await page.goto(fiche)
   await expect(page.getByTestId('etat-du-devis')).toHaveText('Refusé')
   await expect(page.getByTestId('chronologie')).toContainText('Budget reporté')
+  // Le texte est là, ENTIER, et rien ne s'est exécuté en l'affichant.
+  await expect(page.getByTestId('chronologie')).toContainText('<script>window.__xss = 1</script>')
+  expect(
+    await page.evaluate(() => (window as unknown as { __xss?: number }).__xss),
+    'la balise du client a été exécutée dans la page de l’entreprise',
+  ).toBeUndefined()
 
   // ---- 2. le parcours hors ligne, sur une saisie erronée puis corrigée
   //

@@ -151,6 +151,9 @@ def test_un_secret_faux_perime_ou_revoque_recoit_le_meme_refus(
     inconnu = _ouvrir(seeded_client, "un-secret-qui-n-a-jamais-existe")
     assert inconnu.status_code == 404, inconnu.text
     refus_inconnu = inconnu.json()["detail"]
+    #: Et le refus ne renvoie pas le secret proposé : un message d'erreur
+    #: finit dans une console, une capture d'écran ou un rapport d'incident.
+    assert "un-secret-qui-n-a-jamais-existe" not in inconnu.text
 
     revoque = seeded_client.delete(
         f"/api/v1/issued-quotes/{devis['id']}/share-links/{cree['link']['id']}", headers=admin
