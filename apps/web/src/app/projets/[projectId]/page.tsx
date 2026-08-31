@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
+import { ClientDuChantier } from '@/components/ClientDuChantier'
 import { DocumentsDuProjet } from '@/components/DocumentsDuProjet'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
@@ -175,6 +176,8 @@ export default function ProjectPage() {
         </span>
       </p>
       <ErrorNotice error={error} />
+
+      {project && <ClientDuChantier project={project} onChange={setProject} />}
 
       <DocumentsDuProjet projectId={projectId} />
 

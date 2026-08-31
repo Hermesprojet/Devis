@@ -43,7 +43,7 @@ l'ingestion de documents non fiables de **document-analysis**, les quantités de
 
 ```python
 project = get_owned(session, Project, context.organization_id, project_id, label="Projet")
-query = owned_query(Estimate, context.organization_id)   # pour les listes
+query = owned_query(Estimate, context.organization_id)  # pour les listes
 ```
 
 - Interdit dans un router : `session.get(Model, id)` ou `select(Model).where(Model.id == id)`

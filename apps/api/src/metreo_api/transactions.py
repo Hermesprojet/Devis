@@ -106,6 +106,10 @@ _classer(
 # -- Écritures accompagnées d'un événement d'audit ---------------------------
 _classer(
     Famille.ECRITURE_AUDITEE,
+    "POST /api/v1/clients",
+    "PATCH /api/v1/clients/{client_id}",
+    "DELETE /api/v1/clients/{client_id}",
+    "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/issue",
     "POST /api/v1/projects",
     "PATCH /api/v1/projects/{project_id}",
     "DELETE /api/v1/projects/{project_id}",
@@ -140,6 +144,9 @@ _classer(
     "GET /api/v1/estimates/{estimate_id}/versions/{version_id}/export.csv",
     "GET /api/v1/estimates/{estimate_id}/versions/{version_id}/quote.html",
     "GET /api/v1/documents/{document_id}/revisions/{revision_id}/content",
+    # Reprendre un devis remis se trace : c'est un document commercial, et
+    # savoir qui en a repris une copie a la même valeur que savoir qui l'a émis.
+    "GET /api/v1/issued-quotes/{quote_id}/document.pdf",
 )
 
 # -- Écritures qui posent aussi des octets sur le volume ---------------------

@@ -17,6 +17,7 @@ breaks the suite.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -25,7 +26,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from metreo_api.db import get_session_factory
-from metreo_api.models import DocumentRevision, ExtractionProposal, SourceCitation
+from metreo_api.models import (
+    DocumentRevision,
+    ExtractionProposal,
+    IssuedQuote,
+    SourceCitation,
+)
 from metreo_api.security.roles import ROLE_PERMISSIONS, Permission, Role
 
 from .conftest import login
@@ -85,6 +91,7 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
     {
         "GET /api/v1/audit/events",
         "GET /api/v1/audit/verify",
+        "GET /api/v1/clients",
         "GET /api/v1/estimates",
         "GET /api/v1/price-books",
         "GET /api/v1/projects",
@@ -92,6 +99,7 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
         "PATCH /api/v1/organization/settings",
         "POST /api/v1/organization/members",
         "POST /api/v1/organization/tax-rates",
+        "POST /api/v1/clients",
         "POST /api/v1/price-books",
         "POST /api/v1/projects",
         "POST /api/v1/estimates",
@@ -201,6 +209,12 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
         },
         "POST /api/v1/estimates/{estimate_id}/versions": {"label": "v1"},
         "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/freeze": {"confirm": True},
+        # Corps vide mais PRÉSENT : tous les champs d'émission sont
+        # facultatifs, or un corps absent est refusé en 422 avant la
+        # moindre lecture de tenant — le 404 attendu ne prouverait rien.
+        "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/issue": {},
+        "POST /api/v1/clients": {"name": "Client de matrice"},
+        "PATCH /api/v1/clients/{client_id}": {"city": "Namur"},
         "PATCH /api/v1/organization/settings": {"rounding_scale": 2},
         "POST /api/v1/extraction-proposals/{proposal_id}/decisions": {
             "decision": "accepted",
@@ -217,8 +231,23 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
 
 def _build_graph(client: TestClient, headers: dict[str, str], reference: str) -> dict[str, str]:
     """Create one of every tenant-owned resource and return their identifiers."""
+    fiche = client.post(
+        "/api/v1/clients",
+        headers=headers,
+        json={
+            "name": f"Client {reference}",
+            "billing_address": "Rue de la Matrice 1",
+            "postal_code": "5000",
+            "city": "Namur",
+        },
+    )
+    assert fiche.status_code == 201, fiche.text
+    client_id = fiche.json()["id"]
+
     project = client.post(
-        "/api/v1/projects", headers=headers, json={"reference": reference, "name": reference}
+        "/api/v1/projects",
+        headers=headers,
+        json={"reference": reference, "name": reference, "client_id": client_id},
     )
     assert project.status_code == 201, project.text
     project_id = project.json()["id"]
@@ -367,9 +396,46 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
     )
     assert membre.status_code == 201, membre.text
 
+    #: Le devis émis est posé directement en base, comme la révision et la
+    #: citation ci-dessus. La matrice éprouve le CLOISONNEMENT de la route de
+    #: téléchargement, pas le parcours d'émission — celui-ci a ses propres
+    #: tests, et le faire passer ici lierait cette suite au moindre changement
+    #: de règle d'émission.
+    quote_id = str(uuid4())
+    session = get_session_factory()()
+    try:
+        session.add(
+            IssuedQuote(
+                id=quote_id,
+                organization_id=organization_id,
+                project_id=project_id,
+                estimate_id=estimate_id,
+                estimate_version_id=version_rows[0]["id"],
+                client_id=client_id,
+                number=f"MATRIX-{reference}",
+                sequence_year=2026,
+                sequence_number=1,
+                issued_at=datetime(2026, 3, 1, 9, 0, 0),
+                valid_until=date(2026, 4, 1),
+                organization_snapshot={"name": "Matrice"},
+                client_snapshot={"name": f"Client {reference}"},
+                project_snapshot={"reference": reference},
+                document_snapshot={"lines": []},
+                pdf_storage_key=f"tenant/{organization_id}/devis/{quote_id}.pdf",
+                pdf_sha256="b" * 64,
+                pdf_byte_size=1024,
+                issued_by=user_id,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
     return {
         "tax_rate": taux.json()["id"],
         "membership": membre.json()["id"],
+        "client": client_id,
+        "issued_quote": quote_id,
         "project": project_id,
         "document": document_id,
         "proposal": proposal_id,
@@ -405,6 +471,8 @@ def graph_b(seeded_client: TestClient, admin_b: dict[str, str]) -> dict[str, str
 
 _PARAM_TO_KEY = {
     "project_id": "project",
+    "client_id": "client",
+    "quote_id": "issued_quote",
     "document_id": "document",
     "proposal_id": "proposal",
     "boq_id": "boq",

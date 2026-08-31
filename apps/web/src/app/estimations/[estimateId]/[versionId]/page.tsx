@@ -1,8 +1,9 @@
 'use client'
 
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
+import { EmissionDuDevis } from '@/components/EmissionDuDevis'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
 import { api, type Computation, type EstimateLine } from '@/lib/api'
@@ -20,6 +21,7 @@ import { usePermissions } from '@/lib/usePermissions'
 export default function EstimateVersionPage() {
   const params = useParams<{ estimateId: string; versionId: string }>()
   const { estimateId, versionId } = params
+  const router = useRouter()
 
   const [computation, setComputation] = useState<Computation | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -51,6 +53,26 @@ export default function EstimateVersionPage() {
       await api.freeze(estimateId, versionId)
       setConfirmingFreeze(false)
       await load()
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Repartir d'une version gelée : en créer une nouvelle, jamais rouvrir.
+   *
+   * Une version gelée est immuable, et un devis émis l'est plus encore. Sans
+   * cette commande, l'interface n'offrait aucun chemin pour corriger un
+   * chiffrage remis : il fallait passer par l'API.
+   */
+  async function nouvelleVersion() {
+    setBusy(true)
+    setError(null)
+    try {
+      const creee = await api.createEstimateVersion(estimateId)
+      router.push(`/estimations/${estimateId}/${creee.id}`)
     } catch (caught) {
       setError(caught)
     } finally {
@@ -109,6 +131,7 @@ export default function EstimateVersionPage() {
   const frozen = version.status === 'frozen'
   const exportClient = availability(permissions, PERMISSIONS.exportClient)
   const exportInternal = availability(permissions, PERMISSIONS.exportInternal)
+  const writing = availability(permissions, PERMISSIONS.estimateWrite)
   const freezing = availability(
     permissions,
     PERMISSIONS.estimateFreeze,
@@ -154,8 +177,12 @@ export default function EstimateVersionPage() {
         {internal && exportInternal.available && (
           <button onClick={() => void download('internal')}>{t('estimate.exportInternal')}</button>
         )}
+        {/* Un APERÇU, et le bouton le dit : le document remis au client est le
+            PDF du devis émis, seul à être figé, numéroté et immuable. */}
         {exportClient.available && (
-          <button onClick={() => void download('quote')}>{t('estimate.quotePreview')}</button>
+          <button onClick={() => void download('quote')} title={t('estimate.quotePreviewHint')}>
+            {t('estimate.quotePreview')}
+          </button>
         )}
         <div className="spacer" />
         {freezing.available && (
@@ -166,6 +193,13 @@ export default function EstimateVersionPage() {
         {!freezing.available && freezing.reason === 'state' && (
           <button className="primary" disabled title={freezing.explanation}>
             {t('estimate.freeze')}
+          </button>
+        )}
+        {/* Le seul chemin honnête pour corriger un chiffrage gelé — et le
+            seul, une fois le devis émis, qui n'écrase pas ce qui a été remis. */}
+        {frozen && writing.available && (
+          <button onClick={() => void nouvelleVersion()} disabled={busy}>
+            {t('estimate.newVersion')}
           </button>
         )}
       </div>
@@ -182,6 +216,8 @@ export default function EstimateVersionPage() {
           <button onClick={() => setConfirmingFreeze(false)}>{t('common.cancel')}</button>
         </div>
       )}
+
+      <EmissionDuDevis estimateId={estimateId} versionId={versionId} frozen={frozen} />
 
       <div className="card" style={{ padding: 0 }}>
         <table>

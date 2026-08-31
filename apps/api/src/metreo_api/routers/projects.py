@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db import session_scope
-from ..models import Project, utcnow
+from ..models import Client, Project, utcnow
 from ..schemas import Page, ProjectCreate, ProjectOut, ProjectPage, ProjectUpdate
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
@@ -49,6 +49,20 @@ def list_projects(
     )
 
 
+def _fiche_du_tenant(session: Session, context: TenantContext, client_id: str | None) -> None:
+    """Refuse une fiche qui n'est pas de cette organisation — en 404.
+
+    Sans ce contrôle, un identifiant étranger irait jusqu'à la clé composite et
+    remonterait en `IntegrityError`, que la route traduit en « référence déjà
+    prise » : un message faux sur une tentative qui n'a rien à voir. Et 404
+    plutôt que 403 : l'existence d'une fiche chez un voisin ne se déduit pas
+    d'un code de retour.
+    """
+    if client_id is None:
+        return
+    get_owned(session, Client, context.organization_id, client_id, label="Client")
+
+
 @router.post(
     "",
     response_model=ProjectOut,
@@ -60,6 +74,7 @@ def create_project(
     context: TenantContext = Depends(require(Permission.PROJECT_WRITE)),
     session: Session = Depends(session_scope),
 ) -> Project:
+    _fiche_du_tenant(session, context, payload.client_id)
     project = Project(
         organization_id=context.organization_id,
         created_by=context.user.id,
@@ -109,6 +124,8 @@ def update_project(
 ) -> Project:
     project = get_owned(session, Project, context.organization_id, project_id, label="Projet")
     changes = payload.model_dump(exclude_unset=True)
+    if "client_id" in changes:
+        _fiche_du_tenant(session, context, changes["client_id"])
     for key, value in changes.items():
         setattr(project, key, value)
     session.flush()

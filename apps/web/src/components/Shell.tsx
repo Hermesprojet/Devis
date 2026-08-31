@@ -10,6 +10,7 @@ import { t } from '@/lib/i18n'
 
 const LINKS = [
   { href: '/projets', key: 'nav.projects' },
+  { href: '/clients', key: 'nav.clients' },
   { href: '/bibliotheque', key: 'nav.priceBooks' },
   { href: '/audit', key: 'nav.audit' },
   { href: '/parametres', key: 'nav.settings' },

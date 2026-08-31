@@ -14,6 +14,7 @@ est branchée sur PostgreSQL, et il éprouve ce que l'autre backend ne peut pas 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -144,3 +145,71 @@ def test_sur_postgres_une_creation_est_visible_d_une_autre_connexion_au_moment_d
     assert "PRJ-PG-VISIBLE" in dernier.vu, (
         f"Une autre connexion PostgreSQL ne voit pas encore le projet annoncé : {dernier}"
     )
+
+
+def test_deux_emissions_simultanees_ne_recoivent_jamais_le_meme_numero(
+    client_neuf: TestClient,
+) -> None:
+    """Deux émissions LANCÉES ENSEMBLE, sur la vraie route, et deux numéros.
+
+    C'est le seul endroit où cette garantie se prouve. SQLite n'a ni
+    connexions réellement concurrentes ni `SELECT … FOR UPDATE` : on n'y montre
+    que le dernier rempart — `uq_issued_quote_number` rejetant la perdante,
+    éprouvé dans `test_devis_emis.py`. Ici, le verrou fait mieux que rejeter :
+    la seconde requête ATTEND, relit un maximum désormais validé, et repart
+    avec le rang suivant. Les DEUX émissions aboutissent.
+
+    Le verrou porte sur la ligne `Organization`, dans le mode déjà utilisé par
+    la séquence d'audit (`FOR NO KEY UPDATE`). Réutiliser la même ligne et le
+    même mode est ce qui garantit l'absence de nouvel ordre de verrouillage,
+    donc de nouvel interblocage — voir `services/locking.py`.
+
+    Et il faut bien la ROUTE, pas le service : c'est la transaction complète —
+    verrou, numéro, ligne insérée, validation — qui rend le numéro visible à
+    la suivante. Un test qui n'allouerait qu'un rang sans écrire la ligne
+    verrait les deux connexions repartir avec le même, et il aurait raison.
+    """
+    import threading
+
+    from .emission import emettre, fiche, geler, prix_manquant, rattacher, version_de_plus
+
+    entete = _entete(client_neuf)
+    estimation = client_neuf.get("/api/v1/estimates", headers=entete).json()[0]
+    versions = client_neuf.get(
+        f"/api/v1/estimates/{estimation['id']}/versions", headers=entete
+    ).json()
+
+    prix_manquant(client_neuf, entete, estimation)
+    rattacher(client_neuf, entete, estimation["project_id"], fiche(client_neuf, entete)["id"])
+    a_emettre = [versions[0], version_de_plus(client_neuf, entete, estimation, "v2")]
+    for version in a_emettre:
+        geler(client_neuf, entete, estimation, version)
+
+    depart = threading.Barrier(len(a_emettre))
+    reponses: list[Any] = []
+    verrou = threading.Lock()
+
+    def emettre_en_meme_temps(version: dict) -> None:
+        depart.wait(timeout=30)
+        reponse = emettre(client_neuf, entete, estimation, version)
+        with verrou:
+            reponses.append(reponse)
+
+    fils = [threading.Thread(target=emettre_en_meme_temps, args=(v,)) for v in a_emettre]
+    for fil in fils:
+        fil.start()
+    for fil in fils:
+        fil.join(timeout=120)
+        assert not fil.is_alive(), "une émission ne s'est jamais terminée"
+
+    assert len(reponses) == len(a_emettre)
+    codes = sorted(r.status_code for r in reponses)
+    assert codes == [201, 201], [r.text for r in reponses]
+    numeros = [r.json()["number"] for r in reponses]
+    assert len(set(numeros)) == 2, f"le même numéro a été servi deux fois : {numeros}"
+
+    #: Et la base porte bien deux devis distincts, vus d'une AUTRE connexion.
+    historique = client_neuf.get(
+        f"/api/v1/projects/{estimation['project_id']}/issued-quotes", headers=entete
+    ).json()
+    assert sorted(d["number"] for d in historique) == sorted(numeros)

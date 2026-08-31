@@ -41,6 +41,12 @@ POSTGRES_ONLY: dict[str, str] = {
 
 #: Modules qui n'ignorent que CERTAINS de leurs tests, avec la raison.
 PARTIALLY_SKIPPED: dict[str, str] = {
+    # Un seul cas s'ignore : celui qui fait DÉLIBÉRÉMENT lire à deux
+    # connexions le même maximum avant validation. PostgreSQL rend cet
+    # entrelacement impossible — c'est le verrou de séquence qui fait son
+    # travail — et l'y forcer interbloquerait le test au lieu de prouver
+    # quoi que ce soit. La garantie y est prouvée autrement.
+    "test_devis_emis.py": "seule la course sans verrou s'ignore",
     "test_audit_migration.py": "un cas déjà couvert autrement sur SQLite",
     # Ses contrôles de propriété — noms possédés, cible destructive disparue —
     # tournent partout ; seule la classe qui touche un vrai serveur s'ignore.

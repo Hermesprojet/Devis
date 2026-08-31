@@ -38,7 +38,7 @@ INTERNAL_EXTRA_COLUMNS = [
 ]
 
 
-def _line_rows(
+def line_rows(
     result: EstimateResult, rounding: RoundingPolicy, positions: dict[str, str]
 ) -> list[dict[str, Any]]:
     payload = result.to_dict(rounding)
@@ -152,7 +152,7 @@ def estimate_to_csv(
         columns += INTERNAL_EXTRA_COLUMNS
     writer.writerow([title for _, title in columns] + ["Statut"])
 
-    for row in _line_rows(result, rounding, positions):
+    for row in line_rows(result, rounding, positions):
         status = ""
         if row["missing_price"]:
             status = "PRIX MANQUANT"
@@ -241,7 +241,7 @@ def quote_html(
     Phase 2 will produce.
     """
     payload = result.to_dict(rounding)
-    rows = _line_rows(result, rounding, positions)
+    rows = line_rows(result, rounding, positions)
     generated = datetime.utcnow().strftime("%d/%m/%Y %H:%M UTC")
     status_label = {"draft": "Brouillon", "frozen": "Version gelée", "superseded": "Remplacée"}.get(
         version.status, version.status

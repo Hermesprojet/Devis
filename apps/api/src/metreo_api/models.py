@@ -14,7 +14,7 @@ Conventions applied to every business table:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from sqlalchemy import JSON as SAJSON
@@ -301,6 +301,11 @@ class Project(TimestampMixin, Base):
         # que le résultat d'une suppression ne dépende plus de l'ordre de
         # création des contraintes. SQLite n'en a pas besoin : mesuré, les deux
         # ordres y donnent le même résultat.
+        ForeignKeyConstraint(
+            ["client_id", "organization_id"],
+            ["clients.id", "clients.organization_id"],
+            name="fk_projects_client_tenant",
+        ),
         UniqueConstraint("id", "organization_id", name="uq_projects_id_organization"),
         UniqueConstraint("organization_id", "reference", name="uq_project_org_reference"),
         Index("ix_projects_org_status", "organization_id", "status"),
@@ -314,6 +319,11 @@ class Project(TimestampMixin, Base):
     client_reference: Mapped[str | None] = mapped_column(String(120))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    #: La fiche client choisie pour ce chantier. Facultative : les projets
+    #: antérieurs au répertoire n'en ont pas, et doivent rester lisibles.
+    #: `client_name` et `client_reference` restent ce qu'ils étaient — la
+    #: mémoire de ce qui avait été saisi avant.
+    client_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("clients.id"))
     client_name: Mapped[str | None] = mapped_column(String(200))
     address: Mapped[str | None] = mapped_column(String(255))
     postal_code: Mapped[str | None] = mapped_column(String(20))
@@ -330,6 +340,53 @@ class Project(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class Client(TimestampMixin, Base):
+    """Le destinataire commercial d'un devis, réutilisable d'un chantier à l'autre.
+
+    Jusqu'ici, « le client » n'existait que comme deux chaînes libres portées
+    par le projet : `client_name` et `client_reference`. Deux chantiers pour la
+    même entreprise ne partageaient rien, une adresse de facturation n'avait
+    nulle part où vivre, et le devis imprimait l'adresse du CHANTIER faute
+    d'autre chose.
+
+    Ces deux colonnes historiques restent. Elles ne sont pas migrées vers des
+    fiches : deviner qu'« Ets Dupont » et « ETS DUPONT SPRL » sont la même
+    entreprise est une décision commerciale, pas une transformation de schéma.
+    Un ancien projet reste donc lisible tel quel, et l'écran demande de choisir
+    ou de créer une fiche avant la première émission.
+    """
+
+    __tablename__ = "clients"
+    __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_clients_id_organization"),
+        CheckConstraint("status IN ('active','archived')", name="ck_client_status"),
+        Index("ix_clients_org_status", "organization_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    #: Raison sociale, ou simplement le nom pour un particulier.
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: Numéro d'entreprise ou de TVA. Facultatif : un particulier n'en a pas.
+    company_number: Mapped[str | None] = mapped_column(String(50))
+    #: L'adresse de FACTURATION, distincte de celle du chantier — c'est
+    #: précisément la distinction qui manquait.
+    billing_address: Mapped[str | None] = mapped_column(String(255))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    city: Mapped[str | None] = mapped_column(String(120))
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False, default="BE")
+    contact_name: Mapped[str | None] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    notes: Mapped[str | None] = mapped_column(Text)
+    #: `archived` sort la fiche des listes courantes sans rien détruire, et sans
+    #: toucher aux devis déjà émis qui en portent l'instantané.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
 
 
 # --------------------------------------------------------------------------
@@ -1221,6 +1278,11 @@ class EstimateVersion(TimestampMixin, Base):
             name="fk_estimate_versions_price_book_version_tenant",
         ),
         UniqueConstraint("estimate_id", "version_number", name="uq_estimateversion_number"),
+        # La clé que doublent les frontières multi-tenant pointant ICI. Un devis
+        # émis désigne une version ET son organisation ; sans cette unicité,
+        # SQLite refuse la clé composite avec « foreign key mismatch », et
+        # PostgreSQL exigerait la même chose.
+        UniqueConstraint("id", "organization_id", name="uq_estimate_versions_id_organization"),
         CheckConstraint(
             "status IN ('draft','frozen','superseded')", name="ck_estimate_version_status"
         ),
@@ -1268,6 +1330,103 @@ class EstimateVersion(TimestampMixin, Base):
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime)
     frozen_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
     created_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
+
+
+class IssuedQuote(TimestampMixin, Base):
+    """Un devis REMIS au client : numéroté, daté, figé, et téléchargeable.
+
+    Une version gelée est un calcul reproductible ; ce n'en est pas encore un
+    document commercial. Il lui manque un numéro, une date d'émission, une
+    validité, un destinataire, et un fichier que l'entreprise peut transmettre.
+
+    Tout ce que le document imprime est recopié ici au moment de l'émission —
+    l'organisation, le client, le chantier, les lignes et les totaux. C'est la
+    raison d'être de cette table : modifier ensuite la fiche client, les taux
+    ou l'organisation ne change pas un devis déjà remis. Le PDF n'est jamais
+    reconstruit à partir des tables vivantes ; il est lu sur le volume, tel
+    qu'il a été écrit, et son empreinte le prouve.
+
+    Une version ne s'émet qu'une fois : `uq_issued_quote_version`. Corriger un
+    devis remis n'est pas une modification, c'est une nouvelle version suivie
+    d'une nouvelle émission — et l'ancienne reste.
+    """
+
+    __tablename__ = "issued_quotes"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["project_id", "organization_id"],
+            ["projects.id", "projects.organization_id"],
+            name="fk_issued_quotes_project_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["estimate_version_id", "organization_id"],
+            ["estimate_versions.id", "estimate_versions.organization_id"],
+            name="fk_issued_quotes_version_tenant",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["client_id", "organization_id"],
+            ["clients.id", "clients.organization_id"],
+            name="fk_issued_quotes_client_tenant",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_issued_quotes_id_organization"),
+        #: Le numéro est unique DANS l'organisation, et c'est la base qui le
+        #: tient — le verrou de séquence n'est qu'une convention entre écrivains
+        #: bien élevés.
+        UniqueConstraint("organization_id", "number", name="uq_issued_quote_number"),
+        UniqueConstraint("estimate_version_id", name="uq_issued_quote_version"),
+        Index("ix_issued_quotes_org_project", "organization_id", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    estimate_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("estimates.id", ondelete="CASCADE"), nullable=False
+    )
+    estimate_version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("estimate_versions.id", ondelete="CASCADE"), nullable=False
+    )
+    client_id: Mapped[str] = mapped_column(String(36), ForeignKey("clients.id"), nullable=False)
+
+    #: Le numéro imprimé, rendu par le motif de l'organisation.
+    number: Mapped[str] = mapped_column(String(60), nullable=False)
+    #: L'année et le rang qui l'ont produit, conservés séparément : ils
+    #: expliquent le numéro, et permettent d'allouer le suivant sans le
+    #: réinterpréter à l'envers.
+    sequence_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    sequence_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    issued_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
+    #: Conditions et note au client, telles qu'imprimées. Configurables, jamais
+    #: gravées : ce dépôt n'affirme aucune mention légale qu'il ne peut pas
+    #: démontrer.
+    terms: Mapped[str | None] = mapped_column(Text)
+
+    #: Ce que le document dit, figé. Quatre instantanés distincts plutôt qu'un
+    #: seul objet : on les relit séparément, et un lecteur voit tout de suite ce
+    #: qui vient d'où.
+    organization_snapshot: Mapped[dict] = mapped_column(SAJSON, nullable=False, default=dict)
+    client_snapshot: Mapped[dict] = mapped_column(SAJSON, nullable=False, default=dict)
+    project_snapshot: Mapped[dict] = mapped_column(SAJSON, nullable=False, default=dict)
+    document_snapshot: Mapped[dict] = mapped_column(SAJSON, nullable=False, default=dict)
+    #: La décision prise AU MOMENT de l'émission, et non relue plus tard dans
+    #: les réglages : faire apparaître les coûts internes est un choix qui
+    #: engage, et il se lit sur le devis lui-même.
+    include_internal_costs: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    #: Le fichier remis, sur le même volume que les pièces de chantier.
+    pdf_storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    pdf_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    pdf_byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    issued_by: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"))
 
 
 # --------------------------------------------------------------------------

@@ -22,6 +22,7 @@ const fr: Dictionary = {
 
   'nav.dashboard': 'Tableau de bord',
   'nav.projects': 'Projets',
+  'nav.clients': 'Clients',
   'nav.priceBooks': 'Bibliothèque de prix',
   'nav.audit': "Journal d'audit",
   'nav.settings': 'Paramètres',
@@ -67,6 +68,7 @@ const fr: Dictionary = {
   'common.confirm': 'Confirmer',
   'common.save': 'Enregistrer',
   'common.create': 'Créer',
+  'common.edit': 'Modifier',
   'common.search': 'Rechercher',
   'common.none': '—',
   'common.total': 'Total',
@@ -137,9 +139,13 @@ const fr: Dictionary = {
     'Le gel est irréversible : la version devient immuable et conserve la bibliothèque de prix utilisée.',
   'estimate.frozenAt': 'Gelée le',
   'estimate.digest': 'Empreinte',
+  'estimate.newVersion': 'Créer une nouvelle version',
   'estimate.exportCsv': 'Export CSV',
   'estimate.exportInternal': 'Export interne',
   'estimate.quotePreview': 'Aperçu du devis',
+  'estimate.quotePreviewHint':
+    'Aperçu interne, recalculé à chaque ouverture. Le document remis au client est le '
+    + 'PDF du devis émis : lui seul porte un numéro, une date et un contenu figé.',
   'estimate.documentTotalUnknown':
     "Cette version a été gelée avant l'enregistrement des totaux du document. "
     + 'Ouvrez le devis pour en connaître le montant imprimé.',
@@ -155,6 +161,72 @@ const fr: Dictionary = {
     "Des postes sont sans prix : le gel est bloqué par la règle de l'entreprise.",
   'estimate.fromSnapshot':
     'Montants relus depuis la version gelée. Une modification ultérieure des prix de référence ne les change pas.',
+
+  'clients.title': 'Clients',
+  'clients.intro':
+    'Une fiche par client, réutilisable sur tous ses chantiers. Deux fiches de même nom '
+    + 'restent deux clients distincts : rapprocher deux fiches est une décision humaine.',
+  'clients.new': 'Nouveau client',
+  'clients.edit': 'Modifier la fiche',
+  'clients.search': 'Nom ou numéro d\u2019entreprise',
+  'clients.showArchived': 'Afficher les fiches archivées',
+  'clients.empty': 'Aucune fiche client. Créez-en une pour pouvoir émettre un devis.',
+  'clients.name': 'Nom',
+  'clients.companyNumber': 'Numéro d\u2019entreprise',
+  'clients.billingAddress': 'Adresse de facturation',
+  'clients.postalCode': 'Code postal',
+  'clients.city': 'Localité',
+  'clients.contact': 'Personne de contact',
+  'clients.email': 'Courriel',
+  'clients.phone': 'Téléphone',
+  'clients.active': 'Active',
+  'clients.archived': 'Archivée',
+  'clients.archive': 'Archiver',
+  'clients.restore': 'Réactiver',
+  'clients.homonym': 'Une autre fiche porte le même nom — vérifiez l\u2019adresse.',
+  'clients.incompleteForIssuing':
+    'Incomplète pour émettre',
+  'clients.requiredForIssuing':
+    'Pour émettre un devis, il faut au minimum un nom, une adresse, un code postal et une '
+    + 'localité : ce sont les mentions du destinataire imprimées sur le document.',
+  'clients.selectForProject': 'Client du chantier',
+  'clients.noneSelected': 'Aucune fiche client',
+  'clients.attach': 'Rattacher',
+  'clients.attachHint':
+    'Ce chantier n\u2019a pas encore de fiche client. Choisissez-en une, ou créez-la dans '
+    + 'Clients : l\u2019émission d\u2019un devis l\u2019exige.',
+  'clients.legacyName': 'Nom saisi avant le répertoire',
+
+  'quote.issue': 'Émettre le devis',
+  'quote.issueTitle': 'Émission du devis',
+  'quote.issueWarning':
+    'L\u2019émission est définitive : le devis reçoit un numéro, une date, et un PDF qui ne '
+    + 'sera plus jamais modifié. Pour corriger, il faudra créer une nouvelle version et '
+    + 'émettre un nouveau devis — l\u2019ancien restera.',
+  'quote.recipient': 'Destinataire',
+  'quote.validUntil': 'Valable jusqu\u2019au',
+  'quote.validUntilHint': 'Par défaut, trente jours après l\u2019émission.',
+  'quote.terms': 'Conditions et note au client',
+  'quote.termsHint':
+    'Ce texte est imprimé tel quel sur le devis. Ce dépôt n\u2019ajoute aucune mention '
+    + 'légale : écrivez ici celles de votre entreprise.',
+  'quote.includeInternal': 'Inclure les coûts internes (déboursé, revient, marge)',
+  'quote.includeInternalWarning':
+    'À n\u2019utiliser que pour un document interne : ces montants ne doivent jamais partir '
+    + 'chez un client.',
+  'quote.issued': 'Devis émis',
+  'quote.issuedAt': 'Émis le',
+  'quote.number': 'Numéro',
+  'quote.download': 'Télécharger le PDF',
+  'quote.history': 'Devis émis pour ce chantier',
+  'quote.none': 'Aucun devis émis pour ce chantier.',
+  'quote.needsFrozen':
+    'Gelez d\u2019abord la version : un devis remis doit désigner un calcul qui ne bougera plus.',
+  'quote.needsClient':
+    'Ce chantier n\u2019a pas de fiche client. Rattachez-en une depuis la page du chantier.',
+  'quote.alreadyIssued':
+    'Cette version porte déjà un devis. Créez une nouvelle version pour en émettre un autre.',
+  'quote.digest': 'Empreinte du PDF',
 
   'audit.title': "Journal d'audit",
   'audit.sequence': 'N°',

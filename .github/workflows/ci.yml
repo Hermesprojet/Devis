@@ -187,6 +187,7 @@ jobs:
             tests/test_audit_concurrency.py tests/test_import_idempotence.py \
             tests/test_migration_roundtrip.py tests/test_tenant_concurrency.py \
             tests/test_deletion_determinism.py \
+            tests/test_frontieres_postgres.py \
             -q --no-header | tee /tmp/concurrence.txt
           # `grep '[0-9]+ passed'` acceptait « 2 failed, 3 passed » : le résumé
           # d'un échec partiel contient le mot. On exige donc un résumé SANS
