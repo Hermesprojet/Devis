@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     #: startup — the application could not be configured the way its own
     #: example file said to. Covered by ``tests/test_configuration.py``.
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
+
+    #: L'adresse publique de l'APPLICATION, celle qu'on copie dans un
+    #: courriel pour qu'un client ouvre son devis. Vide, elle prend la
+    #: première origine CORS : dans une installation locale ou dans la
+    #: recette Docker, c'est déjà la bonne, et aucun domaine n'est requis.
+    public_app_url: str = ""
     default_currency: str = "EUR"
     default_locale: str = "fr-BE"
 
@@ -108,6 +114,12 @@ class Settings(BaseSettings):
                 raise ValueError("CORS origins: le JSON fourni n'est pas une liste")
             return [str(item).strip() for item in decoded if str(item).strip()]
         return [item.strip() for item in text.split(",") if item.strip()]
+
+    @property
+    def public_base_url(self) -> str:
+        """Le préfixe des liens de consultation, sans barre finale."""
+        brut = self.public_app_url or (self.cors_origins[0] if self.cors_origins else "")
+        return brut.rstrip("/")
 
     @property
     def is_production(self) -> bool:

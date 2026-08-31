@@ -158,6 +158,37 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return (await response.json()) as T
 }
 
+/**
+ * Une requête PUBLIQUE : cookie de session, jamais de jeton porteur.
+ *
+ * Elle ne passe pas par `request` parce qu'elle ne doit surtout pas emporter
+ * le jeton de l'entreprise : la page publique peut être ouverte dans le même
+ * navigateur qu'une session Metreo, et rien n'autorise à confondre les deux
+ * identités.
+ */
+async function publicRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+  const response = await fetch(`${API_URL}${path}`, {
+    method: options.method ?? 'GET',
+    headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    cache: 'no-store',
+    credentials: 'include',
+  })
+  if (!response.ok) {
+    let detail: unknown = null
+    try {
+      detail = (await response.json()).detail
+    } catch {
+      detail = { message: `Erreur HTTP ${response.status}` }
+    }
+    throw new ApiError(response.status, detail)
+  }
+  if (response.status === 204) return undefined as T
+  return (await response.json()) as T
+}
+
 export const api = {
   url: API_URL,
 
@@ -194,6 +225,13 @@ export const api = {
   health: () => request<Health>('/health'),
   organization: () => request<Organization>('/organization'),
   organizationSettings: () => request<OrgSettings>('/organization/settings'),
+  updateOrganizationSettings: (body: Record<string, unknown>) =>
+    request<OrgSettings>('/organization/settings', { method: 'PATCH', body }),
+  /** Ce qu'un motif produirait, jugé par le SERVEUR — jamais recalculé ici. */
+  quoteNumberPreview: (pattern: string) =>
+    request<QuoteNumberPreview>(
+      `/organization/quote-number-preview?pattern=${encodeURIComponent(pattern)}`,
+    ),
 
   members: () => request<Member[]>('/organization/members'),
   inviteMember: (body: Record<string, unknown>) =>
@@ -350,6 +388,36 @@ export const api = {
     }),
   issuedQuotes: (projectId: string) =>
     request<IssuedQuote[]>(`/projects/${projectId}/issued-quotes`),
+
+  quotes: (query = '') => request<QuoteBoardPage>(`/quotes${query}`),
+  quote: (id: string) => request<IssuedQuoteDetail>(`/issued-quotes/${id}`),
+  createShareLink: (id: string, days?: number) =>
+    request<ShareLinkCreated>(`/issued-quotes/${id}/share-links`, {
+      method: 'POST',
+      body: { days: days ?? null },
+    }),
+  revokeShareLink: (id: string, linkId: string) =>
+    request<void>(`/issued-quotes/${id}/share-links/${linkId}`, { method: 'DELETE' }),
+  recordQuoteEvent: (id: string, body: Record<string, unknown>) =>
+    request<IssuedQuoteDetail>(`/issued-quotes/${id}/events`, { method: 'POST', body }),
+  correctQuoteEvent: (id: string, eventId: string, body: Record<string, unknown>) =>
+    request<IssuedQuoteDetail>(`/issued-quotes/${id}/events/${eventId}/correction`, {
+      method: 'POST',
+      body,
+    }),
+
+  /**
+   * Le côté public : aucun jeton porteur, un cookie `HttpOnly` posé par le
+   * serveur. `credentials: 'include'` est indispensable — l'API vit sur une
+   * autre origine que la page en développement, et sans lui le cookie ne
+   * repartirait jamais.
+   */
+  publicOpenSession: (secret: string) =>
+    publicRequest<void>('/public/quote-sessions', { method: 'POST', body: { secret } }),
+  publicQuote: () => publicRequest<PublicQuoteView>('/public/quote'),
+  publicRespond: (body: Record<string, unknown>) =>
+    publicRequest<PublicReceipt>('/public/quote/response', { method: 'POST', body }),
+  publicPdfUrl: () => `${API_URL}/public/quote/document.pdf`,
   /**
    * L'URL du PDF remis — à passer par `fetchExport`, jamais à un `<a href>`.
    *
@@ -450,6 +518,16 @@ export type OrgSettings = {
   margin_rate: string | null
   margin_method: string | null
   missing_price_policy: string
+  quote_number_pattern: string
+  /** Le numéro que ce motif produirait, rendu par le serveur. */
+  quote_number_preview: string
+  show_internal_costs_in_client_pdf: boolean
+}
+
+export type QuoteNumberPreview = {
+  valid: boolean
+  preview: string | null
+  message: string | null
 }
 
 export type Client = {
@@ -728,6 +806,116 @@ export type AuditEvent = {
   object_id: string | null
   summary: string
   hash: string
+}
+
+export type QuoteState = {
+  code: string
+  label: string
+  decision: string | null
+  transmitted_at: string | null
+  viewed_at: string | null
+  decided_at: string | null
+  last_activity_at: string | null
+  expired: boolean
+}
+
+export type QuoteEvent = {
+  id: string
+  kind: string
+  kind_label: string
+  channel: string | null
+  actor_email: string | null
+  respondent_name: string | null
+  respondent_email: string | null
+  comment: string | null
+  effective_at: string
+  recorded_at: string
+  corrected: boolean
+  correction_reason: string | null
+  corrects_event_id: string | null
+}
+
+export type ShareLink = {
+  id: string
+  created_at: string
+  expires_at: string
+  revoked_at: string | null
+  active: boolean
+}
+
+/** La seule réponse qui porte le secret, et une seule fois. */
+export type ShareLinkCreated = { link: ShareLink; url: string }
+
+export type QuoteBoardRow = {
+  id: string
+  number: string
+  client_name: string
+  project_id: string
+  project_reference: string
+  project_name: string
+  total_ttc: string
+  currency: string
+  issued_at: string
+  valid_until: string
+  state: QuoteState
+  has_active_link: boolean
+}
+
+export type QuoteBoardPage = { items: QuoteBoardRow[]; page: Page<never>['page'] }
+
+export type IssuedQuoteDetail = {
+  quote: IssuedQuote
+  state: QuoteState
+  events: QuoteEvent[]
+  links: ShareLink[]
+  project_reference: string
+  project_name: string
+  client_snapshot: Record<string, string | null>
+  total_ttc: string
+  currency: string
+}
+
+export type PublicQuoteLine = {
+  position: string
+  designation: string
+  unit: string
+  quantity: string
+  unit_price_ht: string
+  total_ht: string
+}
+
+export type PublicQuoteView = {
+  number: string
+  issued_at: string
+  valid_until: string
+  organization_name: string
+  organization_legal_name: string | null
+  organization_company_number: string | null
+  client_name: string
+  client_address_lines: string[]
+  project_reference: string
+  project_name: string
+  lines: PublicQuoteLine[]
+  total_ht: string
+  taxes: { code?: string; label: string; rate: string; amount: string }[]
+  total_ttc: string
+  currency: string
+  terms: string | null
+  pdf_sha256: string
+  pdf_byte_size: number
+  state: QuoteState
+  can_respond: boolean
+  cannot_respond_reason: string | null
+}
+
+export type PublicReceipt = {
+  number: string
+  decision: string
+  decision_label: string
+  decided_at: string
+  respondent_name: string | null
+  pdf_sha256: string
+  created: boolean
 }
 
 export type AuditVerify = {

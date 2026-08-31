@@ -159,8 +159,21 @@ class OrganizationSettingsOut(DecimalOut):
     margin_method: str | None = None
     missing_price_policy: str
     quote_number_pattern: str
+    #: Le numéro que ce motif produirait, rendu par le serveur. Une phrase
+    #: de refus quand le motif enregistré est devenu illisible.
+    quote_number_preview: str = ""
     show_internal_costs_in_client_pdf: bool
     ai_enabled: bool
+
+
+class QuoteNumberPreviewOut(BaseModel):
+    """Le verdict du serveur sur un motif, avant tout enregistrement."""
+
+    valid: bool
+    #: Le numéro rendu, quand le motif est utilisable.
+    preview: str | None
+    #: Pourquoi il est refusé, quand il l'est. Le même texte que le 422.
+    message: str | None
 
 
 class OrganizationSettingsUpdate(BaseModel):
@@ -479,6 +492,213 @@ class QuoteIssueRequest(BaseModel):
     #: Décision explicite, prise au moment d'émettre et figée dans l'instantané.
     #: Le réglage de l'organisation en donne le défaut, jamais le dernier mot.
     include_internal_costs: bool | None = None
+
+
+class QuoteEventOut(ApiModel):
+    """Une ligne de la chronologie, telle que l'entreprise la lit."""
+
+    id: str
+    kind: str
+    kind_label: str
+    channel: str | None
+    actor_email: str | None
+    respondent_name: str | None
+    respondent_email: str | None
+    comment: str | None
+    effective_at: datetime
+    recorded_at: datetime
+    #: Barré par une correction ultérieure. L'événement reste affiché : c'est
+    #: la différence entre corriger et effacer.
+    corrected: bool = False
+    correction_reason: str | None = None
+    corrects_event_id: str | None = None
+
+
+class QuoteStateOut(ApiModel):
+    """L'état commercial, déduit du journal — jamais lu dans une colonne."""
+
+    code: str
+    label: str
+    decision: str | None
+    transmitted_at: datetime | None
+    viewed_at: datetime | None
+    decided_at: datetime | None
+    last_activity_at: datetime | None
+    expired: bool
+
+
+class ShareLinkOut(ApiModel):
+    """Un lien de consultation. Jamais son secret."""
+
+    id: str
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    active: bool
+
+
+class ShareLinkCreated(ApiModel):
+    """La création d'un lien — la seule réponse qui porte le secret.
+
+    Il n'est rendu qu'ici, et une seule fois : la base n'en garde que
+    l'empreinte, et aucune relecture ne pourra le redonner.
+    """
+
+    link: ShareLinkOut
+    #: L'adresse complète à copier, secret compris, dans le FRAGMENT.
+    url: str
+
+
+class ShareLinkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Durée demandée. Bornée par la validité du devis, jamais au-delà.
+    days: int | None = Field(default=None, ge=1, le=365)
+
+
+class QuoteEventCreate(BaseModel):
+    """Ce que l'entreprise enregistre elle-même, sans passer par le lien."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["transmitted", "accepted", "declined"]
+    channel: Literal["public_link", "email", "phone", "meeting", "other"]
+    #: Le moment où la chose a eu lieu, s'il diffère de celui où on l'écrit.
+    effective_at: datetime | None = None
+    respondent_name: str | None = Field(default=None, max_length=200)
+    respondent_email: EmailStr | None = None
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class QuoteCorrectionCreate(BaseModel):
+    """Corriger une saisie interne : en le disant, jamais en effaçant."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: NonBlank = Field(max_length=500)
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class QuoteBoardRow(ApiModel):
+    """Une ligne du tableau de suivi, tous chantiers confondus."""
+
+    id: str
+    number: str
+    client_name: str
+    project_id: str
+    project_reference: str
+    project_name: str
+    total_ttc: str
+    currency: str
+    issued_at: datetime
+    valid_until: date
+    state: QuoteStateOut
+    has_active_link: bool
+
+
+class QuoteBoardPage(ApiModel):
+    items: list[QuoteBoardRow]
+    page: Page
+
+
+class IssuedQuoteDetail(ApiModel):
+    """La fiche d'un devis remis : le document, son état, son histoire."""
+
+    quote: IssuedQuoteOut
+    state: QuoteStateOut
+    events: list[QuoteEventOut]
+    links: list[ShareLinkOut]
+    project_reference: str
+    project_name: str
+    client_snapshot: dict
+    total_ttc: str
+    currency: str
+
+
+# ---------------------------------------------------------------------------
+# Le côté public : ce qu'un destinataire sans compte voit et envoie
+# ---------------------------------------------------------------------------
+
+
+class PublicSessionRequest(BaseModel):
+    """L'échange du secret contre une session. Le secret est dans le CORPS.
+
+    Ni dans le chemin, ni dans la chaîne de requête : les deux finissent dans
+    les journaux d'accès, les référents et l'historique du navigateur.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    secret: NonBlank = Field(max_length=200)
+
+
+class PublicQuoteLine(ApiModel):
+    position: str
+    designation: str
+    unit: str
+    quantity: str
+    unit_price_ht: str
+    total_ht: str
+
+
+class PublicQuoteView(ApiModel):
+    """Tout ce que le destinataire voit, et rien de plus.
+
+    Aucun coût interne n'y figure — ni déboursé, ni revient, ni marge — et le
+    partage d'un devis qui en porterait est refusé en amont.
+    """
+
+    number: str
+    issued_at: datetime
+    valid_until: date
+    organization_name: str
+    organization_legal_name: str | None
+    organization_company_number: str | None
+    client_name: str
+    client_address_lines: list[str]
+    project_reference: str
+    project_name: str
+    lines: list[PublicQuoteLine]
+    total_ht: str
+    taxes: list[dict]
+    total_ttc: str
+    currency: str
+    terms: str | None
+    pdf_sha256: str
+    pdf_byte_size: int
+    state: QuoteStateOut
+    #: Une réponse est-elle encore possible, et sinon pourquoi.
+    can_respond: bool
+    cannot_respond_reason: str | None
+
+
+class PublicResponseRequest(BaseModel):
+    """La réponse du client. L'identité est DÉCLARATIVE, et l'écran le dit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["accepted", "declined"]
+    #: Exigé pour accepter, facultatif pour refuser — un client qui décline
+    #: n'a pas à se nommer.
+    respondent_name: str | None = Field(default=None, max_length=200)
+    respondent_email: EmailStr | None = None
+    comment: str | None = Field(default=None, max_length=2000)
+    #: La confirmation explicite affichée à l'écran, renvoyée telle quelle.
+    confirmed: bool = False
+
+
+class PublicReceipt(ApiModel):
+    """Le reçu remis après une réponse. Rejouer la même réponse le redonne."""
+
+    number: str
+    decision: str
+    decision_label: str
+    decided_at: datetime
+    respondent_name: str | None
+    pdf_sha256: str
+    #: Faux quand la réponse était déjà enregistrée : la requête n'a rien
+    #: écrit de nouveau, et le reçu est celui d'origine.
+    created: bool
 
 
 class IssuedQuoteOut(ApiModel):

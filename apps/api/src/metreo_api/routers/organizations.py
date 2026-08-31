@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -22,13 +22,14 @@ from ..schemas import (
     OrganizationOut,
     OrganizationSettingsOut,
     OrganizationSettingsUpdate,
+    QuoteNumberPreviewOut,
     TaxRateCreate,
     TaxRateOut,
     TaxRateUpdate,
 )
 from ..security.auth import TenantContext, current_context, require
 from ..security.roles import Permission, Role
-from ..services import audit
+from ..services import audit, numerotation
 from ..services.estimating import markup_from_settings
 from ..transactions import RouteTransactionnelle
 
@@ -51,7 +52,7 @@ def get_settings_endpoint(
 ) -> OrganizationSettingsOut:
     settings = session.get(OrganizationSettings, context.organization_id)
     assert settings is not None
-    payload = OrganizationSettingsOut.model_validate(settings)
+    payload = _avec_apercu(settings)
     if not context.can(Permission.MARGIN_READ):
         # Coefficients that reveal commercial policy are masked rather than
         # refused: the rest of the screen stays usable. They become null, never
@@ -121,6 +122,18 @@ def update_settings(
     # l'inverse — produit une division par un nombre négatif ou nul, et TOUTES
     # les estimations de l'entreprise deviennent incalculables d'un coup. La
     # construction de MarkupPolicy est le seul juge : elle porte déjà la règle.
+    # Le motif de numérotation se contrôle ICI, au moment où quelqu'un le
+    # saisit — et non à l'émission, où il serait trop tard pour le corriger
+    # sans perdre le geste en cours.
+    if "quote_number_pattern" in changes:
+        try:
+            changes["quote_number_pattern"] = numerotation.verifier(changes["quote_number_pattern"])
+        except numerotation.MotifInvalide as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": exc.code, "message": exc.message, "context": exc.context},
+            ) from exc
+
     try:
         markup_from_settings(_merged(settings, changes))
     except DomainError as exc:
@@ -147,7 +160,43 @@ def update_settings(
         actor_email=context.user.email,
         payload={"before": before, "after": {k: str(v) for k, v in changes.items()}},
     )
-    return OrganizationSettingsOut.model_validate(settings)
+    return _avec_apercu(settings)
+
+
+@router.get(
+    "/quote-number-preview",
+    response_model=QuoteNumberPreviewOut,
+    summary="Prévisualiser un motif de numérotation",
+)
+def preview_quote_number(
+    pattern: str = Query(default="", max_length=60, description="Motif à essayer"),
+    context: TenantContext = Depends(require(Permission.ORG_MANAGE)),
+) -> QuoteNumberPreviewOut:
+    """Ce que ce motif produirait, sans rien enregistrer.
+
+    Le rendu appartient au serveur, ici comme à l'émission. Le recopier dans
+    l'interface donnerait deux vérités, et l'aperçu finirait par annoncer un
+    format que l'API n'applique pas — exactement le genre d'écart que le repli
+    silencieux d'hier laissait passer.
+    """
+    del context  # la permission suffit : rien de cette organisation n'est lu
+    try:
+        numerotation.verifier(pattern)
+    except numerotation.MotifInvalide as refus:
+        return QuoteNumberPreviewOut(valid=False, preview=None, message=refus.message)
+    return QuoteNumberPreviewOut(valid=True, preview=numerotation.apercu(pattern), message=None)
+
+
+def _avec_apercu(settings: OrganizationSettings) -> OrganizationSettingsOut:
+    """Les réglages, plus le numéro que le motif produirait.
+
+    Calculé côté serveur : recopier la règle de rendu dans l'interface
+    donnerait deux vérités, et l'aperçu finirait par annoncer un format
+    que l'API n'applique pas.
+    """
+    return OrganizationSettingsOut.model_validate(settings).model_copy(
+        update={"quote_number_preview": numerotation.apercu(settings.quote_number_pattern)}
+    )
 
 
 def _taux_possede(session: Session, organization_id: str, tax_rate_id: str) -> TaxRateRow:

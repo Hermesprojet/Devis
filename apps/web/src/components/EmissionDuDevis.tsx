@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 
 import { ErrorNotice } from '@/components/Feedback'
@@ -251,7 +252,11 @@ export function EmissionDuDevis({
           <tbody>
             {devis.map((quote) => (
               <tr key={quote.id} data-quote-number={quote.number}>
-                <td className="mono">{quote.number}</td>
+                <td className="mono">
+                  {/* Vers la fiche du devis : c'est là que vit le suivi
+                      commercial — lien de consultation, réponses, chronologie. */}
+                  <Link href={`/devis-emis/${quote.id}`}>{quote.number}</Link>
+                </td>
                 <td>v{quote.version_number}</td>
                 <td>{dateFr(quote.issued_at)}</td>
                 <td>{dateFr(quote.valid_until)}</td>

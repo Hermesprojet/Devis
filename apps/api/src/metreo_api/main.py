@@ -25,6 +25,7 @@ from .routers import (
     auth,
     boq,
     clients,
+    devis_public,
     documents,
     estimates,
     meta,
@@ -32,6 +33,7 @@ from .routers import (
     organizations,
     pricebooks,
     projects,
+    quotes,
 )
 from .transactions import classer_les_routes
 
@@ -187,6 +189,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pricebooks.router, prefix=prefix)
     app.include_router(boq.router, prefix=prefix)
     app.include_router(estimates.router, prefix=prefix)
+    app.include_router(quotes.router, prefix=prefix)
+    app.include_router(devis_public.router, prefix=prefix)
     app.include_router(audit_log.router, prefix=prefix)
 
     # Le contrat transactionnel, vérifié au démarrage : chaque route sait à quelle

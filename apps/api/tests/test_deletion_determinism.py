@@ -74,6 +74,34 @@ EXPECTED: tuple[tuple[str, str, str, str], ...] = (
         "fk_estimates_price_book_version_tenant",
         "NO ACTION",
     ),
+    # Le devis remis retient ses parents, sur les DEUX clés. C'est là que
+    # l'invariant compte le plus : tant que la composite portait `CASCADE`
+    # comme la simple, supprimer un chantier emportait le devis ; si l'une des
+    # deux seulement passait à `RESTRICT`, le résultat redeviendrait affaire
+    # d'ordre de déclenchement.
+    ("issued_quotes", "project_id", "fk_issued_quotes_project_tenant", "RESTRICT"),
+    (
+        "issued_quotes",
+        "estimate_version_id",
+        "fk_issued_quotes_version_tenant",
+        "RESTRICT",
+    ),
+    ("issued_quotes", "client_id", "fk_issued_quotes_client_tenant", "NO ACTION"),
+    # Le cycle commercial suit son devis : effacer un devis — ce que seule la
+    # purge d'une organisation permet — emporte son journal et ses liens.
+    ("quote_events", "issued_quote_id", "fk_quote_events_quote_tenant", "CASCADE"),
+    (
+        "quote_share_links",
+        "issued_quote_id",
+        "fk_quote_share_links_quote_tenant",
+        "CASCADE",
+    ),
+    (
+        "quote_public_sessions",
+        "share_link_id",
+        "fk_quote_public_sessions_link_tenant",
+        "CASCADE",
+    ),
 )
 
 CODES = {"a": "NO ACTION", "c": "CASCADE", "n": "SET NULL", "r": "RESTRICT", "d": "SET DEFAULT"}

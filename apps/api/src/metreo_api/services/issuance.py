@@ -48,7 +48,7 @@ from ..models import (
 )
 from ..security.auth import TenantContext
 from ..transactions import compenser
-from . import audit
+from . import audit, numerotation
 from .document_storage import StockageLocal
 from .quote_pdf import composer_le_devis
 from .tenant import get_owned
@@ -92,13 +92,18 @@ def _verrouiller_la_sequence(session: Session, organization_id: str) -> None:
 
 
 def numeroter(
-    session: Session, *, organization_id: str, motif: str, quand: datetime
+    session: Session, *, organization_id: str, motif: str | None, quand: datetime
 ) -> tuple[str, int, int]:
     """Rend (numéro, année, rang) — après avoir pris le verrou de séquence.
 
     Le motif est celui de l'organisation, `quote_number_pattern`, dont le
     défaut est `DEV-{year}-{sequence:04d}`. Il était déjà là, il est vraiment
     exploitable, et il est donc réutilisé plutôt que remplacé.
+
+    Un motif illisible lève `MotifInvalide` : il n'existe plus de numéro de
+    secours. Retomber en silence sur le format par défaut faisait partir chez
+    le client un numéro qui ne ressemblait pas à celui que l'entreprise croyait
+    avoir configuré.
 
     Le rang repart à 1 chaque année civile. C'est l'usage, et c'est ce que le
     motif par défaut laisse entendre en imprimant l'année.
@@ -112,25 +117,7 @@ def numeroter(
         )
     )
     rang = int(dernier or 0) + 1
-    return rendre_le_numero(motif, annee=annee, rang=rang), annee, rang
-
-
-def rendre_le_numero(motif: str, *, annee: int, rang: int) -> str:
-    """Applique le motif, ou retombe sur un format sûr s'il est inutilisable.
-
-    Un motif est saisi par un humain dans les réglages. Un `{sequenc}` ou un
-    `{}` mal fermé ne doit pas rendre l'émission impossible : le devis part
-    avec le format par défaut, et le numéro reste unique — c'est la contrainte
-    de base qui le garantit, pas le motif.
-    """
-    try:
-        rendu = motif.format(year=annee, sequence=rang)
-    except (KeyError, IndexError, ValueError):
-        rendu = ""
-    rendu = rendu.strip()
-    if not rendu or len(rendu) > 60:
-        return f"DEV-{annee}-{rang:04d}"
-    return rendu
+    return numerotation.rendre(motif, annee=annee, rang=rang), annee, rang
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +245,19 @@ def emettre(
         )
 
     emis_le = utcnow()
-    motif = getattr(reglages, "quote_number_pattern", None) or "DEV-{year}-{sequence:04d}"
+    motif = getattr(reglages, "quote_number_pattern", None)
+    try:
+        numerotation.verifier(motif)
+    except numerotation.MotifInvalide as refus:
+        # Une configuration historique peut être illisible : elle a pu être
+        # enregistrée avant que les réglages ne la contrôlent. On refuse
+        # d'émettre plutôt que de servir un numéro de secours que personne
+        # n'a demandé — le devis part chez un client, avec ce numéro-là.
+        raise EmissionRefusee(
+            "quote_number_pattern_invalid",
+            f"{refus.message} Corrigez-le dans les réglages de l'entreprise avant d'émettre.",
+            **refus.context,
+        ) from refus
     numero, annee, rang = numeroter(
         session, organization_id=context.organization_id, motif=motif, quand=emis_le
     )

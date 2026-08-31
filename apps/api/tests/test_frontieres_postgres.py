@@ -213,3 +213,93 @@ def test_deux_emissions_simultanees_ne_recoivent_jamais_le_meme_numero(
         f"/api/v1/projects/{estimation['project_id']}/issued-quotes", headers=entete
     ).json()
     assert sorted(d["number"] for d in historique) == sorted(numeros)
+
+
+def test_une_acceptation_et_un_refus_simultanes_ne_donnent_qu_une_decision(
+    client_neuf: TestClient,
+) -> None:
+    """Deux réponses OPPOSÉES lancées ensemble : une seule s'inscrit.
+
+    C'est le cas qu'un devis ne doit jamais perdre. Deux personnes autour du
+    même dossier — l'une accepte par le lien public, l'autre note un refus reçu
+    au téléphone — et la base doit trancher, pas enregistrer les deux.
+
+    Le verrou de ligne sur le devis sérialise les deux transactions ; la
+    seconde relit le journal une fois la première validée, y trouve une
+    décision, et reçoit un 409 explicite. SQLite ne le prouverait pas : il n'a
+    pas de verrou de ligne et sérialise ses écrivains au niveau du fichier, si
+    bien qu'aucune des deux ne se croiserait jamais.
+    """
+    import threading
+
+    from .emission import emettre, fiche, geler, prix_manquant, rattacher
+
+    entete = _entete(client_neuf)
+    estimation = client_neuf.get("/api/v1/estimates", headers=entete).json()[0]
+    version = client_neuf.get(
+        f"/api/v1/estimates/{estimation['id']}/versions", headers=entete
+    ).json()[0]
+    prix_manquant(client_neuf, entete, estimation)
+    rattacher(client_neuf, entete, estimation["project_id"], fiche(client_neuf, entete)["id"])
+    geler(client_neuf, entete, estimation, version)
+    devis = emettre(client_neuf, entete, estimation, version)
+    assert devis.status_code == 201, devis.text
+    identifiant = devis.json()["id"]
+
+    lien = client_neuf.post(
+        f"/api/v1/issued-quotes/{identifiant}/share-links", headers=entete, json={}
+    )
+    assert lien.status_code == 201, lien.text
+    secret = lien.json()["url"].split("#", 1)[1]
+    assert (
+        client_neuf.post("/api/v1/public/quote-sessions", json={"secret": secret}).status_code
+        == 204
+    )
+
+    depart = threading.Barrier(2)
+    reponses: list[Any] = []
+    verrou = threading.Lock()
+
+    def accepter() -> None:
+        depart.wait(timeout=30)
+        reponse = client_neuf.post(
+            "/api/v1/public/quote/response",
+            json={"decision": "accepted", "respondent_name": "Marie Dupont", "confirmed": True},
+        )
+        with verrou:
+            reponses.append(("accepted", reponse))
+
+    def refuser() -> None:
+        depart.wait(timeout=30)
+        reponse = client_neuf.post(
+            f"/api/v1/issued-quotes/{identifiant}/events",
+            headers=entete,
+            json={
+                "kind": "declined",
+                "channel": "phone",
+                "comment": "Refus annoncé au téléphone.",
+            },
+        )
+        with verrou:
+            reponses.append(("declined", reponse))
+
+    fils = [threading.Thread(target=accepter), threading.Thread(target=refuser)]
+    for fil in fils:
+        fil.start()
+    for fil in fils:
+        fil.join(timeout=120)
+        assert not fil.is_alive(), "une réponse ne s'est jamais terminée"
+
+    assert len(reponses) == 2
+    gagnantes = [d for d, r in reponses if r.status_code in {200, 201}]
+    perdantes = [(d, r) for d, r in reponses if r.status_code == 409]
+    assert len(gagnantes) == 1, [r.text for _d, r in reponses]
+    assert len(perdantes) == 1, [r.text for _d, r in reponses]
+    assert perdantes[0][1].json()["detail"]["code"] == "quote_already_answered"
+
+    #: Et le journal ne porte qu'UNE décision, celle qui a gagné.
+    fiche_devis = client_neuf.get(f"/api/v1/issued-quotes/{identifiant}", headers=entete).json()
+    decisions = [e for e in fiche_devis["events"] if e["kind"] in {"accepted", "declined"}]
+    assert len(decisions) == 1
+    assert decisions[0]["kind"] == gagnantes[0]
+    assert fiche_devis["state"]["code"] == gagnantes[0]
