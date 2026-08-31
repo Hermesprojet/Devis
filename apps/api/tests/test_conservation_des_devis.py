@@ -18,7 +18,8 @@ l'audit continue d'affirmer l'émission.
 La révision `e3f4a5b6c7d8` pose donc `RESTRICT` sur les trois parents et un
 déclencheur sur la table. Ce fichier vérifie les cinq cas, plus les deux
 frontières : les suppressions MÉTIER continuent de fonctionner, et la purge
-d'une organisation entière — hors périmètre — reste possible.
+d'une organisation entière est refusée elle aussi depuis `a5b6c7d8e9fa` —
+elle ne passe plus que par le registre de `services/conservation.py`.
 """
 
 from __future__ import annotations
@@ -163,25 +164,27 @@ def test_archiver_la_fiche_client_reste_refuse_tant_qu_elle_sert(
     _intact(devis)
 
 
-def test_purger_l_organisation_entiere_reste_possible_et_hors_perimetre(
+def test_purger_l_organisation_entiere_est_desormais_refuse_aussi(
     seeded_client: TestClient, admin, devis
 ) -> None:
-    """La seule suppression qui emporte encore un devis, et elle est nommée.
+    """La dernière porte s'est fermée, et ce test dit dans quel sens.
 
-    `organization_id` garde `CASCADE` et le déclencheur laisse passer une
-    suppression dont l'organisation est elle-même partie. Ce test n'approuve
-    pas cette purge : il constate qu'elle reste possible, parce que la
-    politique de conservation et d'effacement n'est pas décidée. `seed --reset`
-    en dépend, et la rendre impossible ici la déciderait par accident.
+    Il affirmait l'inverse : « la purge d'une organisation reste possible,
+    parce que la politique de conservation n'est pas décidée ». Elle l'est
+    depuis `a5b6c7d8e9fa`, et elle interdit précisément ce que ce test
+    constatait — un devis effacé sans un mot et un PDF laissé sur le volume.
 
-    Le fichier PDF, lui, survit à la ligne : c'est précisément ce qui reste à
-    trancher avec cette politique.
+    La destruction d'une organisation reste possible, mais plus par ce
+    chemin-là : elle passe par `services/conservation.py`, qui inscrit ce
+    qu'elle va détruire avant de le détruire. Ce parcours est éprouvé par
+    `test_purge_encadree.py` ; ici on vérifie seulement que la porte dérobée
+    est bien condamnée.
     """
     identite = seeded_client.get("/api/v1/auth/me", headers=admin).json()
     erreur = _supprimer("DELETE FROM organizations WHERE id = :i", i=identite["organization_id"])
-    assert erreur is None, f"la purge d'une organisation est devenue impossible : {erreur}"
+    assert erreur is not None, "la cascade silencieuse est revenue"
     with get_session_factory()() as session:
         reste = session.execute(
             text("SELECT COUNT(*) FROM issued_quotes WHERE id = :i"), {"i": devis["id"]}
         ).scalar()
-    assert reste == 0
+    assert reste == 1

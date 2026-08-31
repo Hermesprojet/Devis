@@ -87,8 +87,8 @@ EXPECTED: tuple[tuple[str, str, str, str], ...] = (
         "RESTRICT",
     ),
     ("issued_quotes", "client_id", "fk_issued_quotes_client_tenant", "NO ACTION"),
-    # Le cycle commercial suit son devis : effacer un devis — ce que seule la
-    # purge d'une organisation permet — emporte son journal et ses liens.
+    # Le cycle commercial suit son devis : effacer un devis — ce que seule une
+    # purge inscrite au registre permet — emporte son journal et ses liens.
     ("quote_events", "issued_quote_id", "fk_quote_events_quote_tenant", "CASCADE"),
     (
         "quote_share_links",
