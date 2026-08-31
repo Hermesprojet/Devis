@@ -168,6 +168,29 @@ def _actions_skipped_under_sqlite() -> dict[str, tuple[str, str | None]]:
     return sautees
 
 
+def revisions_in_chain_order() -> list[Path]:
+    """Les fichiers de révision, dans l'ordre où Alembic les applique.
+
+    Et non plus par nom de fichier. Le tri alphabétique coïncidait avec la
+    chaîne tant que les préfixes étaient datés — un accident de nommage, du
+    même genre que celui qui avait fait dépendre une suppression de l'ordre des
+    OID. Ce qui décide de l'action que la base porte vraiment, c'est la
+    DERNIÈRE révision appliquée, donc la chaîne.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(str(API_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(API_ROOT / "alembic"))
+    scripts = ScriptDirectory.from_config(cfg)
+    tetes = scripts.get_heads()
+    assert len(tetes) == 1, f"la chaîne a {len(tetes)} têtes : {tetes}"
+    # `walk_revisions` descend de la tête vers la base : on remet à l'endroit.
+    return [
+        Path(revision.path) for revision in reversed(list(scripts.walk_revisions("base", tetes[0])))
+    ]
+
+
 def revisions_posing_actions() -> list[Path]:
     """Toute révision qui déclare des actions, et pas une seule d'entre elles.
 
@@ -175,12 +198,15 @@ def revisions_posing_actions() -> list[Path]:
     fois PR #8 fusionnée dans PR #9, les modèles portaient seize clés composites
     et la table lue n'en décrivait que neuf — le contrôle tombait au rouge sur
     une branche que personne n'avait touchée. La liste se découvre donc.
+
+    Rendue dans l'ordre de la CHAÎNE : deux révisions peuvent poser des actions
+    différentes sur la même contrainte, et c'est la dernière qui compte.
     """
-    return sorted(
+    return [
         chemin
-        for chemin in VERSIONS.glob("*.py")
+        for chemin in revisions_in_chain_order()
         if any(len(relation) == 5 for relation in _relations_of(chemin))
-    )
+    ]
 
 
 def migration_actions() -> dict[str, tuple[str, str | None]]:
@@ -195,15 +221,12 @@ def migration_actions() -> dict[str, tuple[str, str | None]]:
                 str(x) if x is not None else None for x in relation
             )
             assert name is not None and column is not None
-            if name in posees and posees[name] != (column, action):
-                # Deux révisions qui posent des actions différentes sur la même
-                # contrainte demandent de savoir laquelle passe en dernier. Tant
-                # que le cas ne s'est pas présenté, on refuse de le deviner.
-                raise AssertionError(
-                    f"{name} reçoit deux actions différentes : "
-                    f"{origines[name].name} pose {posees[name]}, "
-                    f"{chemin.name} pose {(column, action)}"
-                )
+            # Une révision plus tardive REPOSE la contrainte : c'est son action
+            # que la base porte à la fin. Le cas s'est présenté avec
+            # `e3f4a5b6c7d8`, qui reprend en `RESTRICT` deux clés que
+            # `d2e3f4a5b6c7` avait posées en `CASCADE` — un devis émis ne doit
+            # pas disparaître avec son chantier. Les révisions sont lues dans
+            # l'ordre de la chaîne, jamais dans celui des noms de fichiers.
             posees[name] = (column, action)
             origines[name] = chemin
     assert posees, "aucun tableau RELATIONS porteur d'actions n'a pu être lu"

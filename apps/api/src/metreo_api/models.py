@@ -1349,6 +1349,20 @@ class IssuedQuote(TimestampMixin, Base):
     Une version ne s'émet qu'une fois : `uq_issued_quote_version`. Corriger un
     devis remis n'est pas une modification, c'est une nouvelle version suivie
     d'une nouvelle émission — et l'ancienne reste.
+
+    **Aucun parent ordinaire ne l'emporte.** Chantier, estimation et version
+    gelée retiennent en `RESTRICT`, et non plus en `CASCADE`. Reproduit sur une
+    base jetable : supprimer le chantier faisait disparaître le devis remis
+    SANS un mot, et laissait son PDF sur le volume — un fichier que plus
+    aucune ligne ne désignait, et un document transmis à un client dont
+    l'entreprise n'avait plus trace. Trois des cinq suppressions éprouvées se
+    comportaient ainsi.
+
+    La seule suppression qui emporte encore un devis est celle de
+    l'organisation entière : elle reste `CASCADE`, et reste hors périmètre tant
+    qu'une politique de conservation n'a pas été décidée. Un déclencheur de
+    base refuse par ailleurs la suppression directe d'un devis tant que son
+    organisation existe — voir la révision `e3f4a5b6c7d8`.
     """
 
     __tablename__ = "issued_quotes"
@@ -1357,13 +1371,13 @@ class IssuedQuote(TimestampMixin, Base):
             ["project_id", "organization_id"],
             ["projects.id", "projects.organization_id"],
             name="fk_issued_quotes_project_tenant",
-            ondelete="CASCADE",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["estimate_version_id", "organization_id"],
             ["estimate_versions.id", "estimate_versions.organization_id"],
             name="fk_issued_quotes_version_tenant",
-            ondelete="CASCADE",
+            ondelete="RESTRICT",
         ),
         ForeignKeyConstraint(
             ["client_id", "organization_id"],
@@ -1384,14 +1398,16 @@ class IssuedQuote(TimestampMixin, Base):
         String(36), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     project_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+        String(36), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     estimate_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("estimates.id", ondelete="CASCADE"), nullable=False
+        String(36), ForeignKey("estimates.id", ondelete="RESTRICT"), nullable=False
     )
     estimate_version_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("estimate_versions.id", ondelete="CASCADE"), nullable=False
+        String(36), ForeignKey("estimate_versions.id", ondelete="RESTRICT"), nullable=False
     )
+    #: Sans action : `NO ACTION` refuse déjà, et c'est ce qu'on veut. La fiche
+    #: client s'archive, elle ne se supprime pas — voir `routers/clients.py`.
     client_id: Mapped[str] = mapped_column(String(36), ForeignKey("clients.id"), nullable=False)
 
     #: Le numéro imprimé, rendu par le motif de l'organisation.
