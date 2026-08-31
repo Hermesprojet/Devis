@@ -23,6 +23,7 @@ const fr: Dictionary = {
   'nav.dashboard': 'Tableau de bord',
   'nav.projects': 'Projets',
   'nav.clients': 'Clients',
+  'nav.quotes': 'Devis',
   'nav.priceBooks': 'Bibliothèque de prix',
   'nav.audit': "Journal d'audit",
   'nav.settings': 'Paramètres',
@@ -227,6 +228,60 @@ const fr: Dictionary = {
   'quote.alreadyIssued':
     'Cette version porte déjà un devis. Créez une nouvelle version pour en émettre un autre.',
   'quote.digest': 'Empreinte du PDF',
+  'quote.snapshotHint':
+    'Instantané figé à l\u2019émission. Modifier la fiche client ne change pas ce devis.',
+  'quote.shareTitle': 'Lien de consultation',
+  'quote.shareHint':
+    'Le client ouvre son devis sans compte, le télécharge et répond. Copiez le lien et '
+    + 'transmettez-le vous-même : aucun envoi automatique n\u2019est fait.',
+  'quote.shareOnce':
+    'Copiez ce lien maintenant : le secret n\u2019est affiché qu\u2019une fois et ne '
+    + 'pourra plus être retrouvé.',
+  'quote.copy': 'Copier',
+  'quote.copied': 'Copié',
+  'quote.createLink': 'Créer un lien',
+  'quote.newLink': 'Créer un nouveau lien',
+  'quote.revoke': 'Révoquer',
+  'quote.noLink': 'Aucun lien créé pour ce devis.',
+  'quote.linkActive': 'Lien actif',
+  'quote.linkRevoked': 'Révoqué',
+  'quote.linkExpired': 'Expiré',
+  'quote.createdAt': 'Créé le',
+  'quote.expiresAt': 'Expire le',
+  'quote.offlineTitle': 'Enregistrer ce qui s\u2019est passé hors de l\u2019application',
+  'quote.offlineHint':
+    'Devis envoyé par vos soins, accord donné au téléphone, refus annoncé en réunion : '
+    + 'tout cela se note ici, avec son canal et sa date.',
+  'quote.markTransmitted': 'Marquer comme transmis',
+  'quote.recordAccepted': 'Enregistrer une acceptation',
+  'quote.recordDeclined': 'Enregistrer un refus',
+  'quote.channel': 'Canal',
+  'quote.respondent': 'Nom du répondant',
+  'quote.noteOptional': 'Note (facultative)',
+  'quote.noteRequired': 'Note ou référence (obligatoire)',
+  'quote.timeline': 'Chronologie',
+  'quote.timelineEmpty': 'Rien ne s\u2019est encore passé sur ce devis.',
+  'quote.event': 'Événement',
+  'quote.who': 'Qui',
+  'quote.effectiveAt': 'Date effective',
+  'quote.recordedAt': 'Enregistré le',
+  'quote.correct': 'Corriger',
+  'quote.correctedBecause': 'Corrigé :',
+  'quote.correctionHint':
+    'Rien ne s\u2019efface : la ligne restera visible, barrée, avec votre motif en regard.',
+  'quote.correctionReason': 'Motif de la correction',
+
+  'quotes.title': 'Devis émis',
+  'quotes.intro':
+    'Tous les devis remis, tous chantiers confondus : leur état, leur échéance et leur '
+    + 'dernière activité.',
+  'quotes.search': 'Numéro, client ou chantier',
+  'quotes.empty': 'Aucun devis émis pour le moment.',
+  'quotes.issuedFrom': 'Émis depuis le',
+  'quotes.issuedTo': 'Émis jusqu\u2019au',
+  'quotes.expiringSoon': 'Expirant sous 14 jours',
+  'quotes.lastActivity': 'Dernière activité',
+  'quotes.linkActive': 'lien actif',
 
   'audit.title': "Journal d'audit",
   'audit.sequence': 'N°',

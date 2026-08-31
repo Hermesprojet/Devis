@@ -124,3 +124,21 @@ details.subdetail table { margin-top: 8px; background: var(--bg); }
 .totals tr.grand td { border-top: 2px solid var(--ink); font-weight: 700; font-size: 15px; }
 
 .skeleton { color: var(--ink-muted); padding: 24px; text-align: center; }
+
+/* La page publique d'un devis.
+   Pas de barre latérale, pas de menu : le destinataire n'a pas de compte, et
+   rien de l'application ne doit lui être proposé. Une colonne lisible, centrée,
+   qui tient sur un téléphone comme sur un écran de bureau. */
+main.public {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+main.public h1 {
+  font-size: 22px;
+}
+
+main.public h2 {
+  font-size: 18px;
+}
