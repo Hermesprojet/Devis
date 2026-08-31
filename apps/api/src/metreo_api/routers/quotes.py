@@ -19,7 +19,7 @@ from metreo_domain.errors import DomainError
 
 from ..config import Settings, get_settings
 from ..db import session_scope
-from ..models import IssuedQuote, QuoteEvent, QuoteShareLink, utcnow
+from ..models import IssuedQuote, QuoteEvent, QuoteShareLink, User, utcnow
 from ..schemas import (
     IssuedQuoteDetail,
     IssuedQuoteOut,
@@ -239,6 +239,7 @@ def read_quote(
     evenements = cycle_devis.journal(session, devis)
     maintenant = utcnow()
     ttc, devise = _total_ttc(devis)
+    emetteur = session.get(User, devis.issued_by) if devis.issued_by else None
     return IssuedQuoteDetail(
         quote=IssuedQuoteOut(
             id=devis.id,
@@ -255,7 +256,7 @@ def read_quote(
             pdf_sha256=devis.pdf_sha256,
             pdf_byte_size=devis.pdf_byte_size,
             version_number=int(devis.project_snapshot.get("version_number") or 0),
-            issued_by_email=None,
+            issued_by_email=emetteur.email if emetteur else None,
         ),
         state=_etat_rendu(cycle_devis.etat(devis, evenements, aujourdhui=maintenant.date())),
         events=_evenements_rendus(evenements),

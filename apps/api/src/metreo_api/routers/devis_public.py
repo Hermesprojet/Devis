@@ -19,6 +19,7 @@ et ces routes ne prétendent rien de plus.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -35,6 +36,7 @@ from ..schemas import (
     PublicReceipt,
     PublicResponseRequest,
     PublicSessionRequest,
+    QuoteStateOut,
 )
 from ..services import cycle_devis, partage
 from ..services.document_storage import ContenuRefuse, StockageLocal
@@ -218,9 +220,7 @@ def read_public_quote(
     return reponse
 
 
-def _etat_public(etat: cycle_devis.Etat) -> Any:
-    from ..schemas import QuoteStateOut
-
+def _etat_public(etat: cycle_devis.Etat) -> QuoteStateOut:
     return QuoteStateOut(
         code=etat.code,
         label=etat.label,
@@ -234,7 +234,7 @@ def _etat_public(etat: cycle_devis.Etat) -> Any:
 
 
 def _peut_repondre(
-    etat: cycle_devis.Etat, devis: IssuedQuote, aujourdhui: Any
+    etat: cycle_devis.Etat, devis: IssuedQuote, aujourdhui: date
 ) -> tuple[bool, str | None]:
     if etat.decision is not None:
         return False, (
