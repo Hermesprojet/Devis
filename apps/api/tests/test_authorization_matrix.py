@@ -96,6 +96,10 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
         "GET /api/v1/price-books",
         "GET /api/v1/projects",
         "GET /api/v1/organization/members",
+        # Elle ne lit RIEN de l'organisation : elle applique un motif
+        # proposé et rend le numéro qu'il produirait. Il n'y a donc aucun
+        # identifiant d'un voisin à forger.
+        "GET /api/v1/organization/quote-number-preview",
         "PATCH /api/v1/organization/settings",
         "POST /api/v1/organization/members",
         "POST /api/v1/organization/tax-rates",

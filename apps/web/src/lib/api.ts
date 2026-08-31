@@ -194,6 +194,13 @@ export const api = {
   health: () => request<Health>('/health'),
   organization: () => request<Organization>('/organization'),
   organizationSettings: () => request<OrgSettings>('/organization/settings'),
+  updateOrganizationSettings: (body: Record<string, unknown>) =>
+    request<OrgSettings>('/organization/settings', { method: 'PATCH', body }),
+  /** Ce qu'un motif produirait, jugé par le SERVEUR — jamais recalculé ici. */
+  quoteNumberPreview: (pattern: string) =>
+    request<QuoteNumberPreview>(
+      `/organization/quote-number-preview?pattern=${encodeURIComponent(pattern)}`,
+    ),
 
   members: () => request<Member[]>('/organization/members'),
   inviteMember: (body: Record<string, unknown>) =>
@@ -450,6 +457,16 @@ export type OrgSettings = {
   margin_rate: string | null
   margin_method: string | null
   missing_price_policy: string
+  quote_number_pattern: string
+  /** Le numéro que ce motif produirait, rendu par le serveur. */
+  quote_number_preview: string
+  show_internal_costs_in_client_pdf: boolean
+}
+
+export type QuoteNumberPreview = {
+  valid: boolean
+  preview: string | null
+  message: string | null
 }
 
 export type Client = {

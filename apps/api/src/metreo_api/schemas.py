@@ -159,8 +159,21 @@ class OrganizationSettingsOut(DecimalOut):
     margin_method: str | None = None
     missing_price_policy: str
     quote_number_pattern: str
+    #: Le numéro que ce motif produirait, rendu par le serveur. Une phrase
+    #: de refus quand le motif enregistré est devenu illisible.
+    quote_number_preview: str = ""
     show_internal_costs_in_client_pdf: bool
     ai_enabled: bool
+
+
+class QuoteNumberPreviewOut(BaseModel):
+    """Le verdict du serveur sur un motif, avant tout enregistrement."""
+
+    valid: bool
+    #: Le numéro rendu, quand le motif est utilisable.
+    preview: str | None
+    #: Pourquoi il est refusé, quand il l'est. Le même texte que le 422.
+    message: str | None
 
 
 class OrganizationSettingsUpdate(BaseModel):

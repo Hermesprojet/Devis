@@ -547,6 +547,9 @@ def _refus_emission(exc: EmissionRefusee) -> HTTPException:
         "already_issued": status.HTTP_409_CONFLICT,
         "client_required": status.HTTP_409_CONFLICT,
         "client_incomplete": status.HTTP_409_CONFLICT,
+        # L'état des RÉGLAGES, pas celui du corps envoyé : la correction se
+        # fait sur l'écran des paramètres, pas dans cette requête.
+        "quote_number_pattern_invalid": status.HTTP_409_CONFLICT,
         "validity_in_the_past": status.HTTP_422_UNPROCESSABLE_ENTITY,
     }
     return HTTPException(

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 
 import { Collaborateurs } from '@/components/Collaborateurs'
 import { ErrorNotice, Loading } from '@/components/Feedback'
+import { MotifDeNumerotation } from '@/components/MotifDeNumerotation'
 import { Shell } from '@/components/Shell'
 import { TauxDeTaxe } from '@/components/TauxDeTaxe'
 import { api, type Organization, type OrgSettings } from '@/lib/api'
@@ -104,6 +105,8 @@ export default function SettingsPage() {
           </tbody>
         </table>
       </div>
+
+      <MotifDeNumerotation settings={settings} onSaved={setSettings} />
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>{t('settings.markup')}</h2>

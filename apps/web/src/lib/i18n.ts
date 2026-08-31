@@ -240,6 +240,14 @@ const fr: Dictionary = {
   'audit.checked': 'événements vérifiés',
 
   'settings.title': "Paramètres de l'entreprise",
+  'settings.saved': 'Enregistré',
+  'settings.quoteNumbering': 'Numérotation des devis',
+  'settings.quoteNumberingHint':
+    'Le numéro imprimé sur chaque devis émis. {year} est l\u2019année, {sequence} le rang, '
+    + 'qui repart à 1 chaque année civile. Laissez vide pour revenir au format par défaut.',
+  'settings.quoteNumberPattern': 'Motif',
+  'settings.quoteNumberPreview': 'Aperçu',
+  'settings.quoteNumberRefused': 'motif refusé',
   'settings.rounding': 'Arrondis',
   'settings.markup': 'Coefficients',
   'settings.siteOverheads': 'Frais de chantier',
