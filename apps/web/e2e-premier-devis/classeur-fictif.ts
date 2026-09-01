@@ -7,9 +7,12 @@
  * quels types le test emploie, et le dépôt reste sans octets opaques.
  *
  * **Pourquoi l'écrire en TypeScript plutôt que d'appeler le script Python du
- * dépôt.** La suite interdit `execFileSync` à tous ses fichiers sauf au banc,
- * et elle a raison : « ce n'est qu'une fixture » est exactement la
- * justification qui finirait par laisser passer un vrai raccourci. Le fichier
+ * dépôt.** La suite interdit à tous ses fichiers, sauf au banc, de lancer un
+ * programme extérieur — et elle a raison : « ce n'est qu'une fixture » est
+ * exactement la justification qui finirait par laisser passer un vrai
+ * raccourci. Son garde-fou lit le TEXTE des fichiers, si bien que même la
+ * tournure citée ici en exemple le déclencherait ; c'est le prix d'un contrôle
+ * qu'on ne peut pas contourner par mégarde, et il est bien payé. Le fichier
  * vient donc de l'extérieur, comme celui d'un fournisseur.
  *
  * Écrire un producteur OOXML n'est pas la même chose qu'écrire un ANALYSEUR :

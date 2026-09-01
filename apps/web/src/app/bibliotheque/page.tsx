@@ -146,6 +146,25 @@ export default function PriceBookPage() {
     }
   }
 
+  /** Rapatrie le modèle XLSX avec le jeton, puis le remet au navigateur. */
+  async function telechargerLeModele() {
+    setError(null)
+    try {
+      // Un lien nu n'emporte AUCUN en-tête : la route exige un jeton et
+      // répondrait 401. Les octets sont donc rapatriés, puis rendus par une
+      // URL d'objet, révoquée aussitôt le téléchargement lancé.
+      const blob = await api.importTemplate()
+      const url = URL.createObjectURL(blob)
+      const lien = document.createElement('a')
+      lien.href = url
+      lien.download = 'modele_import_prix.xlsx'
+      lien.click()
+      URL.revokeObjectURL(url)
+    } catch (caught) {
+      setError(caught)
+    }
+  }
+
   async function commit() {
     if (!report) return
     setError(null)
@@ -228,8 +247,13 @@ export default function PriceBookPage() {
           <NouveauPrix versionId={versionId} onCree={() => void loadItems(search)} />
         )}
         <a className="button" href="/modele_import_prix.csv" download>
-          Modèle CSV
+          {t('import.templateCsv')}
         </a>
+        {/* Le modèle XLSX est ENGENDRÉ par l'API depuis les colonnes que
+            l'analyseur reconnaît, et non posé en fichier statique : un modèle
+            figé dérive au premier alias renommé, et l'utilisateur remplirait
+            un tableau que le serveur ne lirait plus en entier. */}
+        <button onClick={() => void telechargerLeModele()}>{t('import.templateXlsx')}</button>
       </div>
 
       {publication && (
@@ -393,8 +417,19 @@ function ImportPreview({ report }: { report: ImportReport }) {
         <span className={`badge ${report.duplicate_count > 0 ? 'warning' : ''}`}>
           {report.duplicate_count} {t('import.duplicates')}
         </span>{' '}
-        <span className="badge">séparateur « {report.meta.delimiter} »</span>{' '}
-        <span className="badge">{report.meta.encoding}</span>
+        {/* Séparateur et encodage n'existent que pour un CSV. Les afficher
+            vides sur un classeur — « séparateur « » » — donnait un badge qui
+            ne veut rien dire, là où c'est la FEUILLE lue qui renseigne. */}
+        {report.meta.format === 'xlsx' ? (
+          <span className="badge">
+            {t('import.sheet')} « {report.meta.feuille} »
+          </span>
+        ) : (
+          <>
+            <span className="badge">séparateur « {report.meta.delimiter} »</span>{' '}
+            <span className="badge">{report.meta.encoding}</span>
+          </>
+        )}
       </p>
 
       <table>

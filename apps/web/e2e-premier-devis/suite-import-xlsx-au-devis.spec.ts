@@ -60,11 +60,26 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
 
   await page.goto('/bibliotheque')
   await expect(page.getByText('Import de prix')).toBeVisible()
+
+  // Le modèle vide se télécharge VRAIMENT. C'est le geste proposé à qui n'a
+  // pas encore de barème au bon format ; un bouton qui échouerait en silence
+  // laisserait l'utilisateur devant un fichier qu'il ne sait pas fabriquer.
+  const [modele] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Modèle Excel' }).click(),
+  ])
+  expect(modele.suggestedFilename()).toBe('modele_import_prix.xlsx')
+
   await page.locator('#file').setInputFiles(chemin)
 
   // ---- 2. la prévisualisation : rien n'est écrit, et elle le dit
-  await expect(page.getByText('1 valide')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByText(BAREME.code)).toBeVisible()
+  // Le compte tel que l'ÉCRAN l'écrit — « 1 lignes valides ». Inventer la
+  // tournure attendue ferait échouer le parcours sur une différence de
+  // libellé plutôt que sur un défaut d'import.
+  await expect(page.getByText('1 lignes valides')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('cell', { name: BAREME.code })).toBeVisible()
+  // Le prix lu dans le classeur, tel que la prévisualisation le montre.
+  await expect(page.getByRole('cell', { name: '148.6', exact: true })).toBeVisible()
 
   // Le classeur porte deux feuilles : l'écran propose donc de choisir, plutôt
   // que de laisser croire que la première était la bonne.
