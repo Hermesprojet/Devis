@@ -224,6 +224,24 @@ export const api = {
   me: () => request<Me>('/auth/me'),
   health: () => request<Health>('/health'),
   organization: () => request<Organization>('/organization'),
+  updateOrganization: (body: Record<string, unknown>) =>
+    request<Organization>('/organization', { method: 'PATCH', body }),
+  /**
+   * Téléverse le logo. Le fichier part TEL QUEL, sans conversion.
+   *
+   * Le navigateur ne se prononce ni sur le format ni sur les dimensions : le
+   * serveur décode les octets et tranche. Vérifier ici en plus donnerait deux
+   * verdicts à tenir d'accord, et celui du navigateur ne protège personne —
+   * il se contourne en postant directement.
+   */
+  uploadLogo: (file: File) => {
+    const corps = new FormData()
+    corps.append('file', file)
+    return request<Organization>('/organization/logo', { method: 'PUT', formData: corps })
+  },
+  deleteLogo: () => request<Organization>('/organization/logo', { method: 'DELETE' }),
+  /** L'URL du logo, étiquetée par son empreinte pour que le cache la suive. */
+  logoUrl: (sha256: string) => `${API_URL}/organization/logo?v=${sha256.slice(0, 16)}`,
   organizationSettings: () => request<OrgSettings>('/organization/settings'),
   updateOrganizationSettings: (body: Record<string, unknown>) =>
     request<OrgSettings>('/organization/settings', { method: 'PATCH', body }),
@@ -460,6 +478,14 @@ export const api = {
     publicRequest<PublicReceipt>('/public/quote/response', { method: 'POST', body }),
   publicPdfUrl: () => `${API_URL}/public/quote/document.pdf`,
   /**
+   * Le logo FIGÉ par ce devis, servi par le cookie de session publique.
+   *
+   * Une balise `<img>` convient ici, contrairement au PDF : le cookie repart
+   * seul avec la requête de l'image, là où le PDF exige un en-tête que seul
+   * `fetch` peut poser.
+   */
+  publicLogoUrl: () => `${API_URL}/public/quote/logo`,
+  /**
    * L'URL du PDF remis — à passer par `fetchExport`, jamais à un `<a href>`.
    *
    * La route exige le jeton porteur, et le jeton vit dans `sessionStorage` :
@@ -538,6 +564,15 @@ export type Me = {
   memberships: { organization_id: string; organization_name: string; role_label: string }[]
 }
 
+export type Logo = {
+  sha256: string
+  byte_size: number
+  media_type: string
+  width: number
+  height: number
+  updated_at: string | null
+}
+
 export type Organization = {
   id: string
   name: string
@@ -546,6 +581,16 @@ export type Organization = {
   country_code: string
   region_code: string
   currency: string
+  address: string | null
+  address_complement: string | null
+  postal_code: string | null
+  city: string | null
+  email: string | null
+  phone: string | null
+  website: string | null
+  logo: Logo | null
+  /** Ce qui manque pour émettre un NOUVEAU devis. Calculé par le serveur. */
+  missing_for_issue: string[]
 }
 
 export type OrgSettings = {
@@ -998,6 +1043,13 @@ export type PublicQuoteView = {
   organization_name: string
   organization_legal_name: string | null
   organization_company_number: string | null
+  /** L'adresse de l'émetteur, telle qu'elle était à l'émission. */
+  organization_address_lines: string[]
+  organization_email: string | null
+  organization_phone: string | null
+  organization_website: string | null
+  /** Vrai quand ce devis a figé un logo — servi par sa propre route. */
+  has_logo: boolean
   client_name: string
   client_address_lines: string[]
   project_reference: string

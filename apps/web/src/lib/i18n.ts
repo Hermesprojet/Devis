@@ -370,6 +370,51 @@ const fr: Dictionary = {
   'audit.checked': 'événements vérifiés',
 
   'settings.title': "Paramètres de l'entreprise",
+  'profile.title': "Profil de l'entreprise",
+  'settings.regionAndCurrency': 'Région et devise',
+  'profile.hint':
+    'Ce que vos devis imprimeront en en-tête : qui les émet, où vous écrire, '
+    + 'à qui téléphoner. Modifier ces informations ne change AUCUN devis déjà émis — '
+    + 'chacun porte l\u2019identité qui était la vôtre le jour où vous l\u2019avez remis.',
+  'profile.identity': 'Identité',
+  'profile.name': 'Nom commercial',
+  'profile.legalName': 'Raison sociale',
+  'profile.companyNumber': "Numéro d'entreprise",
+  'profile.address': 'Adresse',
+  'profile.addressComplement': 'Complément (boîte, bâtiment, zoning)',
+  'profile.postalCode': 'Code postal',
+  'profile.city': 'Localité',
+  'profile.countryCode': 'Pays (code à deux lettres)',
+  'profile.contact': 'Coordonnées',
+  'profile.email': 'E-mail',
+  'profile.phone': 'Téléphone',
+  'profile.website': 'Site web',
+  'profile.optional': 'facultatif',
+  'profile.logo': 'Logo',
+  'profile.logoHint':
+    'PNG uniquement, 2 Mio au maximum, entre 16 et 4000 pixels de côté. '
+    + 'Le format est volontairement limité à celui que le devis sait imprimer : '
+    + 'un SVG ne serait pas une image mais un document exécutable.',
+  'profile.logoChoose': 'Choisir un logo',
+  'profile.logoReplace': 'Remplacer le logo',
+  'profile.logoRemove': 'Retirer le logo',
+  'profile.logoNone': "Aucun logo. Vos devis porteront l'identité écrite seule.",
+  'profile.preview': "Aperçu de l'en-tête du devis",
+  'profile.previewHint':
+    'Ce que le client verra en haut de la première page. Le document imprimé '
+    + 'reprend exactement ces lignes.',
+  'profile.incomplete': "Profil insuffisant pour émettre un nouveau devis",
+  'profile.incompleteHint':
+    'Un devis doit dire qui l\u2019émet et où lui répondre. Complétez ces champs : ',
+  'profile.complete': 'Ce profil permet d\u2019émettre un devis.',
+  'profile.readOnly':
+    'Vous pouvez consulter ce profil ; sa modification demande le droit de gérer '
+    + 'l\u2019entreprise.',
+  'profile.field.name': 'le nom commercial',
+  'profile.field.address': "l'adresse",
+  'profile.field.postal_code': 'le code postal',
+  'profile.field.city': 'la localité',
+  'profile.field.country_code': 'le pays',
   'settings.saved': 'Enregistré',
   'settings.quoteNumbering': 'Numérotation des devis',
   'settings.quoteNumberingHint':

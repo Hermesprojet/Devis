@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { Collaborateurs } from '@/components/Collaborateurs'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { MotifDeNumerotation } from '@/components/MotifDeNumerotation'
+import { ProfilEntreprise } from '@/components/ProfilEntreprise'
 import { Shell } from '@/components/Shell'
 import { TauxDeTaxe } from '@/components/TauxDeTaxe'
 import { api, type Organization, type OrgSettings } from '@/lib/api'
@@ -48,18 +49,16 @@ export default function SettingsPage() {
     <Shell>
       <h1>{t('settings.title')}</h1>
 
+      {/* Le profil vit dans son propre composant : il est modifiable, il porte
+          un fichier, et il rend un aperçu. La carte qui suit ne garde que ce
+          qui ne s'édite pas ici — la région et la devise, qui décident du
+          calcul et non de l'en-tête. */}
+      <ProfilEntreprise />
+
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>{organization.name}</h2>
+        <h2 style={{ marginTop: 0 }}>{t('settings.regionAndCurrency')}</h2>
         <table>
           <tbody>
-            <tr>
-              <td>Dénomination légale</td>
-              <td>{organization.legal_name ?? t('common.none')}</td>
-            </tr>
-            <tr>
-              <td>Numéro d&apos;entreprise</td>
-              <td className="mono">{organization.company_number ?? t('common.none')}</td>
-            </tr>
             <tr>
               <td>{t('projects.region')}</td>
               <td>

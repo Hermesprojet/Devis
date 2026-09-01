@@ -142,16 +142,49 @@ export default function PublicQuotePage() {
   return (
     <main className="public" data-testid="devis-public">
       <header className="card">
-        <h1 style={{ marginTop: 0 }}>{devis.organization_name}</h1>
-        <p className="muted">
-          {devis.organization_legal_name}
-          {devis.organization_company_number && (
-            <>
-              {' · '}
-              <span className="mono">N° {devis.organization_company_number}</span>
-            </>
+        {/* L'émetteur, tel qu'il était le jour de l'émission. Tout vient de
+            l'instantané du devis : l'entreprise peut déménager ou changer de
+            logo demain, ce bloc ne bougera pas. */}
+        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+          {devis.has_logo && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={api.publicLogoUrl()}
+              alt=""
+              data-testid="logo-public"
+              style={{ maxHeight: 64, maxWidth: 160 }}
+            />
           )}
-        </p>
+          <div data-testid="emetteur-public">
+            <h1 style={{ marginTop: 0, marginBottom: 4 }}>{devis.organization_name}</h1>
+            <p className="muted" style={{ margin: 0 }}>
+              {devis.organization_legal_name}
+              {devis.organization_company_number && (
+                <>
+                  {' · '}
+                  <span className="mono">N° {devis.organization_company_number}</span>
+                </>
+              )}
+            </p>
+            {devis.organization_address_lines.map((ligne, rang) => (
+              <div key={rang} className="muted" style={{ fontSize: 13 }}>
+                {ligne}
+              </div>
+            ))}
+            {(devis.organization_phone || devis.organization_email) && (
+              <div className="muted" style={{ fontSize: 13 }}>
+                {[devis.organization_phone, devis.organization_email]
+                  .filter(Boolean)
+                  .join(' — ')}
+              </div>
+            )}
+            {devis.organization_website && (
+              <div className="muted" style={{ fontSize: 13 }}>
+                {devis.organization_website}
+              </div>
+            )}
+          </div>
+        </div>
         <h2>
           Devis <span className="mono" data-testid="numero-public">{devis.number}</span>
         </h2>
