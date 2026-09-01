@@ -76,7 +76,11 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   // Le compte tel que l'ÉCRAN l'écrit — « 1 lignes valides ». Inventer la
   // tournure attendue ferait échouer le parcours sur une différence de
   // libellé plutôt que sur un défaut d'import.
-  await expect(page.getByText('1 lignes valides')).toBeVisible({ timeout: 20_000 })
+  // `exact` vise le BADGE : le même compte figure aussi sur le bouton de
+  // confirmation, et sans cela le sélecteur en trouve deux.
+  await expect(page.getByText('1 lignes valides', { exact: true })).toBeVisible({
+    timeout: 20_000,
+  })
   await expect(page.getByRole('cell', { name: BAREME.code })).toBeVisible()
   // Le prix lu dans le classeur, tel que la prévisualisation le montre.
   await expect(page.getByRole('cell', { name: '148.6', exact: true })).toBeVisible()
