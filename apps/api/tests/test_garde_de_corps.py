@@ -462,3 +462,62 @@ def test_12_la_bombe_xlsx_reste_refusee_par_le_LECTEUR_pas_par_la_garde(
         files={"file": ("bombe.png", petit_mais_enorme, "image/png")},
     )
     assert refus_logo.status_code == 422, refus_logo.text
+
+
+# --------------------------------------------------------------------------
+# Le proxy double la garde, il ne la remplace pas
+# --------------------------------------------------------------------------
+
+RACINE = Path(__file__).resolve().parents[3]
+
+#: Les suffixes que Caddy comprend, en octets.
+_UNITES = {"": 1, "B": 1, "KB": 1000, "MB": 1000_000, "KiB": 1024, "MiB": 1024 * 1024}
+
+
+def _en_octets(taille: str) -> int:
+    import re
+
+    trouve = re.fullmatch(r"(\d+)\s*([A-Za-z]*)", taille.strip())
+    assert trouve, f"taille Caddy illisible : {taille!r}"
+    return int(trouve.group(1)) * _UNITES[trouve.group(2)]
+
+
+def test_le_plafond_du_proxy_couvre_celui_de_l_application() -> None:
+    """Un proxy plus strict que l'API casserait un téléversement légitime.
+
+    Et le défaut ne se verrait qu'en production, sur un fichier volumineux :
+    la suite passe sans proxy. Ce test lit les deux valeurs et compare.
+    """
+    import re
+
+    from metreo_api.config import get_settings
+
+    caddyfile = (RACINE / "infra" / "Caddyfile").read_text(encoding="utf-8")
+    trouve = re.search(r"max_size\s+\{\$MAX_BODY_SIZE:([^}]+)\}", caddyfile)
+    assert trouve, "le Caddyfile ne déclare plus de plafond de corps"
+
+    plafond_proxy = _en_octets(trouve.group(1))
+    plafond_api = max(plafond for _, _, plafond in corps_bornes.routes_bornees(get_settings()))
+    besoin = plafond_api + corps_bornes.MARGE_ENVELOPPE_MULTIPART
+
+    assert plafond_proxy >= besoin, (
+        f"le proxy plafonne à {plafond_proxy} octets alors que l'API accepte "
+        f"jusqu'à {besoin} enveloppe comprise : un fichier valide serait refusé "
+        "avant d'atteindre l'application"
+    )
+
+
+def test_l_application_reste_protegee_sans_proxy(client_borne: TestClient) -> None:
+    """La garde tient quand l'API est appelée DIRECTEMENT.
+
+    C'est le cas des tests, du réseau interne de la composition, et de tout
+    appel sur le port 8000. Une protection qui ne vivrait que dans le proxy
+    disparaîtrait dans chacun d'eux — et c'est précisément pour cela qu'elle
+    ne peut pas y vivre seule.
+    """
+    reponse = client_borne.put(
+        "/api/v1/organization/logo",
+        files={"file": ("logo.png", _trop_gros(2 * 1024 * 1024), "image/png")},
+    )
+    assert reponse.status_code == 413
+    assert reponse.json()["detail"]["code"] == "request_too_large"

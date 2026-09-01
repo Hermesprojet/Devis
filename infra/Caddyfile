@@ -22,6 +22,23 @@
 	@sans_identifiant not header X-Request-Id *
 	request_header @sans_identifiant X-Request-Id {http.request.uuid}
 
+	# Un premier plafond de corps, posé au plus tôt.
+	#
+	# Il DOUBLE la garde de l'application, il ne la remplace pas. Le proxy
+	# épargne au réseau interne et à l'API le transport d'un corps démesuré ;
+	# mais l'API est aussi appelée directement — dans les tests, depuis le
+	# réseau de la composition, sur son port interne — et une protection qui
+	# ne vivrait qu'ici disparaîtrait dans tous ces cas. Voir
+	# `apps/api/src/metreo_api/garde_de_corps.py`.
+	#
+	# La valeur couvre le plus haut plafond applicatif — 25 Mio pour une pièce
+	# de chantier — plus l'enveloppe multipart. La poser plus BAS casserait un
+	# téléversement que l'API accepte, et le défaut ne se verrait qu'en
+	# production, sur un fichier volumineux ; un test la tient au-dessus.
+	request_body {
+		max_size {$MAX_BODY_SIZE:26MiB}
+	}
+
 	# L'API d'abord : la règle la plus spécifique gagne.
 	handle /api/* {
 		reverse_proxy api:8000
