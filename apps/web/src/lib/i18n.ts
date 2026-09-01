@@ -112,6 +112,8 @@ const fr: Dictionary = {
     + 'définitivement. Les études déjà chiffrées gardent leurs montants ; pour faire évoluer '
     + 'le catalogue, créez ensuite une nouvelle version.',
   'priceBook.publishConfirm': 'Confirmer la publication',
+  'priceBook.newVersion': 'Nouvelle version',
+  'priceBook.newVersionPrompt': 'Nom de la nouvelle version',
 
   'priceSource.label': 'Source du prix',
   'priceSource.none': 'Aucun prix — le gel sera refusé',

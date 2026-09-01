@@ -77,7 +77,10 @@ async function emettreUnDevis(page: Page): Promise<{ fiche: string; empreinte: s
   // en m3 sans masse volumique sourcée, et il a raison de le refuser.
   await page.getByLabel('Unité').fill('m3')
   await page.getByLabel('Quantité').fill('320')
-  await page.getByLabel('Prix unitaire').selectOption({ index: 1 })
+  // La source de prix est explicite depuis que les postes peuvent aussi être
+  // chiffrés par un sous-détail : choisir « bibliothèque », puis le prix.
+  await page.locator('#source-nouveau').selectOption('library')
+  await page.locator('#prix-nouveau').selectOption({ index: 1 })
   await page.getByRole('button', { name: /^créer$/i }).first().click()
   await expect(page.getByRole('cell', { name: '03.10' })).toBeVisible()
 
@@ -299,7 +302,10 @@ test('un refus et une réponse hors ligne se tracent aussi', async ({ page, brow
   await page.getByLabel('Désignation').fill('Déblai de fondation')
   await page.getByLabel('Unité').fill('m3')
   await page.getByLabel('Quantité').fill('180')
-  await page.getByLabel('Prix unitaire').selectOption({ index: 1 })
+  // La source de prix est explicite depuis que les postes peuvent aussi être
+  // chiffrés par un sous-détail : choisir « bibliothèque », puis le prix.
+  await page.locator('#source-nouveau').selectOption('library')
+  await page.locator('#prix-nouveau').selectOption({ index: 1 })
   await page.getByRole('button', { name: /^créer$/i }).first().click()
   await page.getByRole('button', { name: 'Créer une étude de prix' }).click()
   await page.getByRole('link', { name: 'Ouvrir' }).first().click()

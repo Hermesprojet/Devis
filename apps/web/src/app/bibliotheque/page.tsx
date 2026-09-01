@@ -86,6 +86,28 @@ export default function PriceBookPage() {
    * ce qui laissait l'écran des sous-détails annoncer une lecture seule que
    * personne ne pouvait déclencher depuis le navigateur.
    */
+  /**
+   * Créer une nouvelle version.
+   *
+   * Le bandeau de publication dit « créez une nouvelle version pour les faire
+   * évoluer ». Il le disait sans qu'aucun bouton ne le permette : depuis le
+   * navigateur, publier était une impasse.
+   */
+  async function nouvelleVersion() {
+    const premier = books[0]
+    if (!premier) return
+    const nom = window.prompt(t('priceBook.newVersionPrompt'), `v${versions.length + 1}`)
+    if (!nom) return
+    try {
+      const creee = await api.createPriceBookVersion(premier.id, nom)
+      setVersions([creee, ...versions])
+      setVersionId(creee.id)
+      setError(null)
+    } catch (caught) {
+      setError(caught)
+    }
+  }
+
   async function publier() {
     if (!versionId) return
     try {
@@ -145,7 +167,8 @@ export default function PriceBookPage() {
   const figee = versionSelectionnee?.status === 'published'
   // Une version publiée ne se republie pas : l'API répondrait 409, et offrir
   // une commande qui échoue est précisément ce qu'on cherche à éviter.
-  const peutPublier = Boolean(versionId) && !figee && can(permissions, PERMISSIONS.pricebookWrite)
+  const peutEcrire = can(permissions, PERMISSIONS.pricebookWrite)
+  const peutPublier = Boolean(versionId) && !figee && peutEcrire
 
   return (
     <Shell>
@@ -182,6 +205,9 @@ export default function PriceBookPage() {
         )}
         {peutPublier && (
           <button onClick={() => setPublication(true)}>{t('priceBook.publish')}</button>
+        )}
+        {peutEcrire && (
+          <button onClick={() => void nouvelleVersion()}>{t('priceBook.newVersion')}</button>
         )}
         {versionId && !figee && (
           <NouveauPrix versionId={versionId} onCree={() => void loadItems(search)} />

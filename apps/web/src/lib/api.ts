@@ -345,6 +345,14 @@ export const api = {
     request<PriceBookVersion[]>(`/price-books/${bookId}/versions`),
   publishPriceBookVersion: (versionId: string) =>
     request<PriceBookVersion>(`/price-books/versions/${versionId}/publish`, { method: 'POST' }),
+  // `label` voyage en paramètre de requête, pas dans le corps : c'est ainsi que
+  // la route le déclare, et l'envoyer dans un corps le ferait ignorer en
+  // silence — la version naîtrait sans nom.
+  createPriceBookVersion: (bookId: string, label: string) =>
+    request<PriceBookVersion>(
+      `/price-books/${bookId}/versions?label=${encodeURIComponent(label)}`,
+      { method: 'POST' },
+    ),
   priceItems: (versionId: string, query = '') =>
     request<Page<PriceItem>>(`/price-books/versions/${versionId}/items${query}`),
   composites: (versionId: string) =>

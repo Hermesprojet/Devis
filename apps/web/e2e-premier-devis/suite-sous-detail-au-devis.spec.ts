@@ -59,9 +59,22 @@ test('un sous-détail se construit, se corrige et chiffre un devis jusqu’au PD
   test.setTimeout(240_000)
   await seConnecter(page, ADMIN)
 
-  // ---- 1. la bibliothèque, vide au départ
+  // ---- 1. une version de bibliothèque à soi, vide de sous-détails
+  //
+  // Joué seul, ce scénario part d'une organisation sans aucune bibliothèque et
+  // la crée. Joué dans la suite, il arrive après les autres, qui en ont déjà
+  // laissé une : il ouvre alors une VERSION neuve. Les deux chemins mènent au
+  // même point de départ — une version brouillon sans sous-détail — et le
+  // second a sa raison d'être : ce scénario PUBLIE sa version à l'étape 7, et
+  // publier celle des autres figerait leur catalogue.
   await page.goto('/bibliotheque')
-  await page.getByRole('button', { name: 'Créer la bibliothèque' }).click()
+  const creation = page.getByRole('button', { name: 'Créer la bibliothèque' })
+  if (await creation.count()) {
+    await creation.click()
+  } else {
+    page.once('dialog', (dialogue) => void dialogue.accept('Sous-détails'))
+    await page.getByRole('button', { name: 'Nouvelle version' }).click()
+  }
   const encart = page.getByTestId('sous-details')
   await expect(encart).toBeVisible()
   await expect(page.getByTestId('sous-details-vide')).toBeVisible()
