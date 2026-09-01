@@ -509,7 +509,14 @@ def test_la_page_publique_ne_porte_aucun_cout_interne(
 # --------------------------------------------------------------------------
 
 
-def _coordonnees_dessinees(**remplacements: Any) -> list[tuple[float, float, float, str]]:
+#: Les blocs de l'en-tête qui ne doivent JAMAIS se recouvrir. Le cartouche du
+#: devis est posé à `droite - 210` ; l'identité de l'émetteur vit à sa gauche.
+BORD_DU_CARTOUCHE = 595.28 - 48.0 - 210.0
+
+
+def _coordonnees_dessinees(
+    **remplacements: Any,
+) -> list[tuple[float, float, float, str, str, int]]:
     """Compose un devis en captant CHAQUE coordonnée réellement dessinée.
 
     Vérifier la mise en page en lisant le PDF produit demanderait un moteur de
@@ -524,16 +531,28 @@ def _coordonnees_dessinees(**remplacements: Any) -> list[tuple[float, float, flo
     from metreo_api.services.quote_pdf import composer_le_devis
 
     trace: list[tuple[float, float, float, str]] = []
+    polices: list[str] = []
+    pages: list[int] = []
     texte_origine = moteur.Page.texte
     image_origine = moteur.Page.image
 
     def texte(self: Any, x: float, y: float, contenu: str, **kw: Any) -> None:
         if contenu:
+            # La POLICE est captée, pas seulement la taille : mesurer une
+            # capitale grasse avec les largeurs du romain sous-estime, et
+            # c'est exactement l'angle mort qui laissait passer un
+            # chevauchement.
             trace.append((x, y, float(kw.get("taille", 10.0)), contenu))
+            polices.append(str(kw.get("police", moteur.HELVETICA)))
+            # La PAGE est captée aussi : seule celle qui porte le cartouche
+            # peut le chevaucher. Les pages de continuation n'en ont pas.
+            pages.append(id(self))
         texte_origine(self, x, y, contenu, **kw)
 
     def image(self: Any, nom: str, x: float, y: float, largeur: float, hauteur: float) -> None:
         trace.append((x, y, 0.0, f"[image {largeur:.0f}x{hauteur:.0f}]"))
+        polices.append(moteur.HELVETICA)
+        pages.append(id(self))
         image_origine(self, nom, x, y, largeur, hauteur)
 
     parametres: dict[str, Any] = {
@@ -566,21 +585,48 @@ def _coordonnees_dessinees(**remplacements: Any) -> list[tuple[float, float, flo
         moteur.Page.texte = texte_origine  # type: ignore[method-assign]
         moteur.Page.image = image_origine  # type: ignore[method-assign]
     # Le pied de page est dessiné sous la marge PAR CONCEPTION : il est exclu.
-    return [t for t in trace if not (t[3].startswith("Devis DEV") or t[3].startswith("Page "))]
+    return [
+        (x, y, taille, contenu, police, page)
+        for (x, y, taille, contenu), police, page in zip(trace, polices, pages, strict=True)
+        if not (contenu.startswith("Devis DEV") or contenu.startswith("Page "))
+    ]
 
 
-def _hors_de_la_page(trace: list[tuple[float, float, float, str]]) -> list[str]:
+def _hors_de_la_page(trace: list[tuple[float, float, float, str, str, int]]) -> list[str]:
+    """Ce qui sort de la feuille, OU chevauche le cartouche du devis.
+
+    Les largeurs sont MESURÉES avec les métriques réelles de la police. Les
+    mesurer avec la même approximation que le code confirmerait ce que le code
+    croit plutôt que ce qu'il dessine — et c'est ainsi qu'un chevauchement
+    entre la raison sociale et le numéro du devis est passé inaperçu.
+    """
     from metreo_api.services import pdf as moteur
 
+    haut_du_cartouche = moteur.A4[1] - moteur.MARGE - 70
+    page_du_cartouche = next((element[5] for element in trace if element[3] == "DEVIS"), None)
     fautifs = []
-    for x, y, taille, contenu in trace:
+    for x, y, taille, contenu, police, page in trace:
         if y < moteur.MARGE:
             fautifs.append(f"sous la marge (y={y:.1f}) : {contenu[:40]!r}")
         elif y > moteur.A4[1] - moteur.MARGE + 1:
             fautifs.append(f"au-dessus de la marge (y={y:.1f}) : {contenu[:40]!r}")
-        largeur = len(contenu) * taille * moteur.CHASSE_HELVETICA_APPROX
-        if x + largeur > moteur.A4[0] - moteur.MARGE + 2:
+        largeur = (
+            moteur.largeur_texte(contenu, police, taille) if taille else float(contenu.count("x"))
+        )
+        if taille and x + largeur > moteur.A4[0] - moteur.MARGE + 2:
             fautifs.append(f"déborde à droite (x={x:.1f}) : {contenu[:40]!r}")
+        # Le cartouche « DEVIS / N° … / dates » occupe la bande haute à droite.
+        # Rien de ce qui est posé à sa gauche ne doit venir dessus.
+        if (
+            taille
+            and page == page_du_cartouche
+            and x < BORD_DU_CARTOUCHE
+            and y > haut_du_cartouche
+            and x + largeur > BORD_DU_CARTOUCHE + 2
+        ):
+            fautifs.append(
+                f"chevauche le cartouche (x={x:.1f}→{x + largeur:.1f}) : {contenu[:40]!r}"
+            )
     return fautifs
 
 
@@ -678,6 +724,22 @@ PROJET_MAXIMAL = {"reference": "R" * 60, "name": "P" * 200, "currency": "EUR"}
                 },
             },
         ),
+        # Le cas qui a révélé le chevauchement : une raison sociale en
+        # CAPITALES, repliée sur la colonne étroite que laisse un logo. Les
+        # capitales d'Helvetica valent jusqu'à 0,944 em ; la chasse moyenne de
+        # 0,5 supposée par le repliement en autorisait vingt de trop, et la
+        # ligne venait s'imprimer par-dessus le numéro du devis.
+        (
+            "raison sociale en capitales, avec logo",
+            {
+                "organisation": dict(
+                    PROFIL,
+                    name="DUBOIS TRAVAUX PUBLICS",
+                    legal_name="SOCIETE ANONYME DES CARRIERES DU HAINAUT",
+                ),
+                "logo": fixtures.horizontal(),
+            },
+        ),
         (
             "tous les champs à leur maximum",
             {
@@ -733,7 +795,7 @@ def test_une_identite_demesuree_est_coupee_visiblement() -> None:
     lieu de le découvrir chez son client.
     """
     trace = _coordonnees_dessinees(organisation=EMETTEUR_MAXIMAL)
-    dessine = [contenu for _, _, _, contenu in trace]
+    dessine = [t[3] for t in trace]
     assert any(contenu.endswith("…") for contenu in dessine), (
         "une identité tronquée doit porter une ellipse"
     )
@@ -742,7 +804,7 @@ def test_une_identite_demesuree_est_coupee_visiblement() -> None:
 def test_une_identite_ordinaire_n_est_jamais_coupee() -> None:
     """La borne ne doit pas mordre sur un profil réel."""
     trace = _coordonnees_dessinees()
-    dessine = [contenu for _, _, _, contenu in trace]
+    dessine = [t[3] for t in trace]
     assert not any(contenu.endswith("…") for contenu in dessine), dessine
     for attendu in (PROFIL["address"], PROFIL["address_complement"], PROFIL["website"]):
         assert any(attendu in contenu for contenu in dessine), attendu
@@ -793,3 +855,55 @@ def test_un_texte_qui_ressemble_a_un_objet_image_ne_fait_pas_disparaitre_la_page
     # ...et surtout ce qui vient APRÈS lui n'a pas disparu.
     assert "Une condition qui suit le poste" in texte
     assert PROFIL["name"] in texte
+
+
+def test_une_adresse_demesuree_ne_chasse_pas_les_coordonnees() -> None:
+    """Ce que l'en-tête coupe en dernier, c'est le moyen de répondre.
+
+    Un plafond GLOBAL sur l'identité coupe la fin — donc le téléphone, le
+    courriel et le site, précisément ce que cette fonctionnalité existe pour
+    imprimer. Une adresse de 255 caractères chasserait du papier le moyen de
+    joindre l'entreprise, et personne ne s'en apercevrait avant que le client
+    ne cherche à répondre.
+
+    Chaque partie a donc sa part. L'adresse démesurée est coupée, visiblement,
+    et les coordonnées restent entières.
+    """
+    demesure = dict(PROFIL)
+    demesure["address"] = "Avenue " + "Interminable " * 18
+    demesure["address_complement"] = "Bâtiment " + "Annexe " * 18
+    trace = _coordonnees_dessinees(organisation=demesure, logo=fixtures.horizontal())
+    dessine = [t[3] for t in trace]
+    joint = "\n".join(dessine)
+
+    # L'adresse a bien été coupée, et le dit.
+    assert any(contenu.endswith("…") for contenu in dessine)
+    # Mais le téléphone, le courriel et le site sont imprimés en entier.
+    assert PROFIL["phone"] in joint, "le téléphone a été chassé de l'en-tête"
+    assert PROFIL["email"] in joint, "le courriel a été chassé de l'en-tête"
+    assert PROFIL["website"] in joint, "le site a été chassé de l'en-tête"
+    assert _hors_de_la_page(trace) == []
+
+
+def test_cinq_taxes_ne_poussent_pas_le_total_ttc_hors_de_la_page() -> None:
+    """Le bloc des totaux se mesure sur ce qu'il porte, pas sur une constante.
+
+    Une entreprise qui configure plusieurs taxes — TVA, cocontractant,
+    écotaxes — allonge ce bloc. Une hauteur fixe le poussait sous la marge, et
+    le pavé « TOTAL TTC » est le chiffre que le client cherche en premier.
+    """
+    taxes = [{"label": f"Taxe {rang}", "rate": "0.06", "amount": "60.00"} for rang in range(5)]
+    trace = _coordonnees_dessinees(
+        logo=fixtures.carre(),
+        document={
+            "lines": LIGNES_ORDINAIRES,
+            "totals": {
+                "total_ht": "1000.00",
+                "total_ttc": "1300.00",
+                "currency": "EUR",
+                "taxes": taxes,
+            },
+        },
+    )
+    assert _hors_de_la_page(trace) == []
+    assert any("TOTAL À PAYER TTC" in t[3] for t in trace)

@@ -445,16 +445,20 @@ def test_une_reference_interminable_est_cesuree_plutot_que_de_sortir_de_la_page(
         ).content
     )
     assert "0" * 90 in texte, "la référence n'a pas été imprimée du tout"
-    #: La largeur imprimable, en caractères, à la taille des conditions. Elle
-    #: est lue sur le moteur plutôt que recopiée : une marge modifiée ne doit
-    #: pas rendre ce contrôle silencieusement faux.
-    largeur_max = int(
-        (moteur_pdf.A4[0] - 2 * moteur_pdf.MARGE) / (8.5 * moteur_pdf.CHASSE_HELVETICA_APPROX)
-    )
+    #: La largeur imprimable, en POINTS, à la taille des conditions. Elle est
+    #: lue sur le moteur plutôt que recopiée : une marge modifiée ne doit pas
+    #: rendre ce contrôle silencieusement faux. Et elle est mesurée, non
+    #: estimée : un « 0 » vaut 0,556 em, soit un neuvième de plus que la
+    #: chasse moyenne — compter les caractères rendait ce contrôle plus
+    #: permissif que la feuille.
+    largeur_max = moteur_pdf.A4[0] - 2 * moteur_pdf.MARGE
     #: Le contrôle porte sur les lignes de la RÉFÉRENCE : `extraire_le_texte`
     #: rend aussi les chaînes de métadonnées, qui ne sont pas dessinées.
     trop_larges = [
-        ligne for ligne in texte.splitlines() if "0" * 20 in ligne and len(ligne) > largeur_max
+        ligne
+        for ligne in texte.splitlines()
+        if "0" * 20 in ligne
+        and moteur_pdf.largeur_texte(ligne, moteur_pdf.HELVETICA, 8.5) > largeur_max
     ]
     assert trop_larges == [], "une ligne dépasse la largeur du texte : elle sort de la page"
     #: Et ce qui SUIT la référence est toujours là : la césure replie, elle
@@ -502,13 +506,19 @@ def test_une_raison_sociale_interminable_est_repliee_et_non_debordee(
 
     #: Et le cadre de signature du client, lui, tient dans SA moitié de page :
     #: posé entier, il recouvrait le cadre de l'entreprise, à droite.
-    demi = int(
-        ((moteur_pdf.A4[0] - 2 * moteur_pdf.MARGE) / 2 - 24)
-        / (8 * moteur_pdf.CHASSE_HELVETICA_APPROX)
-    )
+    #:
+    #: Mesuré en POINTS, comme le moteur le mesure. Compter les caractères
+    #: revenait à supposer qu'ils ont tous la même chasse : ce plafond en
+    #: refusait deux qui tenaient — « é », « i » et « l » sont bien plus
+    #: étroits que la moyenne — et il en aurait laissé passer autant sur une
+    #: ligne en capitales, où chacun est plus large.
+    demi = (moteur_pdf.A4[0] - 2 * moteur_pdf.MARGE) / 2 - 24
     accord = lignes.index("Bon pour accord — le client")
-    assert len(lignes[accord + 1]) <= demi, (
-        "le nom sous « Bon pour accord » déborde sur le cadre de l'entreprise"
+    posee = lignes[accord + 1]
+    largeur = moteur_pdf.largeur_texte(posee, moteur_pdf.HELVETICA, 8.0)
+    assert largeur <= demi, (
+        f"le nom sous « Bon pour accord » déborde sur le cadre de l'entreprise : "
+        f"{largeur:.1f} pt pour {demi:.1f} pt disponibles"
     )
 
 

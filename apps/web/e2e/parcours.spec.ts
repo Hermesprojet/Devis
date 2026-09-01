@@ -378,3 +378,31 @@ test('un sous-détail de la bibliothèque se lit, composant par composant', asyn
   await ligne.getByRole('button', { name: 'Masquer' }).click()
   await expect(page.getByTestId('composants')).toHaveCount(0)
 })
+
+/**
+ * L'écran du profil obéit aux permissions REÇUES, pas à celles supposées.
+ *
+ * L'API refuse déjà un métreur en nommant `org:manage`. Mais un écran qui
+ * proposerait quand même d'enregistrer mènerait au refus après la saisie —
+ * l'utilisateur aurait tapé son adresse pour rien. Et ce contrôle-ci est
+ * précisément celui qui se perd en silence : rien ne casse quand une
+ * commande réapparaît là où elle ne devrait pas.
+ */
+test("un métreur consulte le profil de l'entreprise sans pouvoir le modifier", async ({
+  page,
+}) => {
+  await signIn(page, DEMO_ESTIMATOR)
+  await page.goto('/parametres')
+
+  const profil = page.getByTestId('profil-entreprise')
+  await expect(profil).toBeVisible()
+  // Il VOIT : masquer l'écran entier priverait de l'information tout le monde
+  // sauf l'administrateur, alors que l'en-tête figure sur les devis que ce
+  // métreur télécharge déjà.
+  await expect(profil.getByText(/sa modification demande le droit/)).toBeVisible()
+
+  // Mais aucune commande d'écriture, et aucun champ saisissable.
+  await expect(profil.getByRole('button', { name: 'Enregistrer' })).toHaveCount(0)
+  await expect(profil.locator('#profil-logo')).toHaveCount(0)
+  await expect(profil.locator('#profil-address')).toBeDisabled()
+})

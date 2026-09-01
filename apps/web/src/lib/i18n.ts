@@ -392,7 +392,8 @@ const fr: Dictionary = {
   'profile.optional': 'facultatif',
   'profile.logo': 'Logo',
   'profile.logoHint':
-    'PNG uniquement, 2 Mio au maximum, entre 16 et 4000 pixels de côté. '
+    'PNG uniquement, 2 Mio au maximum, de 16 à 2000 pixels de côté et un million '
+    + 'de pixels au total. '
     + 'Le format est volontairement limité à celui que le devis sait imprimer : '
     + 'un SVG ne serait pas une image mais un document exécutable.',
   'profile.logoChoose': 'Choisir un logo',

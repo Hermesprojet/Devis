@@ -42,11 +42,13 @@ export function MiseEnRoute() {
       try {
         // Chaque état est LU, jamais supposé : un encart qui se trompe sur ce
         // qui est déjà fait est pire qu'aucun encart.
-        const [taux, livres, projets] = await Promise.all([
+        const [organisation, taux, livres, projets] = await Promise.all([
+          api.organization().catch(() => null),
           api.taxRates().catch(() => []),
           api.priceBooks().catch(() => []),
           api.projects().catch(() => ({ items: [] as unknown[] })),
         ])
+        const manques = organisation?.missing_for_issue ?? []
         const tauxActifs = taux.filter((t) => enVigueur(t))
 
         let prixDisponibles = 0
@@ -61,6 +63,20 @@ export function MiseEnRoute() {
         }
 
         setEtapes([
+          {
+            // En PREMIER, et c'est la raison d'être de cette étape : sans
+            // profil, l'émission est refusée. Un guide qui n'en parlerait pas
+            // mènerait droit à ce refus, après tout le reste du travail.
+            cle: 'profil',
+            titre: "Compléter le profil de l'entreprise",
+            fait: manques.length === 0,
+            detail:
+              manques.length === 0
+                ? 'Vos devis porteront votre adresse et vos coordonnées.'
+                : "Un devis doit dire qui l'émet et où lui répondre. Sans cela, "
+                  + "l'émission sera refusée — après que tout le reste aura été fait.",
+            lien: { href: '/parametres', texte: 'Réglages' },
+          },
           {
             cle: 'taxe',
             titre: 'Configurer un taux de taxe',

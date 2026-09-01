@@ -100,6 +100,9 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
   const miseEnRoute = page.getByTestId('mise-en-route')
   await expect(miseEnRoute).toBeVisible()
   await expect(miseEnRoute).toContainText('Configurer un taux de taxe')
+  // Le profil vient EN PREMIER : sans lui l'émission est refusée, et un guide
+  // qui n'en parlerait pas mènerait droit à ce refus, après tout le reste.
+  await expect(miseEnRoute).toContainText("Compléter le profil de l'entreprise")
   await expect(miseEnRoute).toContainText('Prochaine action')
   // Aucune donnée d'un scénario précédent : la liste des projets ne mène
   // nulle part, parce qu'elle ne contient rien.

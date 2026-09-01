@@ -25,6 +25,7 @@ lignes de données pour un seul alignement.
 
 from __future__ import annotations
 
+import unicodedata
 import zlib
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -42,10 +43,188 @@ COURIER_GRAS = "F4"
 #: Chasse d'une police Courier : 600 millièmes de la taille, pour tout
 #: caractère. C'est ce qui rend l'alignement des montants exact.
 CHASSE_COURIER = 0.6
-#: Largeur MOYENNE d'un caractère Helvetica, pour tronquer un libellé trop
-#: long — jamais pour aligner. Une approximation suffit à décider où couper ;
-#: elle ne suffirait pas à placer une colonne.
+#: Largeur MOYENNE d'un caractère Helvetica. Conservée pour les appelants qui
+#: n'ont besoin que d'un ordre de grandeur ; la mise en page, elle, mesure.
 CHASSE_HELVETICA_APPROX = 0.5
+
+#: Les largeurs RÉELLES d'Helvetica, en millièmes de la taille.
+#:
+#: Pourquoi elles sont devenues nécessaires. Le repliement estimait chaque
+#: caractère à 0,5 em. C'est juste en moyenne pour du texte courant, et faux
+#: pour des capitales : un « W » vaut 0,944 em, un « M » 0,833. Mesuré — une
+#: raison sociale en capitales, « SOCIETE ANONYME DES CARRIERES DU HAINAUT »,
+#: repliée sur une colonne de 155 points en occupait 179 et venait s'imprimer
+#: PAR-DESSUS le numéro du devis et sa date. Le défaut ne se voyait pas : le
+#: contrôle de mise en page mesurait avec la même approximation que le code,
+#: et confirmait donc ce que le code croyait plutôt que ce qu'il dessinait.
+#:
+#: Ces valeurs sont celles des métriques Adobe des polices de base. Aucune
+#: dépendance : c'est une table, et les quatorze polices de base sont
+#: exactement celles qu'un lecteur de PDF possède déjà.
+_LARGEURS_HELVETICA: dict[str, int] = {
+    " ": 278,
+    "!": 278,
+    '"': 355,
+    "#": 556,
+    "$": 556,
+    "%": 889,
+    "&": 667,
+    "'": 191,
+    "(": 333,
+    ")": 333,
+    "*": 389,
+    "+": 584,
+    ",": 278,
+    "-": 333,
+    ".": 278,
+    "/": 278,
+    "0": 556,
+    "1": 556,
+    "2": 556,
+    "3": 556,
+    "4": 556,
+    "5": 556,
+    "6": 556,
+    "7": 556,
+    "8": 556,
+    "9": 556,
+    ":": 278,
+    ";": 278,
+    "<": 584,
+    "=": 584,
+    ">": 584,
+    "?": 556,
+    "@": 1015,
+    "A": 667,
+    "B": 667,
+    "C": 722,
+    "D": 722,
+    "E": 667,
+    "F": 611,
+    "G": 778,
+    "H": 722,
+    "I": 278,
+    "J": 500,
+    "K": 667,
+    "L": 556,
+    "M": 833,
+    "N": 722,
+    "O": 778,
+    "P": 667,
+    "Q": 778,
+    "R": 722,
+    "S": 667,
+    "T": 611,
+    "U": 722,
+    "V": 667,
+    "W": 944,
+    "X": 667,
+    "Y": 667,
+    "Z": 611,
+    "[": 278,
+    "\\": 278,
+    "]": 278,
+    "^": 469,
+    "_": 556,
+    "`": 333,
+    "a": 556,
+    "b": 556,
+    "c": 500,
+    "d": 556,
+    "e": 556,
+    "f": 278,
+    "g": 556,
+    "h": 556,
+    "i": 222,
+    "j": 222,
+    "k": 500,
+    "l": 222,
+    "m": 833,
+    "n": 556,
+    "o": 556,
+    "p": 556,
+    "q": 556,
+    "r": 333,
+    "s": 500,
+    "t": 278,
+    "u": 556,
+    "v": 500,
+    "w": 722,
+    "x": 500,
+    "y": 500,
+    "z": 500,
+    "{": 334,
+    "|": 260,
+    "}": 334,
+    "~": 584,
+}
+_LARGEURS_HELVETICA_GRAS: dict[str, int] = {
+    **_LARGEURS_HELVETICA,
+    "!": 333,
+    '"': 474,
+    "&": 722,
+    "'": 238,
+    ":": 333,
+    ";": 333,
+    "?": 611,
+    "@": 975,
+    "A": 722,
+    "J": 556,
+    "K": 722,
+    "L": 611,
+    "[": 333,
+    "]": 333,
+    "^": 584,
+    "b": 611,
+    "c": 556,
+    "d": 611,
+    "f": 333,
+    "g": 611,
+    "h": 611,
+    "i": 278,
+    "j": 278,
+    "k": 556,
+    "l": 278,
+    "m": 889,
+    "n": 611,
+    "o": 611,
+    "p": 611,
+    "q": 611,
+    "r": 389,
+    "t": 333,
+    "u": 611,
+    "v": 556,
+    "w": 778,
+    "x": 556,
+    "y": 556,
+    "{": 389,
+    "|": 280,
+    "}": 389,
+}
+
+
+def largeur_texte(texte: str, police: str, taille: float) -> float:
+    """La largeur RÉELLE d'une chaîne, en points.
+
+    Une lettre accentuée a, dans ces polices, exactement la largeur de sa
+    lettre de base : « é » mesure comme « e ». On décompose donc plutôt que
+    d'inventer une valeur — c'est exact, et cela couvre tout le latin sans
+    allonger la table.
+
+    Un caractère hors table retombe sur la largeur d'un « m », la plus large
+    des minuscules : mieux vaut réserver trop de place que déborder.
+    """
+    if police in (COURIER, COURIER_GRAS):
+        return len(texte) * taille * CHASSE_COURIER
+    table = _LARGEURS_HELVETICA_GRAS if police == HELVETICA_GRAS else _LARGEURS_HELVETICA
+    total = 0
+    for caractere in texte:
+        largeur = table.get(caractere)
+        if largeur is None:
+            base = unicodedata.normalize("NFD", caractere)[:1]
+            largeur = table.get(base, table["m"])
+        total += largeur
+    return total * taille / 1000.0
 
 
 def _texte_pdf(valeur: str) -> bytes:
@@ -74,7 +253,7 @@ def _nombre(valeur: float) -> str:
     return rendu or "0"
 
 
-def tronquer(texte: str, largeur: float, taille: float) -> str:
+def tronquer(texte: str, largeur: float, taille: float, police: str = HELVETICA) -> str:
     """Coupe un libellé qui déborderait de sa colonne, en le disant.
 
     Les points de suspension sont pris DANS le budget, pas ajoutés après :
@@ -82,16 +261,23 @@ def tronquer(texte: str, largeur: float, taille: float) -> str:
     libellé dépassait encore de deux caractères la colonne qu'on venait de
     lui mesurer. Mesuré sur le cadre de signature, où les deux caractères de
     trop mordaient sur le cadre voisin.
+
+    La largeur est MESURÉE, caractère par caractère : compter les caractères
+    revenait à supposer qu'ils font tous la même chasse, ce qui est faux dès
+    qu'un libellé porte des capitales.
     """
-    maximum = max(1, int(largeur / (taille * CHASSE_HELVETICA_APPROX)))
-    if len(texte) <= maximum:
+    if largeur_texte(texte, police, taille) <= largeur:
         return texte
-    if maximum <= 3:
-        return texte[:maximum]
-    return texte[: maximum - 3] + "..."
+    points = largeur_texte("...", police, taille)
+    garde = ""
+    for caractere in texte:
+        if largeur_texte(garde + caractere, police, taille) + points > largeur:
+            break
+        garde += caractere
+    return f"{garde}..." if garde else texte[:1]
 
 
-def replier(texte: str, largeur: float, taille: float) -> list[str]:
+def replier(texte: str, largeur: float, taille: float, police: str = HELVETICA) -> list[str]:
     """Replie un texte sur la largeur disponible, sans couper les mots.
 
     Sauf un mot qui, à lui seul, dépasse la ligne : une raison sociale
@@ -100,24 +286,39 @@ def replier(texte: str, largeur: float, taille: float) -> list[str]:
     feuille. On le césure alors franchement : un mot coupé se lit, un mot hors
     du papier ne s'imprime pas.
 
-    La largeur est estimée à la chasse MOYENNE d'Helvetica. C'est une
-    approximation, et elle suffit ici : il s'agit de décider où passer à la
-    ligne, pas de placer une colonne au point près.
+    La largeur est MESURÉE avec les métriques réelles de la police, et non
+    estimée à une chasse moyenne. L'approximation tenait pour du texte
+    courant ; elle cédait sur des capitales, où un « W » vaut presque deux
+    fois la moyenne supposée. Mesuré : une raison sociale en capitales
+    débordait de sa colonne et venait s'imprimer par-dessus le cartouche du
+    devis.
     """
-    maximum = max(1, int(largeur / (taille * CHASSE_HELVETICA_APPROX)))
     if not texte.strip():
         return []
+
+    def tient(essai: str) -> bool:
+        return largeur_texte(essai, police, taille) <= largeur
+
     lignes: list[str] = []
     courante = ""
     for mot_entier in texte.split():
         mot = mot_entier
-        while len(mot) > maximum:
+        # Un mot plus large que la colonne se césure franchement : le laisser
+        # entier le ferait sortir de la feuille.
+        while not tient(mot):
             if courante:
                 lignes.append(courante)
                 courante = ""
-            lignes.append(mot[:maximum])
-            mot = mot[maximum:]
-        if courante and len(courante) + 1 + len(mot) > maximum:
+            morceau = ""
+            for caractere in mot:
+                if not tient(morceau + caractere):
+                    break
+                morceau += caractere
+            if not morceau:  # un seul caractère plus large que la colonne
+                morceau = mot[:1]
+            lignes.append(morceau)
+            mot = mot[len(morceau) :]
+        if courante and not tient(f"{courante} {mot}"):
             lignes.append(courante)
             courante = mot
         else:
@@ -184,7 +385,7 @@ class Page:
         bloc elle sortait de la marge droite.
         """
         pas = interligne if interligne is not None else taille + 2
-        for ligne in replier(contenu, largeur, taille):
+        for ligne in replier(contenu, largeur, taille, police):
             self.texte(x, y, ligne, police=police, taille=taille)
             y -= pas
         return y

@@ -49,9 +49,20 @@ RESERVE_BAS_DE_PAGE = 24.0
 #: lignes en faisait tenir plus qu'il n'y en avait la place, et les dernières
 #: se dessinaient sous la marge.
 SURCOUT_LIGNE_NON_COMPTEE = 6.0
-#: La hauteur du bloc des totaux : cinq lignes au plus (déboursé, revient,
-#: total HT, une taxe, total TTC) et leur filet.
-HAUTEUR_DES_TOTAUX = 96.0
+#: La hauteur du bloc des totaux, calculée sur ce qu'il porte VRAIMENT.
+#:
+#: Une constante suffisait tant qu'un devis ne portait qu'une taxe. Une
+#: entreprise qui en configure cinq — TVA, cocontractant, écotaxes — pousserait
+#: le pavé « TOTAL TTC » sous la marge, et ce pavé est le chiffre que le client
+#: cherche en premier.
+HAUTEUR_TOTAUX_FIXE = 70.0
+HAUTEUR_PAR_TAXE = 14.0
+
+
+def _hauteur_des_totaux(totaux: dict[str, Any]) -> float:
+    return HAUTEUR_TOTAUX_FIXE + HAUTEUR_PAR_TAXE * len(totaux.get("taxes") or [])
+
+
 TAILLE_LIGNE = 8.5
 TAILLE_CONDITIONS = 8.5
 
@@ -67,7 +78,7 @@ LOGO_ECART = 14.0
 #: Le nom sous lequel le logo est déclaré dans les ressources du document.
 LOGO_NOM = "Im1"
 
-#: Combien de lignes DESSINÉES l'identité de l'émetteur peut occuper au plus.
+#: Combien de lignes chaque PARTIE de l'identité peut occuper au plus.
 #:
 #: Les champs du profil acceptent des valeurs généreuses — 255 caractères pour
 #: l'adresse, autant pour le complément, 200 pour la raison sociale. Mesuré :
@@ -75,11 +86,22 @@ LOGO_NOM = "Im1"
 #: bloc DESTINATAIRE hors de la page. Le destinataire d'un devis ne peut pas
 #: disparaître parce que l'émetteur a saisi une adresse trop longue.
 #:
-#: Douze lignes tiennent largement une identité réelle — raison sociale,
-#: numéro, rue, complément, localité, pays, téléphone, courriel, site. Au-delà,
-#: la coupure est MARQUÉE par une ellipse : l'entreprise voit que son en-tête
-#: ne dit pas tout, au lieu de le découvrir chez son client.
-LIGNES_D_IDENTITE_MAXIMUM = 12
+#: **Un budget par partie, et non un plafond global.** Un plafond global coupe
+#: la FIN — c'est-à-dire le téléphone, le courriel et le site, précisément ce
+#: que cette fonctionnalité existe pour imprimer. Une adresse démesurée
+#: chasserait du papier le moyen de répondre à l'entreprise. Chaque partie a
+#: donc sa part, et aucune ne peut affamer les autres.
+#:
+#: La somme vaut douze lignes au pire, ce qui tient largement.
+BUDGET_RAISON_SOCIALE = 2
+BUDGET_NUMERO = 1
+#: Six lignes : une rue peut en prendre deux, son complément deux, puis la
+#: localité et le pays. Moins, et une adresse belge réelle — « Avenue des
+#: Anciens Établissements Métallurgiques Réunis 1234, aile Ouest » — perdrait
+#: sa LOCALITÉ, qui est précisément ce qu'il faut pour lui écrire.
+BUDGET_ADRESSE = 6
+BUDGET_CONTACTS = 2
+BUDGET_SITE = 1
 
 
 def _boite_du_logo(largeur_px: int, hauteur_px: int) -> tuple[float, float]:
@@ -223,7 +245,7 @@ def composer_le_devis(
 
     # Les totaux tiennent-ils encore ? Sinon, page suivante — pour la même
     # raison que les conditions ci-dessous.
-    if y - HAUTEUR_DES_TOTAUX < moteur.MARGE:
+    if y - _hauteur_des_totaux(totaux) < moteur.MARGE:
         page = moteur.Page()
         pages.append(page)
         y = _entete_court(page, numero, organisation)
@@ -296,7 +318,7 @@ def lignes_d_adresse_emetteur(organisation: dict[str, Any]) -> list[str]:
     return [postal[0], *([complement] if complement else []), *postal[1:]]
 
 
-def _lignes_d_identite(organisation: dict[str, Any]) -> list[str]:
+def _lignes_d_identite(organisation: dict[str, Any]) -> list[tuple[str, int]]:
     """L'émetteur sous le nom : raison sociale, numéro, adresse, contacts.
 
     Chaque ligne n'apparaît que si elle porte quelque chose. Un devis qui
@@ -307,12 +329,16 @@ def _lignes_d_identite(organisation: dict[str, Any]) -> list[str]:
     champs n'existent n'en porte aucun, et se réimprime sans eux plutôt que de
     lever une erreur au téléchargement.
     """
-    lignes: list[str] = []
+    parties: list[tuple[str, int]] = []
     if organisation.get("legal_name"):
-        lignes.append(str(organisation["legal_name"]))
+        parties.append((str(organisation["legal_name"]), BUDGET_RAISON_SOCIALE))
     if organisation.get("company_number"):
-        lignes.append(f"N° d'entreprise : {organisation['company_number']}")
-    lignes.extend(lignes_d_adresse_emetteur(organisation))
+        parties.append((f"N° d'entreprise : {organisation['company_number']}", BUDGET_NUMERO))
+    adresse = lignes_d_adresse_emetteur(organisation)
+    if adresse:
+        # L'adresse est UNE partie, budgétée d'un bloc : rue, complément,
+        # localité et pays se partagent BUDGET_ADRESSE lignes.
+        parties.append(("\n".join(adresse), BUDGET_ADRESSE))
     contacts = " — ".join(
         part
         for part in (
@@ -322,10 +348,10 @@ def _lignes_d_identite(organisation: dict[str, Any]) -> list[str]:
         if part
     )
     if contacts:
-        lignes.append(contacts)
+        parties.append((contacts, BUDGET_CONTACTS))
     if organisation.get("website"):
-        lignes.append(str(organisation["website"]))
-    return lignes
+        parties.append((str(organisation["website"]), BUDGET_SITE))
+    return parties
 
 
 def _entete_complet(
@@ -363,7 +389,10 @@ def _entete_complet(
     # tenir en une ou deux lignes plutôt que quatre.
     taille_nom = 13.0 if largeur_logo else 16.0
     lignes_du_nom = moteur.replier(
-        str(organisation.get("name") or ""), largeur_identite, taille_nom
+        str(organisation.get("name") or ""),
+        largeur_identite,
+        taille_nom,
+        moteur.HELVETICA_GRAS,
     )
     y = haut - 14
     for rang, ligne in enumerate(lignes_du_nom[:2]):
@@ -378,17 +407,18 @@ def _entete_complet(
         y -= 15 if largeur_logo else 18
     y -= 10
 
-    # Toutes les lignes d'identité sont repliées D'ABORD, puis coupées à un
-    # nombre de lignes DESSINÉES. Compter les champs plutôt que les lignes
-    # laisserait une adresse de 255 caractères en occuper huit à elle seule.
-    repliees: list[str] = []
-    for entree in _lignes_d_identite(organisation):
-        repliees.extend(moteur.replier(entree, largeur_identite, 9.0))
-    tronque = len(repliees) > LIGNES_D_IDENTITE_MAXIMUM
-    for rang, ligne in enumerate(repliees[:LIGNES_D_IDENTITE_MAXIMUM]):
-        dernier = tronque and rang == LIGNES_D_IDENTITE_MAXIMUM - 1
-        page.texte(identite_x, y, f"{ligne}\u2026" if dernier else ligne, taille=9.0)
-        y -= 11
+    # Chaque partie est repliée puis coupée à SON budget. Un plafond global
+    # couperait la fin — le téléphone, le courriel, le site — et c'est ce que
+    # ce bloc existe pour imprimer.
+    for entree, budget in _lignes_d_identite(organisation):
+        repliees: list[str] = []
+        for morceau in entree.split("\n"):
+            repliees.extend(moteur.replier(morceau, largeur_identite, 9.0))
+        tronquee = len(repliees) > budget
+        for rang, ligne in enumerate(repliees[:budget]):
+            dernier = tronquee and rang == budget - 1
+            page.texte(identite_x, y, f"{ligne}\u2026" if dernier else ligne, taille=9.0)
+            y -= 11
     # Le bloc suivant ne doit pas remonter au-dessus du logo, même quand
     # l'identité est plus courte que lui.
     y = min(y, haut - hauteur_logo)
