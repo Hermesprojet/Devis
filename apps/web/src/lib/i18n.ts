@@ -69,6 +69,7 @@ const fr: Dictionary = {
   'common.confirm': 'Confirmer',
   'common.save': 'Enregistrer',
   'common.create': 'Créer',
+  'common.delete': 'Supprimer',
   'common.edit': 'Modifier',
   'common.search': 'Rechercher',
   'common.none': '—',
@@ -105,7 +106,46 @@ const fr: Dictionary = {
   'priceBook.import': 'Importer un CSV',
   'priceBook.demoFlag': 'Donnée fictive',
 
+  'priceSource.label': 'Source du prix',
+  'priceSource.none': 'Aucun prix — le gel sera refusé',
+  'priceSource.library': 'Prix unitaire de bibliothèque',
+  'priceSource.composite': 'Sous-détail',
+  'priceSource.pick': 'Choisir…',
+  'priceSource.change': 'Changer',
+  'priceSource.notComputable': 'source non calculable',
+  'priceSource.otherVersion': 'sous-détail d\u2019une autre version',
+  'priceSource.mixedVersions':
+    'Les études de ce chantier n\u2019utilisent pas toutes la même version de bibliothèque. '
+    + 'Aucune source de prix n\u2019est proposée ici : en choisir une reviendrait à trancher '
+    + 'en silence entre deux catalogues.',
   'composites.title': 'Sous-détails de prix',
+  'composites.search': 'Rechercher un sous-détail',
+  'composites.new': 'Nouveau sous-détail',
+  'composites.newTitle': 'Nouveau sous-détail',
+  'composites.editTitle': 'Modifier le sous-détail',
+  'composites.duplicate': 'Dupliquer',
+  'composites.duplicatePrompt': 'Code du duplicata',
+  'composites.usedBy': 'Postes',
+  'composites.publishedReadOnly':
+    'Cette version de bibliothèque est publiée : ses sous-détails sont en lecture seule. '
+    + 'Créez une nouvelle version pour les faire évoluer.',
+  'composites.addComponent': 'Ajouter un composant',
+  'composites.removeComponent': 'Retirer',
+  'composites.duplicateComponent': 'Dupliquer',
+  'composites.moveUp': 'Monter',
+  'composites.moveDown': 'Descendre',
+  'composites.unitCost': 'Coût unitaire (déboursé sec) :',
+  'composites.kind': 'Nature',
+  'composites.amount': 'Montant',
+  'composites.previewUnavailable':
+    'Le coût s\u2019affichera dès que le sous-détail sera calculable.',
+  'composites.density': 'Masse volumique (kg/m³)',
+  'composites.densitySource': 'Source de la masse volumique',
+  'composites.densityWhy':
+    'Une masse volumique n\u2019est demandée que pour passer d\u2019un volume à une masse '
+    + '(ou l\u2019inverse). Sa source est obligatoire : une densité supposée change le nombre '
+    + 'de camions, donc le prix, sans que rien ne le signale. Aucune valeur n\u2019est '
+    + 'proposée par défaut.',
   'composites.hint':
     'La décomposition d\u2019un prix : ressources, rendements, rotations et forfaits. '
     + 'Créés par l\u2019API ; cet écran les rend lisibles, il ne les modifie pas.',

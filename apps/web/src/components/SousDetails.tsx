@@ -1,51 +1,112 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
+import { EditeurSousDetail } from '@/components/EditeurSousDetail'
 import { ErrorNotice } from '@/components/Feedback'
 import { api, type CompositePrice } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { PERMISSIONS, can } from '@/lib/permissions'
+import { usePermissions } from '@/lib/usePermissions'
 
 /**
- * Les sous-détails d'une version de bibliothèque, en lecture.
+ * Les sous-détails d'une version de bibliothèque : lire, créer, modifier,
+ * dupliquer, supprimer.
  *
- * Ils existaient déjà — le jeu de démonstration en sème deux, l'API les crée
- * et les liste — mais **aucun écran ne les montrait**. Un métreur pouvait donc
- * chiffrer une ligne avec un sous-détail sans jamais voir de quoi il était
- * fait, alors que la décomposition est précisément ce que ce produit promet.
+ * Mesuré au navigateur depuis une organisation vide : créer une bibliothèque
+ * marchait, construire un prix composé non. Les sous-détails existaient — le
+ * jeu de démonstration en sème deux, l'API savait les créer et les lister —
+ * mais aucun écran ne les montrait ni ne les reprenait. Un métreur chiffrait
+ * une ligne avec un sous-détail sans jamais voir de quoi il était fait.
  *
- * En lecture seule, et c'est délibéré : l'API n'expose ni modification ni
- * suppression d'un sous-détail. Proposer un bouton qui échouerait serait
- * exactement ce que les règles de revue interdisent.
+ * **Aucune commande qui échouerait n'est offerte.** `version_published` et
+ * `referenced_by` viennent du serveur avec chaque ligne ; l'écran les lit au
+ * lieu de les redeviner. Une version publiée est en lecture seule, et le dit ;
+ * un sous-détail utilisé par des postes ne propose pas de suppression.
  */
 export function SousDetails({ versionId }: { versionId: string }) {
   const [composites, setComposites] = useState<CompositePrice[]>([])
+  const [recherche, setRecherche] = useState('')
   const [ouvert, setOuvert] = useState<string | null>(null)
+  const [edite, setEdite] = useState<CompositePrice | null>(null)
+  const [creation, setCreation] = useState(false)
   const [erreur, setErreur] = useState<unknown>(null)
   const [charge, setCharge] = useState(false)
+  const permissions = usePermissions()
+  const ecrire = can(permissions, PERMISSIONS.pricebookWrite)
 
-  useEffect(() => {
-    let vivant = true
+  const recharger = useCallback(async () => {
     if (!versionId) {
       setComposites([])
       setCharge(true)
       return
     }
-    setCharge(false)
-    api
-      .composites(versionId)
-      .then((liste) => {
-        if (vivant) {
-          setComposites(liste)
-          setErreur(null)
-        }
-      })
-      .catch((attrape) => vivant && setErreur(attrape))
-      .finally(() => vivant && setCharge(true))
-    return () => {
-      vivant = false
+    try {
+      setComposites(await api.composites(versionId))
+      setErreur(null)
+    } catch (attrape) {
+      setErreur(attrape)
+    } finally {
+      setCharge(true)
     }
   }, [versionId])
+
+  useEffect(() => {
+    void recharger()
+  }, [recharger])
+
+  const publiee = composites.some((c) => c.version_published)
+  const modifiable = ecrire && !publiee
+
+  const terme = recherche.trim().toLowerCase()
+  const visibles = terme
+    ? composites.filter(
+        (c) => c.code.toLowerCase().includes(terme) || c.label.toLowerCase().includes(terme),
+      )
+    : composites
+
+  async function supprimer(composite: CompositePrice) {
+    setErreur(null)
+    try {
+      await api.deleteComposite(composite.id)
+      await recharger()
+    } catch (attrape) {
+      setErreur(attrape)
+    }
+  }
+
+  async function dupliquer(composite: CompositePrice) {
+    setErreur(null)
+    // Le code est demandé plutôt que dérivé : un suffixe automatique produit
+    // des noms que personne ne relit, et deux duplications successives donnent
+    // un code qui ne dit plus rien.
+    const code = window.prompt(t('composites.duplicatePrompt'), `${composite.code}-2`)
+    if (!code) return
+    try {
+      await api.duplicateComposite(composite.id, { code })
+      await recharger()
+    } catch (attrape) {
+      setErreur(attrape)
+    }
+  }
+
+  if (creation || edite) {
+    return (
+      <EditeurSousDetail
+        versionId={versionId}
+        existant={edite}
+        onEnregistre={() => {
+          setCreation(false)
+          setEdite(null)
+          void recharger()
+        }}
+        onAnnule={() => {
+          setCreation(false)
+          setEdite(null)
+        }}
+      />
+    )
+  }
 
   return (
     <div className="card" data-testid="sous-details">
@@ -53,30 +114,60 @@ export function SousDetails({ versionId }: { versionId: string }) {
       <p className="muted">{t('composites.hint')}</p>
       <ErrorNotice error={erreur} />
 
+      {publiee && (
+        <div className="notice info" data-testid="version-publiee">
+          {t('composites.publishedReadOnly')}
+        </div>
+      )}
+
+      <div className="row">
+        <div className="field" style={{ flex: '2 1 300px' }}>
+          <label htmlFor="sd-recherche">{t('composites.search')}</label>
+          <input
+            id="sd-recherche"
+            value={recherche}
+            onChange={(evenement) => setRecherche(evenement.target.value)}
+          />
+        </div>
+      </div>
+
+      {modifiable && (
+        <p>
+          <button className="primary" onClick={() => setCreation(true)}>
+            {t('composites.new')}
+          </button>
+        </p>
+      )}
+
       {charge && composites.length === 0 && !erreur && (
         <p className="muted" data-testid="sous-details-vide">
           {t('composites.empty')}
         </p>
       )}
 
-      {composites.length > 0 && (
+      {visibles.length > 0 && (
         <table>
           <thead>
             <tr>
               <th>{t('composites.code')}</th>
               <th>{t('composites.label')}</th>
               <th>{t('composites.unit')}</th>
-              <th>{t('composites.components')}</th>
+              <th className="num">{t('composites.components')}</th>
+              <th className="num">{t('composites.usedBy')}</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {composites.map((composite) => (
+            {visibles.map((composite) => (
               <Ligne
                 key={composite.id}
                 composite={composite}
                 ouvert={ouvert === composite.id}
+                modifiable={modifiable}
                 onBascule={() => setOuvert(ouvert === composite.id ? null : composite.id)}
+                onModifier={() => setEdite(composite)}
+                onDupliquer={() => void dupliquer(composite)}
+                onSupprimer={() => void supprimer(composite)}
               />
             ))}
           </tbody>
@@ -89,11 +180,19 @@ export function SousDetails({ versionId }: { versionId: string }) {
 function Ligne({
   composite,
   ouvert,
+  modifiable,
   onBascule,
+  onModifier,
+  onDupliquer,
+  onSupprimer,
 }: {
   composite: CompositePrice
   ouvert: boolean
+  modifiable: boolean
   onBascule: () => void
+  onModifier: () => void
+  onDupliquer: () => void
+  onSupprimer: () => void
 }) {
   return (
     <>
@@ -109,16 +208,29 @@ function Ligne({
           )}
         </td>
         <td className="mono">{composite.unit_code}</td>
-        <td className="mono">{composite.components.length}</td>
+        <td className="num mono">{composite.components.length}</td>
+        <td className="num mono">{composite.referenced_by}</td>
         <td>
           <button onClick={onBascule} aria-expanded={ouvert}>
             {ouvert ? t('composites.hide') : t('composites.show')}
-          </button>
+          </button>{' '}
+          {modifiable && (
+            <>
+              <button onClick={onModifier}>{t('common.edit')}</button>{' '}
+              <button onClick={onDupliquer}>{t('composites.duplicate')}</button>{' '}
+              {/* Un sous-détail utilisé ne propose pas de suppression : l'API
+                  la refuserait en 409, et offrir une commande qui échoue est
+                  précisément ce que les règles de revue interdisent. */}
+              {composite.referenced_by === 0 && (
+                <button onClick={onSupprimer}>{t('common.delete')}</button>
+              )}
+            </>
+          )}
         </td>
       </tr>
       {ouvert && (
         <tr>
-          <td colSpan={5}>
+          <td colSpan={6}>
             <Composants composants={composite.components} />
             {composite.notes && <p className="muted">{composite.notes}</p>}
           </td>
@@ -131,11 +243,10 @@ function Ligne({
 /**
  * Les composants d'un sous-détail.
  *
- * Chaque type porte des champs différents — une consommation a un ratio de
- * perte, un rendement a une taille d'équipe, une rotation a une charge utile.
- * Plutôt que quatre tableaux, un seul qui affiche **ce qui est présent** : la
- * forme vient du serveur, l'écran ne la réinvente pas. Une clé nouvelle
- * apparaîtra donc d'elle-même au lieu d'être silencieusement ignorée.
+ * Chaque type porte des champs différents. Plutôt que quatre tableaux, un seul
+ * qui affiche **ce qui est présent** : la forme vient du serveur, l'écran ne
+ * la réinvente pas. Un champ que ce fichier ne connaît pas encore apparaît
+ * sous son nom technique au lieu d'être silencieusement ignoré.
  */
 function Composants({ composants }: { composants: Record<string, unknown>[] }) {
   if (composants.length === 0) {
@@ -169,10 +280,10 @@ function Composants({ composants }: { composants: Record<string, unknown>[] }) {
  * Les champs propres au type, lisibles.
  *
  * Les libellés connus sont traduits ; un champ que ce fichier ne connaît pas
- * s'affiche sous son nom technique **plutôt que de disparaître**. C'est le
- * compromis voulu : une table de traduction exhaustive se périme au premier
- * champ ajouté côté serveur, et un écran qui filtre sur une liste blanche
- * cache alors une information sans le dire.
+ * s'affiche sous son nom technique **plutôt que de disparaître**. Une table de
+ * traduction exhaustive se périme au premier champ ajouté côté serveur, et un
+ * écran qui filtrerait sur une liste blanche cacherait alors une information
+ * sans le dire.
  */
 const CHAMPS: Record<string, string> = {
   consumption: 'consommation',
@@ -190,8 +301,10 @@ const CHAMPS: Record<string, string> = {
   cost_per_rotation: 'coût par rotation',
   round_up: 'rotations arrondies au supérieur',
   distance_km: 'distance (km)',
+  rate_per_km: 'tarif au km',
   amount_value: 'montant',
   amount_unit_code: 'devise',
+  lump_sum_amount: 'montant',
 }
 
 function detail(composant: Record<string, unknown>): string {

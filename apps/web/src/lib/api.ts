@@ -328,6 +328,11 @@ export const api = {
   createBoq: (projectId: string, body: Record<string, unknown>) =>
     request<Boq>(`/projects/${projectId}/boqs`, { method: 'POST', body }),
   boqItems: (boqId: string) => request<BoqItem[]>(`/boqs/${boqId}/items`),
+  updateBoqItem: (itemId: string, body: Record<string, unknown>) =>
+    request<BoqItem>(`/boq-items/${itemId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
   createBoqItem: (boqId: string, body: Record<string, unknown>) =>
     request<BoqItem>(`/boqs/${boqId}/items`, { method: 'POST', body }),
 
@@ -342,6 +347,30 @@ export const api = {
     request<Page<PriceItem>>(`/price-books/versions/${versionId}/items${query}`),
   composites: (versionId: string) =>
     request<CompositePrice[]>(`/price-books/versions/${versionId}/composites`),
+  composite: (compositeId: string) =>
+    request<CompositePrice>(`/price-books/composites/${compositeId}`),
+  createComposite: (versionId: string, body: CompositeInput) =>
+    request<CompositePrice>(`/price-books/versions/${versionId}/composites`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateComposite: (compositeId: string, body: CompositeInput & { revision: number }) =>
+    request<CompositePrice>(`/price-books/composites/${compositeId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  duplicateComposite: (compositeId: string, body: { code: string; label?: string }) =>
+    request<CompositePrice>(`/price-books/composites/${compositeId}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteComposite: (compositeId: string) =>
+    request<void>(`/price-books/composites/${compositeId}`, { method: 'DELETE' }),
+  previewComposite: (versionId: string, body: { unit_code: string; components: Composant[] }) =>
+    request<CompositePreview>(`/price-books/versions/${versionId}/composites/preview`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   previewImport: (versionId: string, file: File) => {
     const form = new FormData()
     form.append('file', file)
@@ -679,6 +708,34 @@ export type PriceItem = {
  * saisi survive au transport. Recopier ces quatre formes ici donnerait deux
  * vérités à tenir d'accord ; l'écran lit ce qui est présent.
  */
+/** Les quatre types de composants, dans le vocabulaire du serveur. */
+export const TYPES_DE_COMPOSANT = ['consumption', 'output_rate', 'rotation', 'lump_sum'] as const
+export type TypeDeComposant = (typeof TYPES_DE_COMPOSANT)[number]
+
+/**
+ * Un composant en cours de saisie.
+ *
+ * Volontairement permissif : chaque type porte des champs différents, et le
+ * formulaire n'envoie que ceux qui s'appliquent. Recopier ici les quatre
+ * formes exactes du serveur donnerait deux vérités à tenir d'accord — et
+ * c'est le serveur qui valide, champ par champ, avec l'index du composant
+ * fautif.
+ */
+export type Composant = {
+  component_type: TypeDeComposant
+  label: string
+  resource_kind: string
+  [champ: string]: unknown
+}
+
+export type CompositeInput = {
+  code: string
+  label: string
+  unit_code: string
+  notes?: string | null
+  components: Composant[]
+}
+
 export type CompositePrice = {
   id: string
   code: string
@@ -686,6 +743,23 @@ export type CompositePrice = {
   unit_code: string
   notes: string | null
   is_demo_data: boolean
+  /** Le jeton de concurrence : à renvoyer tel quel dans une modification. */
+  revision: number
+  /** Version publiée : le sous-détail est en lecture seule. */
+  version_published: boolean
+  /** Combien de postes s'en servent. Au-delà de zéro, la suppression est refusée. */
+  referenced_by: number
+  components: Composant[]
+}
+
+export type CompositePreview = {
+  unit_code: string
+  currency: string
+  /** Le décimal exact, non arrondi. */
+  unit_cost: string
+  /** Le même, arrondi par le SERVEUR. C'est celui qu'on affiche. */
+  unit_cost_display: string
+  by_kind: { resource_kind: string; label: string; amount: string; amount_display: string }[]
   components: Record<string, unknown>[]
 }
 
