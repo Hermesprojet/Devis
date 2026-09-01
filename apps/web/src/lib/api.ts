@@ -340,6 +340,8 @@ export const api = {
     request<PriceBookVersion[]>(`/price-books/${bookId}/versions`),
   priceItems: (versionId: string, query = '') =>
     request<Page<PriceItem>>(`/price-books/versions/${versionId}/items${query}`),
+  composites: (versionId: string) =>
+    request<CompositePrice[]>(`/price-books/versions/${versionId}/composites`),
   previewImport: (versionId: string, file: File) => {
     const form = new FormData()
     form.append('file', file)
@@ -666,6 +668,25 @@ export type PriceItem = {
   currency: string
   supplier_name: string | null
   is_demo_data: boolean
+}
+
+/**
+ * Un sous-détail de prix, tel que l'API le rend.
+ *
+ * `components` reste volontairement générique : chaque type de composant
+ * (`consumption`, `output_rate`, `rotation`, `lump_sum`) porte des champs
+ * différents, et le serveur les sérialise en chaînes pour que le décimal
+ * saisi survive au transport. Recopier ces quatre formes ici donnerait deux
+ * vérités à tenir d'accord ; l'écran lit ce qui est présent.
+ */
+export type CompositePrice = {
+  id: string
+  code: string
+  label: string
+  unit_code: string
+  notes: string | null
+  is_demo_data: boolean
+  components: Record<string, unknown>[]
 }
 
 export type ImportRow = {

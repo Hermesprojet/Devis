@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { BibliothequeVide } from '@/components/BibliothequeVide'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { NouveauPrix } from '@/components/NouveauPrix'
+import { SousDetails } from '@/components/SousDetails'
 import { Shell } from '@/components/Shell'
 import {
   api,
@@ -233,6 +234,8 @@ export default function PriceBookPage() {
           </tbody>
         </table>
       </div>
+
+      <SousDetails versionId={versionId} />
     </Shell>
   )
 }

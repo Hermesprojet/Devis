@@ -338,3 +338,43 @@ test("l'API refuse toujours, même si l'interface a cessé de proposer", async (
   expect(detail.code).toBe('permission_denied')
   expect(detail.required_permission).toBe('export:client')
 })
+
+// -- la bibliothèque montre enfin ses sous-détails --------------------------
+
+test('un sous-détail de la bibliothèque se lit, composant par composant', async ({ page }) => {
+  // Les sous-détails existaient — le jeu de démonstration en sème deux, l'API
+  // les crée et les liste — mais aucun écran ne les montrait. Un métreur
+  // chiffrait donc une ligne avec un sous-détail sans jamais voir de quoi il
+  // était fait.
+  await signIn(page)
+  await page.goto('/bibliotheque')
+
+  const encart = page.getByTestId('sous-details')
+  await expect(encart).toBeVisible()
+
+  // Le sous-détail d'excavation du jeu de démonstration : rendement de pelle,
+  // manœuvre, rotation de camion et conversion m3 → t adossée à une densité
+  // sourcée. C'est le scénario d'acceptation 3, rendu lisible.
+  const ligne = encart.getByTestId('sous-detail-SD-TER-EXC')
+  await expect(ligne).toBeVisible()
+  await expect(ligne.getByText('Donnée fictive')).toBeVisible()
+
+  // Fermé par défaut : la décomposition ne s'impose pas, elle se demande.
+  await expect(page.getByTestId('composants')).toHaveCount(0)
+  await ligne.getByRole('button', { name: 'Voir la décomposition' }).click()
+
+  const composants = page.getByTestId('composants')
+  await expect(composants).toBeVisible()
+  // Deux types distincts au moins, et leurs chiffres — un tableau qui
+  // n'afficherait que des libellés ne prouverait pas la décomposition.
+  await expect(composants.getByText('rendement').first()).toBeVisible()
+  await expect(composants.getByText('rotation').first()).toBeVisible()
+  await expect(composants.getByText(/taux horaire 92/).first()).toBeVisible()
+
+  // La densité qui autorise la conversion m3 → t porte sa source : c'est
+  // l'invariant du produit — aucune conversion ambiguë sans référence.
+  await expect(composants.getByText(/GT-2026-018/).first()).toBeVisible()
+
+  await ligne.getByRole('button', { name: 'Masquer' }).click()
+  await expect(page.getByTestId('composants')).toHaveCount(0)
+})

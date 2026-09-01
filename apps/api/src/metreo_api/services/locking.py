@@ -78,6 +78,10 @@ LOCK_ORDER: tuple[str, ...] = (
     "DocumentStepRun",
     "PriceBook",
     "PriceBookVersion",
+    # Après la version dont il dépend : modifier un sous-détail verrouille
+    # d'abord la version — pour refuser une publication qui arriverait entre
+    # la lecture du statut et l'écriture — puis le sous-détail lui-même.
+    "CompositePriceRow",
     "Estimate",
     "EstimateVersion",
     # Le devis remis vient après la version dont il est issu. Une décision

@@ -219,6 +219,30 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
                 }
             ],
         },
+        "PUT /api/v1/price-books/composites/{composite_id}": {
+            "code": "C.1",
+            "label": "Composé",
+            "unit_code": "m3",
+            "revision": 1,
+            "components": [
+                {
+                    "component_type": "lump_sum",
+                    "label": "Forfait",
+                    "lump_sum_amount": "100.00",
+                }
+            ],
+        },
+        "POST /api/v1/price-books/composites/{composite_id}/duplicate": {"code": "C.2"},
+        "POST /api/v1/price-books/versions/{version_id}/composites/preview": {
+            "unit_code": "m3",
+            "components": [
+                {
+                    "component_type": "lump_sum",
+                    "label": "Forfait",
+                    "lump_sum_amount": "100.00",
+                }
+            ],
+        },
         # ``confirm`` is refused before any lookup, and identically for an
         # unknown identifier, so it leaks nothing — but without it the route
         # answers 400 and the tenant check below would never be reached.
@@ -466,7 +490,30 @@ def _build_graph(client: TestClient, headers: dict[str, str], reference: str) ->
     assert transmis.status_code == 201, transmis.text
     evenement = next(e for e in transmis.json()["events"] if e["kind"] == "transmitted")
 
+    # Un sous-détail, pour que les routes qui le nomment aient une cible réelle
+    # dans CE tenant — sans quoi le contrôle « identifiant d'un autre tenant »
+    # ne prouverait rien : il comparerait deux absences.
+    compose = client.post(
+        f"/api/v1/price-books/versions/{version_id}/composites",
+        headers=headers,
+        json={
+            "code": f"SD-{reference}",
+            "label": "Sous-détail de la matrice",
+            "unit_code": "m3",
+            "components": [
+                {
+                    "component_type": "lump_sum",
+                    "label": "Forfait",
+                    "resource_kind": "other",
+                    "lump_sum_amount": "100.00",
+                }
+            ],
+        },
+    )
+    assert compose.status_code == 201, compose.text
+
     return {
+        "composite": compose.json()["id"],
         "share_link": lien.json()["link"]["id"],
         "quote_event": evenement["id"],
         "tax_rate": taux.json()["id"],
@@ -517,6 +564,7 @@ _PARAM_TO_KEY = {
     "boq_id": "boq",
     "item_id": "boq_item",
     "price_book_id": "price_book",
+    "composite_id": "composite",
     "batch_id": "import_batch",
     "estimate_id": "estimate",
     "tax_rate_id": "tax_rate",
