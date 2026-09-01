@@ -63,12 +63,32 @@ function empreinte(octets: Buffer): string {
   return createHash('sha256').update(octets).digest('hex')
 }
 
-/** Remplit le formulaire de profil, champ par champ. */
+/**
+ * Remplit le formulaire de profil, champ par champ.
+ *
+ * **Attendre que l'écran ait FINI de charger avant de taper.** Le formulaire
+ * se remplit d'un appel d'API : tant qu'il n'a pas répondu, ce qu'on saisit est
+ * écrasé par ce qui arrive. Le bandeau — « profil suffisant » ou « profil
+ * insuffisant » — n'apparaît qu'une fois l'organisation reçue ; l'attendre est
+ * donc le signal exact que la saisie tiendra.
+ *
+ * Diagnostiqué dans la répétition de préproduction, pas en local : contre une
+ * API en conteneur, la réponse arrive après les premières frappes, et le nom
+ * restauré repartait aussitôt écrasé par l'ancien. En local l'API répond avant,
+ * et la course ne se voyait jamais.
+ */
 async function remplirLeProfil(page: Page, valeurs: Record<string, string>) {
+  const charge = page
+    .getByTestId('profil-suffisant')
+    .or(page.getByTestId('profil-insuffisant'))
+  await expect(charge).toBeVisible({ timeout: 20_000 })
   for (const [cle, valeur] of Object.entries(valeurs)) {
     await page.locator(`#profil-${cle}`).fill(valeur)
   }
   await page.getByTestId('profil-entreprise').getByRole('button', { name: 'Enregistrer' }).click()
+  // Et attendre la confirmation : sans elle, la navigation qui suit pourrait
+  // partir avant que la requête n'ait abouti.
+  await expect(page.getByText('Enregistré', { exact: true })).toBeVisible({ timeout: 20_000 })
 }
 
 test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis', async ({
@@ -85,9 +105,12 @@ test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis
   // Le nom d'origine, LU et non deviné : il vaut « Entreprise neuve » ici et
   // « Organisation de répétition » dans la répétition de préproduction. Il sera
   // rendu à la fin — voir l'étape 11.
-  const nomInitial = await page.locator('#profil-name').inputValue()
   const insuffisant = page.getByTestId('profil-insuffisant')
   await expect(insuffisant).toBeVisible()
+  // Lu APRÈS le bandeau, donc après la réponse de l'API : lu avant, on
+  // obtiendrait la valeur vide du premier rendu.
+  const nomInitial = await page.locator('#profil-name').inputValue()
+  expect(nomInitial).not.toBe('')
   // Le message NOMME les champs, il ne dit pas « profil incomplet ».
   await expect(insuffisant).toContainText("l'adresse")
   await expect(insuffisant).toContainText('le code postal')
@@ -367,6 +390,13 @@ test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis
   await page.goto('/parametres')
   await remplirLeProfil(page, { name: nomInitial })
   await expect(page.getByTestId('profil-suffisant')).toBeVisible()
+  // Relu depuis un écran rechargé, et non depuis le champ qu'on vient de
+  // taper : c'est la seule lecture qui prouve que le SERVEUR a bien enregistré.
+  // C'est aussi exactement ce que la répétition de préproduction vérifie après
+  // restauration.
+  await page.reload()
+  await expect(page.getByTestId('profil-suffisant')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('#profil-name')).toHaveValue(nomInitial)
 
   await page.goto(urlVersion)
   const [ultime] = await Promise.all([
