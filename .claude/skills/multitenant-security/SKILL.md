@@ -39,6 +39,32 @@ l'ingestion de documents non fiables de **document-analysis**, les quantités de
   c'est un endpoint séparé, avec sa propre permission et son propre test — jamais un paramètre
   optionnel greffé sur un handler existant.
 
+## 2 bis. Un corps surdimensionné est refusé AVANT l'authentification
+
+`garde_de_corps.py` est une couche **ASGI**, posée à l'extérieur de FastAPI par
+`application_bornee`. Elle refuse `413 {"code": "request_too_large"}` sans
+regarder qui appelle, et c'est délibéré : lire cinq cents mégaoctets pour
+découvrir ensuite que le jeton est invalide offrirait à un anonyme le travail
+que l'authentification devait protéger. La protection des ressources précède
+donc l'identification.
+
+**La contrepartie, à ne pas maquiller** : un tel refus ne peut PAS être inscrit
+au journal d'audit d'une organisation — aucune identité n'est encore établie, et
+en inventer une serait pire que de n'en inscrire aucune. Ce n'est pas un trou
+dans la chaîne d'audit : rien n'a été écrit, donc il n'y a rien à tracer.
+
+- Le registre `corps_bornes.py` déclare chaque route recevant un `UploadFile` :
+  méthode, chemin, réglage qui gouverne le plafond, type attendu. Le **démarrage
+  refuse** une route multipart sans plafond, et un plafond sans route.
+- La garde borne les octets du RÉSEAU. Les lecteurs spécialisés — `services/images`,
+  `services/classeur` — bornent ce que ces octets **développent** une fois
+  décompressés. Les deux sont nécessaires : une bombe de décompression de
+  quatre-vingt-dix kilooctets passe la première et se fait refuser par la seconde.
+- Caddy porte un plafond aligné, mais l'API est aussi appelée directement (tests,
+  réseau interne, port 8000) : la protection ne peut pas vivre dans le proxy seul.
+- Le corps du refus ne rend ni chemin interne, ni configuration, ni écho du
+  contenu reçu — seulement `max_bytes`.
+
 ## 3. Tout accès à une ligne métier passe par get_owned()
 
 ```python
