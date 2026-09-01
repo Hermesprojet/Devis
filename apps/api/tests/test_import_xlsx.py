@@ -17,6 +17,7 @@ n'appellent pas la même correction.
 
 from __future__ import annotations
 
+import io
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -232,7 +233,11 @@ def test_un_csv_et_un_xlsx_ecrivent_des_prix_identiques_en_base(
         version_id = version.json()["id"]
 
         apercu = previsualiser(
-            seeded_client, headers, version_id, ((classeurs if nom.endswith(".xlsx") else FIXTURES) / nom).read_bytes(), nom=nom
+            seeded_client,
+            headers,
+            version_id,
+            ((classeurs if nom.endswith(".xlsx") else FIXTURES) / nom).read_bytes(),
+            nom=nom,
         )
         assert apercu.status_code == 200, apercu.text
         lot = apercu.json()["batch_id"]
@@ -487,3 +492,101 @@ def test_trop_d_entrees_dans_l_archive_est_refuse(monkeypatch: pytest.MonkeyPatc
     with pytest.raises(classeur.ClasseurRefuse) as refus:
         classeur.lire(octets)
     assert refus.value.code == "trop_d_entrees"
+
+
+# --------------------------------------------------------------------------
+# 5. Le modèle proposé au téléchargement
+# --------------------------------------------------------------------------
+
+
+def test_le_modele_telecharge_est_un_classeur_que_l_analyseur_SAIT_LIRE(
+    seeded_client: TestClient, headers: dict[str, str]
+) -> None:
+    """Un modèle qui ne serait pas importable serait pire que pas de modèle.
+
+    Il est ENGENDRÉ depuis `COLUMN_ALIASES`, donc depuis les colonnes que
+    l'analyseur reconnaît. Ce test ferme la boucle : le fichier servi est
+    relu par le lecteur, et chaque colonne obligatoire y est reconnue. Un
+    modèle figé dans un fichier commité aurait dérivé au premier alias
+    renommé, sans que rien ne le signale.
+    """
+    reponse = seeded_client.get("/api/v1/price-books/imports/modele.xlsx", headers=headers)
+    assert reponse.status_code == 200, reponse.text
+    assert "spreadsheetml.sheet" in reponse.headers["content-type"]
+    assert "modele_import_prix.xlsx" in reponse.headers["content-disposition"]
+
+    lignes, meta = price_import.parse_csv(reponse.content)
+    assert meta["format"] == "xlsx"
+    # Vide de données — c'est un modèle — mais toutes ses colonnes sont
+    # reconnues, et aucune obligatoire ne manque.
+    assert lignes == []
+    assert meta["missing_required_columns"] == []
+    assert meta["unmapped_headers"] == []
+    assert set(meta["mapping"].values()) >= set(price_import.REQUIRED_COLUMNS)
+
+
+def test_les_deux_modeles_annoncent_les_memes_colonnes(
+    seeded_client: TestClient, headers: dict[str, str]
+) -> None:
+    """Le modèle CSV et le modèle XLSX ne peuvent pas dériver l'un de l'autre.
+
+    Deux modèles proposés côte à côte sur le même écran, pour le même import :
+    s'ils annonçaient des colonnes différentes, l'utilisateur ne saurait pas
+    lequel fait foi — et l'un des deux produirait un fichier incomplet.
+    """
+    from openpyxl import load_workbook
+
+    entete_csv = (FIXTURES / "modele_import_prix.csv").read_text(encoding="utf-8").strip()
+    colonnes_csv = entete_csv.split(";")
+
+    modele = seeded_client.get("/api/v1/price-books/imports/modele.xlsx", headers=headers).content
+    onglet = load_workbook(io.BytesIO(modele)).active
+    colonnes_xlsx = [cellule.value for cellule in onglet[1]]
+
+    assert colonnes_xlsx == colonnes_csv
+
+
+def test_le_modele_demande_un_jeton(seeded_client: TestClient) -> None:
+    """Authentifié : élargir la surface ouverte pour un fichier d'en-têtes
+    n'apporterait rien, et l'utilisateur qui le télécharge est déjà connecté."""
+    assert seeded_client.get("/api/v1/price-books/imports/modele.xlsx").status_code == 401
+
+
+def test_un_modele_rempli_s_importe_reellement(
+    seeded_client: TestClient, headers: dict[str, str], version_id: str
+) -> None:
+    """La boucle complète : télécharger le modèle, le remplir, l'importer.
+
+    C'est le geste que l'écran propose à qui n'a pas encore de barème au bon
+    format. S'il ne fonctionnait pas de bout en bout, le bouton mentirait.
+    """
+    from openpyxl import load_workbook
+
+    modele = seeded_client.get("/api/v1/price-books/imports/modele.xlsx", headers=headers).content
+
+    livre = load_workbook(io.BytesIO(modele))
+    onglet = livre.active
+    entetes = [cellule.value for cellule in onglet[1]]
+    ligne: list[Any] = [None] * len(entetes)
+    for colonne, valeur in (
+        ("code", "MOD-FIC-001"),
+        ("libelle", "Poste fictif rempli depuis le modèle"),
+        ("unite", "m3"),
+        ("prix_unitaire", 27.5),
+    ):
+        ligne[entetes.index(colonne)] = valeur
+    onglet.append(ligne)
+    rempli = io.BytesIO()
+    livre.save(rempli)
+
+    apercu = previsualiser(seeded_client, headers, version_id, rempli.getvalue())
+    assert apercu.status_code == 200, apercu.text
+    assert apercu.json()["valid_count"] == 1
+
+    confirme = seeded_client.post(
+        f"/api/v1/price-books/imports/{apercu.json()['batch_id']}/commit",
+        headers=headers,
+        json={"strategy": "create", "confirm": True},
+    )
+    assert confirme.status_code == 200, confirme.text
+    assert confirme.json()["created"] == 1

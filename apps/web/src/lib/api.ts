@@ -189,6 +189,34 @@ async function publicRequest<T>(path: string, options: RequestOptions = {}): Pro
   return (await response.json()) as T
 }
 
+/**
+ * Les octets d'une route authentifiée, rendus tels quels.
+ *
+ * `request` suppose du JSON ; ces routes rendent un fichier. La gestion des
+ * erreurs reste la même — même forme de `detail`, même fin de session sur un
+ * jeton périmé — parce que deux traitements divergeraient au premier code
+ * ajouté.
+ */
+async function octetsAuthentifies(chemin: string): Promise<Blob> {
+  const session = loadSession()
+  const response = await fetch(`${API_URL}${chemin}`, {
+    headers: session ? { Authorization: `Bearer ${session.token}` } : {},
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    let detail: unknown = null
+    try {
+      detail = (await response.json()).detail
+    } catch {
+      detail = { message: `Erreur HTTP ${response.status}` }
+    }
+    const error = new ApiError(response.status, detail)
+    endSessionIfExpired(error)
+    throw error
+  }
+  return response.blob()
+}
+
 export const api = {
   url: API_URL,
 
@@ -251,25 +279,16 @@ export const api = {
    * La page publique, elle, s'authentifie par cookie : le navigateur l'envoie
    * de lui-même, et une balise ordinaire y suffit.
    */
-  logoBlob: async (): Promise<Blob> => {
-    const session = loadSession()
-    const response = await fetch(`${API_URL}/organization/logo`, {
-      headers: session ? { Authorization: `Bearer ${session.token}` } : {},
-      cache: 'no-store',
-    })
-    if (!response.ok) {
-      let detail: unknown = null
-      try {
-        detail = (await response.json()).detail
-      } catch {
-        detail = { message: `Erreur HTTP ${response.status}` }
-      }
-      const error = new ApiError(response.status, detail)
-      endSessionIfExpired(error)
-      throw error
-    }
-    return response.blob()
-  },
+  /**
+   * Le classeur vide à remplir, rapatrié AVEC le jeton.
+   *
+   * Un lien nu n'emporte aucun en-tête : la route exige une session et
+   * répondrait 401, et l'utilisateur verrait un téléchargement échouer sans
+   * savoir pourquoi.
+   */
+  importTemplate: (): Promise<Blob> => octetsAuthentifies('/price-books/imports/modele.xlsx'),
+  /** Les octets du logo, rapatriés avec le jeton — voir `octetsAuthentifies`. */
+  logoBlob: (): Promise<Blob> => octetsAuthentifies('/organization/logo'),
   organizationSettings: () => request<OrgSettings>('/organization/settings'),
   updateOrganizationSettings: (body: Record<string, unknown>) =>
     request<OrgSettings>('/organization/settings', { method: 'PATCH', body }),
@@ -427,9 +446,17 @@ export const api = {
       method: 'POST',
       body,
     }),
-  previewImport: (versionId: string, file: File) => {
+  /**
+   * Prévisualise un fichier de prix — CSV ou classeur — sans rien écrire.
+   *
+   * `feuille` ne vaut que pour un classeur, et reste facultative : sans elle
+   * le serveur lit la première ET dit laquelle, avec la liste des autres, pour
+   * que l'écran propose de changer plutôt que de laisser croire au vide.
+   */
+  previewImport: (versionId: string, file: File, feuille?: string) => {
     const form = new FormData()
     form.append('file', file)
+    if (feuille) form.append('feuille', feuille)
     return request<ImportReport>(`/price-books/versions/${versionId}/imports/preview`, {
       method: 'POST',
       formData: form,
@@ -868,10 +895,15 @@ export type ImportReport = {
   column_mapping: Record<string, string>
   meta: {
     delimiter: string | null
-    encoding: string
+    encoding: string | null
     unmapped_headers: string[]
     missing_required_columns: string[]
     fatal: string | null
+    /** « csv » ou « xlsx » : ce que le serveur a DÉTECTÉ, pas ce que le nom disait. */
+    format?: string
+    /** Classeur seulement : la feuille lue, et toutes celles qu'il porte. */
+    feuille?: string
+    feuilles?: string[]
   }
   rows: ImportRow[]
 }

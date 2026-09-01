@@ -34,6 +34,10 @@ export default function PriceBookPage() {
   const [strategy, setStrategy] = useState<(typeof STRATEGIES)[number]>('create')
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
   const [publication, setPublication] = useState(false)
+  // Le fichier est GARDÉ après la première lecture : changer de feuille doit
+  // relire le même classeur, et redemander le fichier à l'utilisateur pour un
+  // choix qu'on vient de lui proposer serait absurde.
+  const [classeur, setClasseur] = useState<File | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const permissions = usePermissions()
 
@@ -123,11 +127,21 @@ export default function PriceBookPage() {
   async function preview(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file || !versionId) return
+    setClasseur(file)
+    await lire(file)
+  }
+
+  /** Lit le fichier retenu, éventuellement sur une autre feuille. */
+  async function lire(file: File, feuille?: string) {
+    if (!versionId) return
     setError(null)
     setOutcome(null)
     try {
-      setReport(await api.previewImport(versionId, file))
+      setReport(await api.previewImport(versionId, file, feuille))
     } catch (caught) {
+      // Le rapport précédent est effacé : le garder afficherait le résultat
+      // d'une feuille pendant qu'un message parle d'une autre.
+      setReport(null)
       setError(caught)
     }
   }
@@ -138,6 +152,7 @@ export default function PriceBookPage() {
     try {
       setOutcome(await api.commitImport(report.batch_id, strategy))
       setReport(null)
+      setClasseur(null)
       if (fileInput.current) fileInput.current.value = ''
       await loadItems(search)
     } catch (caught) {
@@ -242,8 +257,37 @@ export default function PriceBookPage() {
 
         <div className="field">
           <label htmlFor="file">{t('import.step1')}</label>
-          <input id="file" ref={fileInput} type="file" accept=".csv,text/csv" onChange={preview} />
+          <input
+            id="file"
+            ref={fileInput}
+            type="file"
+            // Le serveur décide du format sur le CONTENU ; cette liste ne fait
+            // qu'aider le sélecteur de fichiers, elle ne décide de rien.
+            accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={preview}
+          />
+          <p className="muted">{t('import.formats')}</p>
         </div>
+
+        {report?.meta.feuilles && report.meta.feuilles.length > 1 && (
+          <div className="field" data-testid="choix-de-feuille">
+            <label htmlFor="feuille">{t('import.sheet')}</label>
+            <select
+              id="feuille"
+              value={report.meta.feuille ?? ''}
+              onChange={(evenement) => {
+                if (classeur) void lire(classeur, evenement.target.value)
+              }}
+            >
+              {report.meta.feuilles.map((nom) => (
+                <option key={nom} value={nom}>
+                  {nom}
+                </option>
+              ))}
+            </select>
+            <p className="muted">{t('import.sheetHint')}</p>
+          </div>
+        )}
 
         {outcome && (
           <div className="notice success">

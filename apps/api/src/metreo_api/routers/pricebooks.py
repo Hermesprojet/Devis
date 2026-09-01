@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -40,7 +50,7 @@ from ..schemas import (
     PriceItemOut,
     PriceItemPage,
 )
-from ..security.auth import TenantContext, require
+from ..security.auth import TenantContext, current_context, require
 from ..security.roles import Permission
 from ..services import audit, price_import, pricebook_versions
 from ..services.classeur import ClasseurRefuse
@@ -335,6 +345,38 @@ def _version_open_for_writing(
     )
     _refuse_if_published(version)
     return version
+
+
+@router.get(
+    "/imports/modele.xlsx",
+    summary="Le classeur vide à remplir",
+    response_class=Response,
+)
+def import_template(
+    # Authentifiée, mais sans permission dédiée : le fichier ne porte que des
+    # en-têtes, les mêmes pour tout le monde, et ne dit rien d'une organisation
+    # ni de ses prix. Exiger `pricebook:write` pour TÉLÉCHARGER un modèle
+    # empêcherait de préparer son fichier avant d'avoir le droit de l'importer.
+    # Le laisser ouvert élargirait la surface non authentifiée sans raison.
+    _: TenantContext = Depends(current_context),
+) -> Response:
+    """Un modèle ENGENDRÉ depuis les colonnes que l'analyseur reconnaît.
+
+    Servi par l'API plutôt que posé en fichier statique, pour deux raisons qui
+    tiennent ensemble : un `.xlsx` commité serait un binaire opaque au dépôt,
+    et un modèle figé DÉRIVE — on ajoute une colonne au parseur, le modèle
+    continue d'annoncer les anciennes, et l'utilisateur remplit un tableau que
+    le serveur ne lira jamais en entier. Engendré, il ne peut pas mentir.
+
+    """
+    return Response(
+        content=price_import.modele_xlsx(),
+        media_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        headers={
+            "Content-Disposition": 'attachment; filename="modele_import_prix.xlsx"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post(

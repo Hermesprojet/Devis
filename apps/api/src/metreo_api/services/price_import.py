@@ -343,6 +343,50 @@ def normaliser(
     return rows, meta
 
 
+#: Les en-têtes du modèle proposé au téléchargement, en FRANÇAIS.
+#:
+#: Le nom canonique de chaque colonne est anglais — c'est la clé interne — mais
+#: le modèle s'adresse à une entreprise belge francophone qui va le remplir à
+#: la main. Lui servir « unit_price » quand l'écran dit « prix unitaire »
+#: l'obligerait à traduire pour retrouver sa colonne.
+#:
+#: Chaque nom est un alias RECONNU : `test_le_modele_telecharge_est_un_classeur`
+#: relit le modèle servi et vérifie qu'aucune colonne n'est laissée de côté. Et
+#: `test_les_deux_modeles_annoncent_les_memes_colonnes` le tient identique au
+#: modèle CSV — deux modèles divergents pour un même import feraient douter
+#: lequel dit vrai.
+COLONNES_DU_MODELE: tuple[str, ...] = (
+    "code",
+    "libelle",
+    "famille",
+    "type",
+    "unite",
+    "prix_unitaire",
+    "devise",
+    "fournisseur",
+    "region",
+    "valide_du",
+    "valide_au",
+    "quantite_min",
+    "delai",
+    "source",
+    "conditions",
+    "indexation",
+    "statut",
+    "confiance",
+    "notes",
+)
+
+
+def colonnes_du_modele() -> list[str]:
+    return list(COLONNES_DU_MODELE)
+
+
+def modele_xlsx() -> bytes:
+    """Le classeur vide proposé à qui n'a pas encore de barème au bon format."""
+    return classeur.ecrire_un_modele(colonnes_du_modele())
+
+
 def lire_le_classeur(payload: bytes, *, feuille: str | None = None) -> Lecture:
     """Le classeur, ramené à la forme que rend le lecteur CSV.
 

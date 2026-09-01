@@ -92,6 +92,8 @@ PUBLIC: frozenset[str] = frozenset(
 AUTH_ONLY: frozenset[str] = frozenset(
     {
         "GET /api/v1/auth/me",
+        # Le classeur vide à remplir : authentifié, sans permission dédiée.
+        "GET /api/v1/price-books/imports/modele.xlsx",
         "GET /api/v1/organization",
         # Le logo de SON entreprise. Aucune permission dédiée : toute personne
         # qui voit l'écran voit l'en-tête que ses devis porteront, et le logo
@@ -113,6 +115,8 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
         "GET /api/v1/clients",
         "GET /api/v1/estimates",
         "GET /api/v1/price-books",
+        # Aucun identifiant dans le chemin : le modèle est le même pour tous.
+        "GET /api/v1/price-books/imports/modele.xlsx",
         "GET /api/v1/projects",
         "GET /api/v1/quotes",
         "GET /api/v1/organization/members",

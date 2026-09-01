@@ -182,6 +182,16 @@ const fr: Dictionary = {
   'composites.type.lump_sum': 'forfait',
   'import.title': 'Import de prix',
   'import.step1': '1. Choisir le fichier',
+  'import.formats':
+    'CSV ou classeur Excel (.xlsx). Le format est reconnu au contenu du '
+    + 'fichier, pas à son nom. Les classeurs à macros, à formules ou renvoyant '
+    + 'à d\u2019autres fichiers sont refusés : collez les valeurs calculées.',
+  'import.templateCsv': 'Modèle CSV',
+  'import.templateXlsx': 'Modèle Excel',
+  'import.sheet': 'Feuille à importer',
+  'import.sheetHint':
+    'Ce classeur porte plusieurs feuilles. La première a été lue ; choisissez '
+    + 'celle qui porte le barème.',
   'import.step2': '2. Vérifier la prévisualisation',
   'import.step3': "3. Confirmer l'écriture",
   'import.nothingWritten':

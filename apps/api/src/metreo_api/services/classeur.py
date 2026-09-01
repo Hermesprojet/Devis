@@ -433,3 +433,33 @@ def _lire_la_feuille(onglet: Any) -> FeuilleLue:
     return FeuilleLue(
         nom=onglet.title, headers=[h for h in headers if h], lignes=lignes, rangs=rangs
     )
+
+
+def ecrire_un_modele(colonnes: list[str], *, feuille: str = "Prix") -> bytes:
+    """Fabrique un classeur vide portant ces en-têtes, et rien d'autre.
+
+    Le modèle est ENGENDRÉ depuis les colonnes que l'analyseur reconnaît, et
+    non recopié dans un fichier commité. Un modèle figé dérive : on ajoute une
+    colonne au parseur, le modèle continue d'annoncer les anciennes, et
+    l'utilisateur remplit un tableau que le serveur ne lira jamais en entier.
+    Engendré, il ne peut pas mentir sur ce qui est attendu.
+
+    Un `.xlsx` commité serait en outre un binaire opaque au dépôt — la même
+    règle que pour les images et les classeurs de fixture.
+    """
+    from openpyxl import Workbook
+
+    livre = Workbook()
+    onglet = livre.active
+    onglet.title = feuille
+    onglet.append(colonnes)
+    # Un peu de largeur : un en-tête tronqué à l'écran ferait douter de son nom,
+    # et c'est ce nom qui décide de la colonne où l'utilisateur écrit.
+    for rang, nom in enumerate(colonnes, start=1):
+        onglet.column_dimensions[onglet.cell(row=1, column=rang).column_letter].width = max(
+            12, min(28, len(nom) + 4)
+        )
+
+    tampon = BytesIO()
+    livre.save(tampon)
+    return tampon.getvalue()
