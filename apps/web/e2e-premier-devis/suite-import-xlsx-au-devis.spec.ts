@@ -100,7 +100,11 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   // d'un arrondi de lecture.
   await page.getByPlaceholder('Rechercher').fill(BAREME.code)
   await expect(page.getByRole('cell', { name: BAREME.code })).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByRole('cell', { name: '148.60', exact: true })).toBeVisible()
+  // La bibliothèque affiche la valeur TELLE QU'ELLE EST STOCKÉE, suivie de sa
+  // devise — « 148.6 EUR ». Le devis, lui, l'imprimera quantifiée à deux
+  // décimales : c'est la politique d'arrondi qui décide de la présentation,
+  // et les deux écrans n'ont pas la même raison d'afficher un prix.
+  await expect(page.getByRole('row', { name: new RegExp(BAREME.code) })).toContainText('148.6')
 
   // ---- 4. un chantier, et un poste chiffré PAR ce prix importé
   await page.goto('/projets')
