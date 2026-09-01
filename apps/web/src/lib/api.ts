@@ -240,8 +240,36 @@ export const api = {
     return request<Organization>('/organization/logo', { method: 'PUT', formData: corps })
   },
   deleteLogo: () => request<Organization>('/organization/logo', { method: 'DELETE' }),
-  /** L'URL du logo, étiquetée par son empreinte pour que le cache la suive. */
-  logoUrl: (sha256: string) => `${API_URL}/organization/logo?v=${sha256.slice(0, 16)}`,
+  /**
+   * Les octets du logo, rapportés AVEC le jeton.
+   *
+   * Une balise `<img src>` émet une requête nue : le navigateur n'y joint
+   * aucun en-tête, et la route — qui exige `Authorization: Bearer` — répond
+   * 401. L'écran affichait donc une image cassée là où il annonçait un logo.
+   * On rapatrie les octets par `fetch`, et la balise reçoit une URL d'objet.
+   *
+   * La page publique, elle, s'authentifie par cookie : le navigateur l'envoie
+   * de lui-même, et une balise ordinaire y suffit.
+   */
+  logoBlob: async (): Promise<Blob> => {
+    const session = loadSession()
+    const response = await fetch(`${API_URL}/organization/logo`, {
+      headers: session ? { Authorization: `Bearer ${session.token}` } : {},
+      cache: 'no-store',
+    })
+    if (!response.ok) {
+      let detail: unknown = null
+      try {
+        detail = (await response.json()).detail
+      } catch {
+        detail = { message: `Erreur HTTP ${response.status}` }
+      }
+      const error = new ApiError(response.status, detail)
+      endSessionIfExpired(error)
+      throw error
+    }
+    return response.blob()
+  },
   organizationSettings: () => request<OrgSettings>('/organization/settings'),
   updateOrganizationSettings: (body: Record<string, unknown>) =>
     request<OrgSettings>('/organization/settings', { method: 'PATCH', body }),

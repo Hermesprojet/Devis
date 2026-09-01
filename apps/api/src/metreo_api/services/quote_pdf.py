@@ -44,6 +44,11 @@ INTERLIGNE = 13.0
 #: réserve laisse la place au bloc des totaux ; les conditions et les
 #: signatures, plus volumineuses, ont leur propre bascule de page.
 RESERVE_BAS_DE_PAGE = 24.0
+#: Les points qu'une ligne « non comptée au total » dépense EN PLUS de
+#: l'interligne, pour porter sa mention. Compter 13 points pour toutes les
+#: lignes en faisait tenir plus qu'il n'y en avait la place, et les dernières
+#: se dessinaient sous la marge.
+SURCOUT_LIGNE_NON_COMPTEE = 6.0
 #: La hauteur du bloc des totaux : cinq lignes au plus (déboursé, revient,
 #: total HT, une taxe, total TTC) et leur filet.
 HAUTEUR_DES_TOTAUX = 96.0
@@ -181,18 +186,33 @@ def composer_le_devis(
     premiere_tranche = True
     while True:
         disponible = y - RESERVE_BAS_DE_PAGE - moteur.MARGE
-        combien = int(disponible / INTERLIGNE)
-        # `combien < 1` couvre les deux cas : il reste des lignes à poser sans
-        # place pour elles, ou il n'en reste aucune mais l'en-tête du tableau
-        # lui-même ne tiendrait pas. Un bordereau vide dessine quand même son
-        # en-tête de colonnes, et il n'a pas plus le droit de sortir de la page.
-        if combien < 1:
+        # Les lignes sont mesurées UNE PAR UNE, et non divisées par un
+        # interligne moyen : une ligne « non comptée au total » porte une
+        # mention sous elle et dépense six points de plus. Diviser par 13
+        # laissait croire qu'il en tenait davantage, et les dernières se
+        # dessinaient sous la marge — invisibles.
+        tranche: list[dict[str, Any]] = []
+        occupe = 0.0
+        for ligne_du_bordereau in reste:
+            cout = INTERLIGNE + (
+                0.0
+                if ligne_du_bordereau.get("included_in_total", True)
+                else SURCOUT_LIGNE_NON_COMPTEE
+            )
+            if occupe + cout > disponible:
+                break
+            occupe += cout
+            tranche.append(ligne_du_bordereau)
+        # Aucune ligne ne tient — ou il n'en reste aucune, mais l'en-tête du
+        # tableau lui-même ne tiendrait pas. Un bordereau vide dessine quand
+        # même son en-tête de colonnes, et il n'a pas plus le droit de sortir
+        # de la page.
+        if not tranche and (reste or disponible < INTERLIGNE):
             page = moteur.Page()
             pages.append(page)
             y = _entete_court(page, numero, organisation)
             continue
-        tranche = reste[: max(combien, 0)]
-        reste = reste[max(combien, 0) :]
+        reste = reste[len(tranche) :]
         y = _tableau(page, y, colonnes, tranche, premiere_tranche)
         premiere_tranche = False
         if not reste:

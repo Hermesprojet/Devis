@@ -236,20 +236,58 @@ def devis_retenus(
 
 
 def documents_a_detruire(session: Session, organization_id: str) -> list[Document]:
+    """TOUS les fichiers que l'organisation a posés sur le volume.
+
+    Pas seulement les PDF. Un devis émis pose deux fichiers quand l'entreprise
+    a un logo — le document et la copie figée de son logo — et l'organisation
+    elle-même en porte un troisième, son logo courant.
+
+    Les inscrire tous n'est pas une précaution : c'est la condition pour que le
+    registre dise la vérité. `executer` supprime la ligne `organizations`, donc
+    `logo_storage_key` disparaît avec elle. Un fichier de logo non inscrit
+    survivrait à la purge sans qu'AUCUNE ligne ne le désigne plus, et sans que
+    l'écrit puisse dire lequel — exactement l'état que ce module déclare
+    inacceptable.
+    """
     devis = session.scalars(
         select(IssuedQuote)
         .where(IssuedQuote.organization_id == organization_id)
         .order_by(IssuedQuote.number)
     ).all()
-    return [
-        Document(
-            quote_id=d.id,
-            number=d.number,
-            storage_key=d.pdf_storage_key,
-            sha256=d.pdf_sha256,
+    fichiers = []
+    for d in devis:
+        fichiers.append(
+            Document(
+                quote_id=d.id,
+                number=d.number,
+                storage_key=d.pdf_storage_key,
+                sha256=d.pdf_sha256,
+            )
         )
-        for d in devis
-    ]
+        logo = (d.organization_snapshot or {}).get("logo") or {}
+        if logo.get("storage_key"):
+            fichiers.append(
+                Document(
+                    quote_id=d.id,
+                    # Le numéro du devis, suffixé : le registre doit distinguer
+                    # les deux fichiers d'un même devis sans nommer autre chose.
+                    number=f"{d.number} (logo)",
+                    storage_key=str(logo["storage_key"]),
+                    sha256=str(logo.get("sha256") or ""),
+                )
+            )
+
+    organisation = session.get(Organization, organization_id)
+    if organisation is not None and organisation.logo_storage_key:
+        fichiers.append(
+            Document(
+                quote_id=organization_id,
+                number="logo de l'entreprise",
+                storage_key=organisation.logo_storage_key,
+                sha256=organisation.logo_sha256 or "",
+            )
+        )
+    return fichiers
 
 
 # --------------------------------------------------------------------------

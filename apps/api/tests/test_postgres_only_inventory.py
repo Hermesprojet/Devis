@@ -62,6 +62,12 @@ PARTIALLY_SKIPPED: dict[str, str] = {
     # tournent partout, et c'est le point : la correction ne devait rien
     # changer au comportement observable.
     "test_deletion_determinism.py": "seuls les contrôles de catalogue s'ignorent",
+    # Un seul cas s'ignore : deux poses de logo simultanées. La sérialisation
+    # repose sur un verrou de LIGNE, que SQLite n'a pas — il verrouille la base
+    # entière au moment d'écrire, ce qui ne recouvre pas la fenêtre entre la
+    # lecture de l'ancienne clé et l'écriture de la nouvelle. Tout le reste du
+    # module — décodeur, permissions, audit, résidus — tourne partout.
+    "test_profil_entreprise.py": "seule la course de deux poses de logo s'ignore",
 }
 
 

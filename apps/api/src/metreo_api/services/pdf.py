@@ -423,6 +423,18 @@ def _sans_les_images(pdf: bytes) -> bytes:
         if debut == -1 or fin == -1:
             sortie += pdf[position:]
             return bytes(sortie)
+        # La marque doit appartenir à un DICTIONNAIRE d'objet, pas au contenu
+        # d'un flux. Sans ce contrôle, une désignation de poste ou une
+        # condition qui contiendrait « /Subtype /Image » ferait couper tout ce
+        # qui suit jusqu'au bout du flux de la page — une page entière de
+        # texte disparaîtrait de la lecture, et un test d'absence passerait
+        # pour de mauvaises raisons. Si un `endstream` s'intercale entre la
+        # marque et l'ouverture trouvée, c'est que la marque était DANS un flux.
+        entre_deux = pdf.find(b"endstream", marque)
+        if entre_deux != -1 and entre_deux < debut:
+            sortie += pdf[position : marque + len(b"/Subtype /Image")]
+            position = marque + len(b"/Subtype /Image")
+            continue
         sortie += pdf[position : debut + len(b"stream\n")]
         position = fin
 

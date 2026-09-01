@@ -48,6 +48,45 @@ function saisieDe(organisation: Organization | null): Record<Champ, string> {
   return vide
 }
 
+/**
+ * L'URL locale du logo, rapportée avec le jeton.
+ *
+ * `<img src="/organization/logo">` ne marcherait pas : le navigateur émet une
+ * requête d'image NUE, sans en-tête `Authorization`, et la route répond 401 —
+ * l'écran montrait une image cassée là où il annonçait un logo. On rapatrie
+ * donc les octets et on en fait une URL d'objet.
+ *
+ * L'empreinte sert de clé : elle change à chaque remplacement, donc l'effet se
+ * rejoue, et l'ancienne URL est révoquée — sans quoi chaque remplacement
+ * fuirait un objet dans la mémoire de l'onglet.
+ */
+function useLogo(empreinte: string | null): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!empreinte) {
+      setUrl(null)
+      return
+    }
+    let vivant = true
+    let objet: string | null = null
+    api
+      .logoBlob()
+      .then((octets) => {
+        objet = URL.createObjectURL(octets)
+        if (vivant) setUrl(objet)
+        else URL.revokeObjectURL(objet)
+      })
+      .catch(() => {
+        if (vivant) setUrl(null)
+      })
+    return () => {
+      vivant = false
+      if (objet) URL.revokeObjectURL(objet)
+    }
+  }, [empreinte])
+  return url
+}
+
 export function ProfilEntreprise() {
   const [organisation, setOrganisation] = useState<Organization | null>(null)
   const [saisie, setSaisie] = useState<Record<Champ, string>>(saisieDe(null))
@@ -57,6 +96,7 @@ export function ProfilEntreprise() {
   const fichier = useRef<HTMLInputElement>(null)
   const permissions = usePermissions()
   const ecrire = can(permissions, PERMISSIONS.orgManage)
+  const logo = useLogo(organisation?.logo?.sha256 ?? null)
 
   const recharger = useCallback(async () => {
     try {
@@ -179,12 +219,9 @@ export function ProfilEntreprise() {
       <p className="muted">{t('profile.logoHint')}</p>
       {organisation?.logo ? (
         <p>
-          {/* Une balise <img> ordinaire : la route rend les octets avec leur
-              type réel, et l'empreinte sert d'étiquette pour que le cache
-              suive un remplacement. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={api.logoUrl(organisation.logo.sha256)}
+            src={logo ?? undefined}
             alt={t('profile.logo')}
             data-testid="logo-actuel"
             style={{ maxHeight: 72, maxWidth: 240, verticalAlign: 'middle' }}
@@ -218,7 +255,7 @@ export function ProfilEntreprise() {
 
       <h3>{t('profile.preview')}</h3>
       <p className="muted">{t('profile.previewHint')}</p>
-      <ApercuEntete organisation={organisation} saisie={saisie} />
+      <ApercuEntete logo={logo} saisie={saisie} />
     </div>
   )
 }
@@ -235,13 +272,7 @@ export function ProfilEntreprise() {
  * Il lit la SAISIE en cours, pas la dernière réponse du serveur : on voit
  * l'effet de ce qu'on tape avant d'enregistrer, ce qui est tout l'intérêt.
  */
-function ApercuEntete({
-  organisation,
-  saisie,
-}: {
-  organisation: Organization | null
-  saisie: Record<Champ, string>
-}) {
+function ApercuEntete({ logo, saisie }: { logo: string | null; saisie: Record<Champ, string> }) {
   const propre = (cle: Champ) => saisie[cle].trim()
   const localite = [propre('postal_code'), propre('city')].filter(Boolean).join(' ')
   const contacts = [propre('phone'), propre('email')].filter(Boolean).join(' — ')
@@ -259,16 +290,12 @@ function ApercuEntete({
   return (
     <div className="card" data-testid="apercu-entete" style={{ background: '#fff' }}>
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-        {organisation?.logo && (
+        {logo && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={api.logoUrl(organisation.logo.sha256)}
-            alt=""
-            style={{ maxHeight: 46, maxWidth: 108 }}
-          />
+          <img src={logo} alt="" style={{ maxHeight: 46, maxWidth: 108 }} />
         )}
         <div>
-          <div style={{ fontWeight: 700, fontSize: organisation?.logo ? 15 : 18 }}>
+          <div style={{ fontWeight: 700, fontSize: logo ? 15 : 18 }}>
             {propre('name')}
           </div>
           {lignes.map((ligne, rang) => (

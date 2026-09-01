@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from metreo_api.services import images
 
 from . import images_fictives as fixtures
-from .conftest import login
+from .conftest import login, running_on_postgresql
 
 
 @pytest.fixture()
@@ -78,6 +78,24 @@ def test_chaque_type_de_couleur_png_se_decode(
         assert len(image.alpha) == image.largeur * image.hauteur
 
 
+@pytest.mark.parametrize(
+    ("nom", "octets"),
+    [("gris", fixtures.gris_avec_trns()), ("couleurs vraies", fixtures.rvb_avec_trns())],
+)
+def test_la_transparence_par_couleur_est_appliquee(nom: str, octets: bytes) -> None:
+    """`tRNS` ne vaut pas que pour une palette, et l'ignorer se voit.
+
+    Un PNG en gris ou en couleurs vraies peut déclarer UNE valeur transparente.
+    Collecter le morceau sans l'appliquer faisait perdre au logo sa
+    transparence en silence — un aplat opaque là où l'entreprise avait dessiné
+    du vide, sur tous ses devis, sans qu'aucun message ne le dise.
+    """
+    image = images.verifier_un_logo(octets)
+    assert image.alpha is not None, nom
+    assert any(valeur == 0 for valeur in image.alpha), nom
+    assert any(valeur == 255 for valeur in image.alpha), nom
+
+
 def test_les_seize_bits_retiennent_l_octet_de_poids_fort() -> None:
     """65535 devient 255, 32768 devient 128 — pas une valeur approchée."""
     image = images.verifier_un_logo(fixtures.seize_bits())
@@ -130,6 +148,114 @@ def test_un_fichier_trop_volumineux_est_refuse_avant_tout_decodage() -> None:
     with pytest.raises(images.ImageRefusee) as refus:
         images.verifier_un_logo(b"\x89PNG\r\n\x1a\n" + b"\x00" * (images.OCTETS_MAXIMUM + 1))
     assert refus.value.code == "fichier_trop_volumineux"
+
+
+def test_une_bombe_de_decompression_est_refusee_sans_la_developper() -> None:
+    """Le plafond sur le FICHIER ne borne pas la mémoire. La borne est ailleurs.
+
+    Mesuré : 204 Ko d'IDAT portent 200 Mio de zéros, et le pire cas sous le
+    plafond de 2 Mio en porte deux gigaoctets. La décompression est donc bornée
+    à ce que l'en-tête — déjà validé — autorise, et un reste non consommé
+    prouve que les données mentent sur les dimensions.
+
+    Ce test ne mesure pas le temps ni la mémoire : il vérifie le REFUS, qui est
+    ce qui rend l'un et l'autre impossibles.
+    """
+    bombe = fixtures.bombe_de_decompression()
+    assert len(bombe) < images.OCTETS_MAXIMUM, "la bombe doit passer sous le plafond de taille"
+    with pytest.raises(images.ImageRefusee) as refus:
+        images.verifier_un_logo(bombe)
+    assert refus.value.code == "png_incoherent"
+
+
+def test_la_route_refuse_la_bombe_et_ne_laisse_rien(
+    seeded_client: TestClient, admin: dict[str, str], racine: Path
+) -> None:
+    """Bout en bout : 422, aucun fichier, aucun logo enregistré."""
+    reponse = seeded_client.put(
+        "/api/v1/organization/logo",
+        headers=admin,
+        files={"file": ("logo.png", fixtures.bombe_de_decompression(), "image/png")},
+    )
+    assert reponse.status_code == 422, reponse.text
+    assert reponse.json()["detail"]["code"] == "png_incoherent"
+    assert _logos(racine) == []
+    assert seeded_client.get("/api/v1/organization", headers=admin).json()["logo"] is None
+
+
+def test_une_image_au_dela_du_plafond_de_pixels_est_refusee() -> None:
+    """Le coût du défiltrage est linéaire en pixels : il doit être borné.
+
+    Mesuré : quatre millions de pixels occupaient le décodeur plus de dix
+    secondes pour un fichier de trente kilooctets — des lignes constantes se
+    compriment presque à néant. Le plafond de pixels ramène le pire cas sous
+    la seconde et demie, et la route s'exécute désormais hors de la boucle
+    d'événements pour que ce temps ne gèle personne.
+    """
+    trop = fixtures.png(
+        largeur=1600,
+        hauteur=1600,
+        type_couleur=2,
+        profondeur=8,
+        lignes=[bytes(1600 * 3)] * 1600,
+    )
+    with pytest.raises(images.ImageRefusee) as refus:
+        images.verifier_un_logo(trop)
+    assert refus.value.code == "image_trop_grande"
+    assert refus.value.context["width"] == 1600
+
+
+@pytest.mark.skipif(
+    not running_on_postgresql(),
+    reason=(
+        "La sérialisation repose sur un verrou de LIGNE. SQLite n'en a pas — "
+        "il verrouille la base entière au moment d'écrire, ce qui ne recouvre "
+        "pas la fenêtre entre la lecture de l'ancienne clé et l'écriture de la "
+        "nouvelle. Éprouver la garantie là où elle n'existe pas ne prouverait "
+        "rien sur le moteur de production."
+    ),
+)
+def test_deux_poses_concurrentes_ne_laissent_qu_un_fichier(
+    seeded_client: TestClient, admin: dict[str, str], racine: Path
+) -> None:
+    """Un double-clic sur « Enregistrer » ne doit pas laisser d'orphelin.
+
+    Sans verrou, deux poses simultanées lisent la même ancienne clé, écrivent
+    chacune leur fichier, et retirent toutes deux l'ancienne. La base n'en
+    retient qu'une ; l'autre n'est plus désignée par personne, et aucun
+    remplacement futur ne la retirera jamais — la sauvegarde l'emporte, et
+    l'écrit de purge ne sait pas le nommer.
+    """
+    import threading
+
+    seeded_client.put(
+        "/api/v1/organization/logo",
+        headers=admin,
+        files={"file": ("origine.png", fixtures.carre(), "image/png")},
+    )
+    assert len(_logos(racine)) == 1
+
+    depart = threading.Barrier(2)
+    codes: list[int] = []
+
+    def poser(couleur: int) -> None:
+        depart.wait()
+        reponse = seeded_client.put(
+            "/api/v1/organization/logo",
+            headers=admin,
+            files={"file": ("neuf.png", fixtures.carre(cote=32 + couleur), "image/png")},
+        )
+        codes.append(reponse.status_code)
+
+    fils = [threading.Thread(target=poser, args=(i,)) for i in range(2)]
+    for f in fils:
+        f.start()
+    for f in fils:
+        f.join()
+
+    assert all(code in {200, 409, 500} for code in codes), codes
+    restants = _logos(racine)
+    assert len(restants) <= 1, f"{len(restants)} fichiers pour une seule ligne : {restants}"
 
 
 def test_un_fichier_vide_est_refuse() -> None:

@@ -64,6 +64,17 @@ def emetteur_suffisant(organization: Organization) -> list[str]:
     ]
 
 
+def verrouiller_l_organisation(session: Session, organization: Organization) -> None:
+    """Sérialise les écritures qui touchent le logo d'une organisation.
+
+    PostgreSQL pose un `SELECT ... FOR UPDATE` : la seconde requête attend la
+    validation de la première, et relit donc la clé que celle-ci a écrite.
+    SQLite ne connaît pas le verrou de ligne et sérialise déjà les écritures au
+    niveau de la base ; l'appel y est sans effet, ce qui est correct.
+    """
+    session.refresh(organization, with_for_update=True)
+
+
 def logo_present(organization: Organization) -> bool:
     """Un logo est là quand ses métadonnées sont là — la base l'impose toutes ou aucune."""
     return bool(organization.logo_storage_key)
@@ -106,6 +117,14 @@ def poser_le_logo(
        échouait ensuite.
     """
     image = verifier_un_logo(contenu)
+    # Verrouiller la ligne AVANT de lire l'ancienne clé.
+    #
+    # Sans cela, deux poses simultanées lisent la même ancienne clé O, écrivent
+    # chacune leur fichier A et B, et retirent toutes deux O. La base ne retient
+    # qu'une des deux clés ; l'autre fichier n'est plus désigné par personne, et
+    # aucun remplacement futur ne le retirera jamais. Mesuré : un double-clic
+    # sur « Enregistrer » suffit à laisser un orphelin définitif.
+    verrouiller_l_organisation(session, organization)
     ancienne_cle = organization.logo_storage_key
 
     stocke = stockage.ecrire_octets(
@@ -149,6 +168,7 @@ def retirer_le_logo(
     ci-dessus : une transaction qui échouerait après coup laisserait une ligne
     décrivant un fichier qui n'existe plus.
     """
+    verrouiller_l_organisation(session, organization)
     cle = organization.logo_storage_key
     if not cle:
         return False

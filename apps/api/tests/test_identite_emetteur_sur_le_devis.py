@@ -652,6 +652,32 @@ PROJET_MAXIMAL = {"reference": "R" * 60, "name": "P" * 200, "currency": "EUR"}
             "bordereau vide",
             {"logo": fixtures.horizontal(), "document": {"lines": [], "totals": {}}},
         ),
+        # Une ligne « non comptée au total » porte une mention SOUS elle et
+        # dépense six points de plus que l'interligne. Une pagination qui
+        # diviserait par l'interligne moyen en ferait tenir davantage qu'il n'y
+        # a la place, et les dernières se dessineraient sous la marge.
+        (
+            "soixante lignes toutes non comptées",
+            {
+                "logo": fixtures.horizontal(),
+                "document": {
+                    "lines": [dict(ligne, included_in_total=False) for ligne in LIGNES_ORDINAIRES],
+                    "totals": {"total_ht": "0.00", "total_ttc": "0.00", "currency": "EUR"},
+                },
+            },
+        ),
+        (
+            "deux cent quarante lignes non comptées",
+            {
+                "logo": fixtures.carre(),
+                "document": {
+                    "lines": [
+                        dict(ligne, included_in_total=False) for ligne in LIGNES_ORDINAIRES * 4
+                    ],
+                    "totals": {"total_ht": "0.00", "total_ttc": "0.00", "currency": "EUR"},
+                },
+            },
+        ),
         (
             "tous les champs à leur maximum",
             {
@@ -720,3 +746,50 @@ def test_une_identite_ordinaire_n_est_jamais_coupee() -> None:
     assert not any(contenu.endswith("…") for contenu in dessine), dessine
     for attendu in (PROFIL["address"], PROFIL["address_complement"], PROFIL["website"]):
         assert any(attendu in contenu for contenu in dessine), attendu
+
+
+def test_un_texte_qui_ressemble_a_un_objet_image_ne_fait_pas_disparaitre_la_page() -> None:
+    """L'excision des flux d'image ne doit pas mordre sur le texte imprimé.
+
+    `extraire_le_texte` saute les flux d'image pour ne pas lire leurs octets
+    comme des chaînes. La recherche portait sur la seule marque `/Subtype
+    /Image` : une désignation de poste qui contiendrait cette suite de
+    caractères aurait fait couper tout ce qui suit jusqu'à la fin du flux de la
+    page — une page entière disparue de la lecture, et une assertion d'ABSENCE
+    qui passe pour de mauvaises raisons.
+    """
+    from datetime import date, datetime
+
+    from metreo_api.services.quote_pdf import composer_le_devis
+
+    piege = "Fourniture /Subtype /Image et pose"
+    octets = composer_le_devis(
+        numero="DEV-2026-0009",
+        emis_le=datetime(2026, 1, 1, 12, 0),
+        valid_until=date(2026, 12, 31),
+        organisation=dict(PROFIL),
+        client={"name": "Commune fictive", "billing_address": "Place 1", "city": "Namur"},
+        projet={"reference": "CH-9", "name": "Chantier piégé", "currency": "EUR"},
+        document={
+            "lines": [
+                {
+                    "position": "01.10",
+                    "designation": piege,
+                    "unit": "m3",
+                    "quantity": "1",
+                    "unit_price_ht": "10.00",
+                    "total_ht": "10.00",
+                }
+            ],
+            "totals": {"total_ht": "10.00", "total_ttc": "12.10", "currency": "EUR"},
+        },
+        terms="Une condition qui suit le poste piégé.",
+        include_internal_costs=False,
+        logo=fixtures.carre(),
+    )
+    texte = moteur.extraire_le_texte(octets)
+    # Le poste piégé est là...
+    assert "Fourniture" in texte
+    # ...et surtout ce qui vient APRÈS lui n'a pas disparu.
+    assert "Une condition qui suit le poste" in texte
+    assert PROFIL["name"] in texte

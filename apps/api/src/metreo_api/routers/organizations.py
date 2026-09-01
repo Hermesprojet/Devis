@@ -143,7 +143,7 @@ def update_organization_profile(
     response_model=OrganizationOut,
     summary="Charger ou remplacer le logo de l'entreprise",
 )
-async def upload_logo(
+def upload_logo(
     request: Request,
     file: UploadFile = File(...),
     context: TenantContext = Depends(require(Permission.ORG_MANAGE)),
@@ -157,9 +157,19 @@ async def upload_logo(
     décide — un SVG renommé `.png`, un PDF, un exécutable ou un PNG entrelacé
     sont refusés en le disant, avant qu'un seul octet n'atteigne le volume.
 
-    Le plafond est lu deux fois : l'en-tête `Content-Length` évite d'absorber
-    un fichier énorme pour le rejeter après, et la taille RÉELLE tranche —
-    l'en-tête est une allégation comme une autre.
+    **Déclarée `def` et non `async def`, délibérément.** Le décodage d'un PNG
+    parcourt ses échantillons un par un ; mesuré, un fichier de trente
+    kilooctets pouvait occuper le décodeur plusieurs secondes. Dans une
+    fonction `async`, ce travail s'exécuterait DANS la boucle d'événements et
+    gèlerait toutes les requêtes de tous les tenants pendant ce temps.
+    Déclarée `def`, FastAPI l'exécute dans un fil séparé, et le reste de l'API
+    continue de répondre. Le plafond de pixels borne par ailleurs ce temps.
+
+    Le contrôle de `Content-Length` ci-dessous est un raccourci, PAS une
+    protection : à ce point du traitement, FastAPI a déjà lu et analysé le
+    corps multipart pour résoudre `file`. Il évite un décodage inutile, rien de
+    plus — la borne qui compte est celle que `verifier_un_logo` applique aux
+    octets reçus.
     """
     annoncee = request.headers.get("content-length")
     if annoncee and annoncee.isdigit() and int(annoncee) > images_plafond_enveloppe():
@@ -170,9 +180,10 @@ async def upload_logo(
             )
         )
 
-    # Lu en une fois, et borné : `verifier_un_logo` refuse au-delà du plafond,
-    # et l'en-tête ci-dessus a déjà écarté l'envoi manifestement démesuré.
-    contenu = await file.read(images.OCTETS_MAXIMUM + 1)
+    # Un octet de plus que le plafond : de quoi CONSTATER le dépassement. Lire
+    # exactement le plafond rendrait un fichier trop grand indiscernable d'un
+    # fichier juste à la limite.
+    contenu = file.file.read(images.OCTETS_MAXIMUM + 1)
     organization = session.get(type(context.organization), context.organization_id)
     assert organization is not None
     stockage = StockageLocal(settings.storage_root)

@@ -41,17 +41,26 @@ TYPE_PNG = "image/png"
 CANAUX: dict[int, int] = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 
 #: Bornes de dimensions. Un logo plus petit ne s'imprime pas ; un logo plus
-#: grand ne sert à rien sur un A4 à 300 points par pouce, et son décodage
-#: coûterait une mémoire que personne n'a demandé de dépenser.
+#: grand ne sert à rien, et son décodage coûte un temps que personne n'a
+#: demandé de dépenser.
 LARGEUR_MINIMALE = 16
 HAUTEUR_MINIMALE = 16
-LARGEUR_MAXIMALE = 4000
-HAUTEUR_MAXIMALE = 4000
+LARGEUR_MAXIMALE = 2000
+HAUTEUR_MAXIMALE = 2000
 
-#: Plafond de pixels, indépendant des bornes ci-dessus : 4000 × 4000 tient
-#: déjà 16 millions de pixels, soit 64 Mio décodés en RGBA. Le produit est
-#: donc borné en plus des côtés — c'est la borne qui protège la mémoire.
-PIXELS_MAXIMUM = 4_000_000
+#: Plafond de pixels, indépendant des bornes ci-dessus.
+#:
+#: Ce n'est pas un confort : `_defiltrer` parcourt les échantillons UN PAR UN
+#: en Python, et son coût est donc linéaire en pixels. Mesuré : quatre
+#: millions de pixels en RVBA occupent le décodeur plus de dix secondes, pour
+#: un fichier d'entrée de quelques dizaines de kilooctets — des lignes
+#: constantes se compriment presque à néant. Un million ramène le pire cas
+#: sous la seconde et demie.
+#:
+#: Un million reste large : la boîte qui reçoit le logo sur le devis fait
+#: 108 × 46 points, soit 450 × 192 pixels à 300 points par pouce — quatre-vingt
+#: mille pixels. On accepte dix fois cela.
+PIXELS_MAXIMUM = 1_000_000
 
 #: Taille du fichier reçu. Un logo est un aplat : deux mégaoctets sont déjà
 #: généreux, et le plafond général des dépôts (25 Mio) serait ici une porte
@@ -129,7 +138,7 @@ def _defiltrer(brut: bytes, hauteur: int, octets_par_pixel: int, octets_par_lign
             raise ImageRefusee("png_tronque", "Une ligne de ce PNG est incomplète.")
         pas = octets_par_pixel
         if filtre == 0:
-            pass
+            pass  # aucune transformation : la ligne est déjà ses couleurs
         elif filtre == 1:  # Sub
             for k in range(pas, octets_par_ligne):
                 ligne[k] = (ligne[k] + ligne[k - pas]) & 0xFF
@@ -261,27 +270,75 @@ def lire_png(donnees: bytes) -> ImageDecodee:
     if not donnees_image:
         raise ImageRefusee("png_sans_donnees", "Ce PNG ne porte aucune donnée d'image.")
 
-    try:
-        brut = zlib.decompress(bytes(donnees_image))
-    except zlib.error as refus:
-        raise ImageRefusee("png_illisible", "Les données de ce PNG sont illisibles.") from refus
-
     canaux = CANAUX[type_couleur]
     bits_par_pixel = canaux * profondeur
     octets_par_ligne = (largeur * bits_par_pixel + 7) // 8
     octets_par_pixel = max(1, bits_par_pixel // 8)
+
+    # La décompression est bornée à ce que l'IHDR — déjà validé — autorise.
+    #
+    # Le plafond de 2 Mio sur le FICHIER ne borne pas la mémoire développée :
+    # DEFLATE atteint un rapport d'environ 1030 pour 1, si bien que deux
+    # mégaoctets d'IDAT portent deux gigaoctets de zéros. Mesuré : un « PNG »
+    # de 204 Ko dont l'en-tête annonce 16 × 16 faisait croître le processus de
+    # 200 Mio, et rien ne l'interdisait — `_defiltrer` ne lit que les premières
+    # lignes, mais APRÈS que tout a été développé.
+    #
+    # `max_length` fait ce que le plafond d'octets ne pouvait pas faire : il
+    # borne l'allocation. Et un reste non consommé prouve que l'IDAT ment sur
+    # l'IHDR — c'est un refus nommé, pas une image approximative.
+    attendu = hauteur * (1 + octets_par_ligne)
+    decodeur = zlib.decompressobj()
+    try:
+        brut = decodeur.decompress(bytes(donnees_image), attendu)
+    except zlib.error as refus:
+        raise ImageRefusee("png_illisible", "Les données de ce PNG sont illisibles.") from refus
+    if decodeur.unconsumed_tail:
+        raise ImageRefusee(
+            "png_incoherent",
+            "Ce PNG porte plus de données d'image que ses dimensions n'en admettent.",
+        )
+
     lignes = _defiltrer(brut, hauteur, octets_par_pixel, octets_par_ligne)
 
     couleur = bytearray()
     alpha = bytearray()
     maximum = (1 << profondeur) - 1
+
+    # `tRNS` ne veut pas dire la même chose selon le type de couleur : un index
+    # par entrée de palette, une valeur de gris, ou un triplet RVB. Les trois
+    # sont lus ici pour que la transparence ne se perde dans aucun cas.
+    gris_transparent: int | None = None
+    rvb_transparent: tuple[int, ...] | None = None
+    if transparence is not None and type_couleur == 0 and len(transparence) >= 2:
+        # Deux octets gros-boutistes ; on ne garde que l'octet de poids fort,
+        # comme pour les échantillons.
+        gris_transparent = transparence[0] if profondeur == 16 else transparence[1]
+    if transparence is not None and type_couleur == 2 and len(transparence) >= 6:
+        indices = (0, 2, 4) if profondeur == 16 else (1, 3, 5)
+        rvb_transparent = tuple(transparence[i] for i in indices)
     for y in range(hauteur):
         ligne = lignes[y * octets_par_ligne : (y + 1) * octets_par_ligne]
         valeurs = _echantillons(ligne, largeur, canaux, profondeur)
         if type_couleur == 0:
             couleur += bytes(v * 255 // maximum if profondeur < 8 else v for v in valeurs)
+            if gris_transparent is not None:
+                # `tRNS` désigne UNE valeur de gris à rendre transparente. La
+                # collecter sans l'appliquer aurait fait perdre au logo sa
+                # transparence en silence — un fond blanc là où l'entreprise
+                # avait dessiné du vide.
+                alpha += bytes(
+                    # `v` est l'échantillon BRUT : `tRNS` désigne la valeur
+                    # dans la profondeur d'origine, pas la valeur mise à
+                    # l'échelle sur huit bits.
+                    0 if v == gris_transparent else 255
+                    for v in valeurs
+                )
         elif type_couleur == 2:
             couleur += bytes(valeurs)
+            if rvb_transparent is not None:
+                for i in range(0, len(valeurs), 3):
+                    alpha.append(0 if tuple(valeurs[i : i + 3]) == rvb_transparent else 255)
         elif type_couleur == 3:
             assert palette is not None
             for index in valeurs:
@@ -318,9 +375,11 @@ def lire_png(donnees: bytes) -> ImageDecodee:
 def verifier_un_logo(donnees: bytes) -> ImageDecodee:
     """Le contrôle complet d'un logo reçu : taille du fichier, puis contenu.
 
-    L'ordre compte. Le plafond d'octets se vérifie AVANT de décompresser :
-    refuser après coup obligerait à développer en mémoire ce qu'on s'apprête à
-    rejeter, ce qui est exactement ce contre quoi le plafond existe.
+    Le plafond d'octets écarte l'envoi manifestement démesuré, et rien de plus :
+    il ne borne PAS la mémoire développée, DEFLATE comprimant jusqu'à mille
+    pour un. C'est `lire_png` qui borne l'allocation, à la taille que l'en-tête
+    de l'image autorise. Les deux gardes sont nécessaires et aucune ne remplace
+    l'autre.
     """
     if not donnees:
         raise ImageRefusee("fichier_vide", "Ce fichier est vide.")

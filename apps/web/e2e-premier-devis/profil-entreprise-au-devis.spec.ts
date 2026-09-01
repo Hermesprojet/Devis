@@ -186,7 +186,16 @@ test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis
   await page
     .locator('#profil-logo')
     .setInputFiles({ name: 'logo.png', mimeType: 'image/png', buffer: logoFictif(96, 96) })
+  // `toBeVisible` ne suffit PAS : une image cassée occupe une boîte non vide
+  // — son texte de remplacement — et passerait. On vérifie que le navigateur a
+  // réellement décodé des pixels. C'est ce contrôle qui a révélé qu'une balise
+  // <img> nue ne peut pas porter le jeton que la route exige.
   await expect(page.getByTestId('logo-actuel')).toBeVisible({ timeout: 15_000 })
+  await expect
+    .poll(() => page.getByTestId('logo-actuel').evaluate((n) => (n as HTMLImageElement).naturalWidth), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0)
   await expect(page.getByTestId('logo-absent')).toHaveCount(0)
 
   // ---- 5. l'aperçu montre l'en-tête que le devis imprimera
@@ -255,7 +264,11 @@ test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis
       mimeType: 'image/png',
       buffer: logoFictif(240, 60, [180, 40, 40]),
     })
-  await expect(page.getByTestId('logo-actuel')).toBeVisible({ timeout: 15_000 })
+  await expect
+    .poll(() => page.getByTestId('logo-actuel').evaluate((n) => (n as HTMLImageElement).naturalWidth), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0)
 
   await page.goto(urlVersion)
   const [reTelechargement] = await Promise.all([
@@ -319,6 +332,15 @@ test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis
   await expect(emetteur).toContainText(ENTREPRISE.email)
   // Le logo figé par CE devis, servi par sa propre route.
   await expect(pageClient.getByTestId('logo-public')).toBeVisible()
+  await expect
+    .poll(
+      () =>
+        pageClient
+          .getByTestId('logo-public')
+          .evaluate((n) => (n as HTMLImageElement).naturalWidth),
+      { timeout: 15_000 },
+    )
+    .toBeGreaterThan(0)
 
   const htmlClient = await pageClient.content()
   for (const interne of ['Déboursé', 'déboursé', 'Revient', 'Marge']) {

@@ -800,3 +800,70 @@ def test_la_purge_n_est_exposee_par_aucune_route(client: TestClient) -> None:
         if "urge" in nom or "etention" in nom
     ]
     assert modeles == [], f"la purge est sérialisée par l'API : {modeles}"
+
+
+def test_la_purge_emporte_aussi_les_fichiers_de_logo(
+    seeded_client: TestClient, organisation: str
+) -> None:
+    """Le volume ne doit RIEN garder de l'organisation détruite.
+
+    Un devis émis pose deux fichiers quand l'entreprise a un logo : le PDF et
+    la copie figée de son logo. L'organisation elle-même en porte un troisième,
+    son logo courant. Le registre n'inscrivait que les PDF.
+
+    C'était le pire état possible pour ce module : `executer` supprime la ligne
+    `organizations`, donc `logo_storage_key` part avec elle, et les fichiers
+    survivaient sans qu'AUCUNE ligne ne les désigne — ni l'écrit qui doit dire
+    ce qui a été détruit. Ce test recense TOUT ce qui reste sous la racine,
+    pas seulement les `*.pdf` : c'est ce qui l'aurait fait rougir.
+    """
+    from .images_fictives import carre
+
+    entetes = login(seeded_client, "admin@dubois.demo")
+    charge = seeded_client.put(
+        "/api/v1/organization/logo",
+        headers=entetes,
+        files={"file": ("logo.png", carre(), "image/png")},
+    )
+    assert charge.status_code == 200, charge.text
+    devis = graphe_complet(seeded_client, entetes, "PURGE-LOGO")
+    assert devis["pdf_sha256"]
+
+    racine = _stockage().racine
+    avant = sorted(p for p in racine.rglob("*") if p.is_file())
+    # Le PDF, la copie du logo, et le logo courant.
+    assert len(avant) >= 3, [p.name for p in avant]
+
+    with get_session_factory()() as session:
+        # `sans_retention` : la porte qu'emprunte `seed --reset`. La durée de
+        # conservation n'est pas le sujet de ce test — ce qui reste sur le
+        # volume l'est.
+        purge = conservation.demander(
+            session,
+            organization_id=organisation,
+            reason_code="test_fixture",
+            reference="DOSSIER-2026-020",
+            sans_retention=True,
+        )
+        identifiant = purge.id
+        # L'écrit nomme les trois fichiers, pas seulement le PDF.
+        cles = {d["storage_key"] for d in purge.documents}
+        assert len(cles) >= 3, purge.documents
+        conservation.autoriser(session, purge)
+        conservation.executer(session, purge)
+        session.commit()
+
+    with get_session_factory()() as session:
+        purge = session.get(OrganizationPurge, identifiant)
+        assert purge is not None
+        conservation.retirer_les_fichiers(session, purge, _stockage())
+        session.commit()
+
+    restants = sorted(p for p in racine.rglob("*") if p.is_file())
+    assert restants == [], f"la purge a laissé {len(restants)} fichier(s) : {restants}"
+    with get_session_factory()() as session:
+        purge = session.get(OrganizationPurge, identifiant)
+        assert purge is not None
+        assert purge.status == "completed"
+        assert purge.files_failed == []
+        assert conservation.orphelins(session, _stockage()) == []
