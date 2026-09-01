@@ -10,6 +10,7 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +19,9 @@ from fastapi.responses import JSONResponse
 from metreo_domain import __version__ as domain_version
 from metreo_domain.errors import DomainError
 
+from . import corps_bornes
 from .config import Settings, get_settings
+from .garde_de_corps import poser_la_garde
 from .logging_config import configure_logging, request_id_var
 from .routers import (
     audit_log,
@@ -197,6 +200,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # famille elle appartient, et aucune route d'écriture n'a été oubliée.
     classer_les_routes(app)
 
+    # Le contrat des corps, vérifié de même : aucune route ne reçoit un fichier
+    # sans plafond déclaré. Le contrôle est fait ICI plutôt que dans un test
+    # seul, parce qu'une route de dépôt sans plafond ne se remarquerait qu'en
+    # charge, le jour où quelqu'un y déverse un gigaoctet.
+    corps_bornes.verifier_le_registre(app)
+
     @app.get("/", include_in_schema=False)
     async def root() -> dict[str, str]:
         return {
@@ -209,4 +218,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+def application_bornee(app: FastAPI, settings: Settings) -> Any:
+    """L'application, enveloppée de sa garde de corps.
+
+    L'enveloppe est POSÉE À L'EXTÉRIEUR, et c'est tout l'intérêt : un
+    intergiciel FastAPI s'exécute déjà à l'intérieur du traitement de la
+    requête, alors que le corps multipart n'est lu qu'au moment de résoudre les
+    paramètres — après les dépendances, donc après l'authentification. Une
+    garde posée là arriverait encore trop tard, ce qui était exactement le
+    défaut.
+
+    Le plafond réseau vaut celui de la route PLUS la marge d'enveloppe
+    multipart : `Content-Length` mesure les bornes, les en-têtes de partie et
+    le nom du fichier en plus des octets utiles, et sans cette marge un fichier
+    pesant exactement le plafond serait refusé pour ce qui l'entoure.
+    """
+    plafonds = {
+        (methode, chemin): plafond + corps_bornes.MARGE_ENVELOPPE_MULTIPART
+        for methode, chemin, plafond in corps_bornes.routes_bornees(settings)
+    }
+    return poser_la_garde(app, plafonds)
+
+
+app = application_bornee(create_app(), get_settings())
