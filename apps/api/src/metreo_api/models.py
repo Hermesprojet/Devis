@@ -882,6 +882,15 @@ class CompositePriceRow(TimestampMixin, Base):
     unit_code: Mapped[str] = mapped_column(String(12), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     is_demo_data: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Le jeton de concurrence, incrémenté à chaque modification.
+    #:
+    #: `updated_at` aurait pu servir, à deux réserves près : il ne bouge pas
+    #: quand seuls les COMPOSANTS changent — or c'est le cas courant — et deux
+    #: écritures tombant dans la même graduation d'horloge porteraient le même
+    #: jeton. Un entier ne laisse aucun de ces deux doutes, et c'est ce qui
+    #: permet de refuser une modification fondée sur une version obsolète
+    #: plutôt que de l'écraser en silence.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     components: Mapped[list[CompositeComponentRow]] = relationship(
         back_populates="composite",

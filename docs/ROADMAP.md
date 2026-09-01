@@ -48,11 +48,11 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 | 13 | Cycle commercial : transmission, consultation, acceptation ou refus | ✅ | `test_reponse_client.py`, `suite-devis-reponse-client.spec.ts` |
 | 14 | Lien client sécurisé, révocable, sans compte ni domaine | ✅ | `test_partage_de_devis.py` |
 | 15 | Conservation et effacement encadrés | ✅ | `test_conservation_des_devis.py`, `test_purge_encadree.py` |
+| 16 | Sous-détails construits, corrigés et employés dans un devis depuis l'interface | ✅ | `test_sous_details.py`, `test_sous_details_dans_un_devis.py`, `suite-sous-detail-au-devis.spec.ts` |
 
 Fonctionne localement avec des fournisseurs factices et **aucune clé payante**.
 
-**Reste ouvert en phase 1 :** import XLSX (seul le CSV est fait), édition des
-sous-détails depuis l'interface (création par API seulement), scénarios bas /
+**Reste ouvert en phase 1 :** import XLSX (seul le CSV est fait), scénarios bas /
 probable / haut exposés par l'API (la fonction `sensitivity` existe dans le
 domaine et est testée, aucun point d'entrée HTTP ne l'expose encore).
 

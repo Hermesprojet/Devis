@@ -144,7 +144,10 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
   await page.getByLabel('Désignation').fill('Déblai en terrain meuble')
   await page.getByLabel('Unité').fill('m3')
   await page.getByLabel('Quantité').fill(MONTANTS.quantite)
-  await page.getByLabel('Prix unitaire').selectOption({ index: 1 })
+  // La source de prix est explicite depuis que les postes peuvent aussi être
+  // chiffrés par un sous-détail : choisir « bibliothèque », puis le prix.
+  await page.locator('#source-nouveau').selectOption('library')
+  await page.locator('#prix-nouveau').selectOption({ index: 1 })
   await page.getByRole('button', { name: /^créer$/i }).first().click()
   await expect(page.getByRole('cell', { name: '01.10' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'bibliothèque' })).toBeVisible()

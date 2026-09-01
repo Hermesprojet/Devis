@@ -7,12 +7,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from metreo_domain.errors import UnknownUnitError
+from metreo_domain.errors import DomainError, UnknownUnitError
 from metreo_domain.units import get_unit
 
 from ..config import Settings, get_settings
 from ..db import session_scope
 from ..models import (
+    BoqItem,
     CompositeComponentRow,
     CompositePriceRow,
     ImportBatch,
@@ -22,8 +23,12 @@ from ..models import (
     utcnow,
 )
 from ..schemas import (
+    CompositeDuplicate,
+    CompositePreviewIn,
+    CompositePreviewOut,
     CompositePriceCreate,
     CompositePriceOut,
+    CompositePriceUpdate,
     ImportCommitOut,
     ImportCommitRequest,
     ImportPreviewOut,
@@ -38,7 +43,8 @@ from ..schemas import (
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import audit, price_import, pricebook_versions
-from ..services.composites import spec_from_row, validate_spec
+from ..services.composites import apercu, spec_from_row, validate_spec
+from ..services.estimating import rounding_from_settings
 from ..services.locking import lock_owned
 from ..services.price_contract import as_http_detail, validate_price_row
 from ..services.tenant import get_owned, owned_query
@@ -472,7 +478,9 @@ def list_composites(
     context: TenantContext = Depends(require(Permission.PRICEBOOK_READ)),
     session: Session = Depends(session_scope),
 ) -> list[CompositePriceOut]:
-    get_owned(session, PriceBookVersion, context.organization_id, version_id, label="Version")
+    version = get_owned(
+        session, PriceBookVersion, context.organization_id, version_id, label="Version"
+    )
     rows = session.scalars(
         select(CompositePriceRow)
         .where(
@@ -481,7 +489,7 @@ def list_composites(
         )
         .order_by(CompositePriceRow.code)
     ).all()
-    return [_composite_out(row) for row in rows]
+    return [_composite_out(session, row, version) for row in rows]
 
 
 @router.post(
@@ -496,7 +504,7 @@ def create_composite(
     context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
     session: Session = Depends(session_scope),
 ) -> CompositePriceOut:
-    _version_open_for_writing(session, context, version_id)
+    version = _version_open_for_writing(session, context, version_id)
 
     # `validate_spec` canonicalise les unités sur place. Les spécifications
     # sont donc conservées et serviront à écrire les lignes : valider une copie
@@ -546,10 +554,40 @@ def create_composite(
             },
         ) from exc
 
+    _ecrire_les_composants(session, composite, specs, context.organization_id)
+    session.flush()
+    session.refresh(composite)
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="composite_price.created",
+        object_type="composite_price",
+        object_id=composite.id,
+        summary=f"Sous-détail {composite.code} créé",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        payload={"components": len(payload.components)},
+    )
+    return _composite_out(session, composite, version)
+
+
+def _ecrire_les_composants(
+    session: Session,
+    composite: CompositePriceRow,
+    specs: list[dict[str, object]],
+    organization_id: str,
+) -> None:
+    """Pose les composants d'un sous-détail, dans l'ordre reçu.
+
+    Partagée entre la création et la modification : recopier ces vingt champs
+    dans deux fonctions garantissait qu'un champ ajouté un jour n'atterrisse
+    que dans l'une des deux, et que la modification perde silencieusement une
+    donnée que la création savait écrire.
+    """
     for index, data in enumerate(specs):
         session.add(
             CompositeComponentRow(
-                organization_id=context.organization_id,
+                organization_id=organization_id,
                 composite_price_id=composite.id,
                 sort_index=index,
                 component_type=data["component_type"],
@@ -574,23 +612,26 @@ def create_composite(
                 lump_sum_amount=data.get("lump_sum_amount"),
             )
         )
-    session.flush()
-    session.refresh(composite)
-    audit.record(
-        session,
-        organization_id=context.organization_id,
-        action="composite_price.created",
-        object_type="composite_price",
-        object_id=composite.id,
-        summary=f"Sous-détail {composite.code} créé",
-        actor_user_id=context.user.id,
-        actor_email=context.user.email,
-        payload={"components": len(payload.components)},
+
+
+def _references(session: Session, composite_id: str) -> int:
+    """Combien de postes de bordereau s'appuient sur ce sous-détail."""
+    compte = session.scalar(
+        select(func.count()).select_from(BoqItem).where(BoqItem.composite_price_id == composite_id)
     )
-    return _composite_out(composite)
+    return int(compte or 0)
 
 
-def _composite_out(row: CompositePriceRow) -> CompositePriceOut:
+def _composite_out(
+    session: Session, row: CompositePriceRow, version: PriceBookVersion
+) -> CompositePriceOut:
+    """Le sous-détail, ET ce qui décide des commandes que l'écran peut offrir.
+
+    `version_published` et `referenced_by` voyagent avec la ligne plutôt que
+    d'être redevinés côté web : l'écran ne doit proposer aucune commande qui
+    échouerait, et il ne peut le savoir qu'en le lisant ici. Les recalculer en
+    TypeScript donnerait deux vérités, et c'est l'interface qui aurait tort.
+    """
     return CompositePriceOut(
         id=row.id,
         code=row.code,
@@ -598,5 +639,338 @@ def _composite_out(row: CompositePriceRow) -> CompositePriceOut:
         unit_code=row.unit_code,
         notes=row.notes,
         is_demo_data=row.is_demo_data,
+        revision=row.revision,
+        version_published=version.status == "published",
+        referenced_by=_references(session, row.id),
         components=[spec_from_row(component) for component in row.components],
     )
+
+
+# --------------------------------------------------------------------------
+# Gérer un sous-détail : lire, modifier, dupliquer, supprimer, prévisualiser
+# --------------------------------------------------------------------------
+
+
+def _valider_les_specs(payload_components: list) -> list[dict[str, object]]:
+    """Valide et CANONICALISE les spécifications, ou lève un 422 détaillé.
+
+    Les problèmes sont rendus avec l'index du composant fautif : un écran qui
+    ne peut pas dire QUEL composant est en cause oblige l'utilisateur à
+    relire les vingt. `validate_spec` canonicalise les unités sur place, d'où
+    les spécifications rendues plutôt que jetées.
+    """
+    specs: list[dict[str, object]] = [c.model_dump() for c in payload_components]
+    problems: list[dict[str, object]] = []
+    for index, spec in enumerate(specs):
+        for message in validate_spec(spec):
+            problems.append({"index": index, "message": message})
+    if problems:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "invalid_composite",
+                "message": "Sous-détail invalide.",
+                "problems": problems,
+            },
+        )
+    return specs
+
+
+def _unite_canonique(unit_code: str) -> str:
+    try:
+        return get_unit(unit_code).code
+    except UnknownUnitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "unknown_unit", "message": exc.message},
+        ) from exc
+
+
+def _sous_detail_ouvert(
+    session: Session, context: TenantContext, composite_id: str
+) -> tuple[CompositePriceRow, PriceBookVersion]:
+    """Le sous-détail et sa version, verrouillés dans le bon ordre.
+
+    La VERSION d'abord, le sous-détail ensuite — l'ordre déclaré par
+    `LOCK_ORDER`. L'inverse croiserait celui de toute autre requête et
+    changerait une course en interblocage, qui échoue même quand rien n'était
+    réellement disputé.
+
+    Verrouiller la version, et pas seulement la lire : sans cela une
+    publication peut se glisser entre le contrôle du statut et l'écriture, et
+    le sous-détail serait modifié dans une version que le produit présente
+    comme figée.
+
+    La première lecture du sous-détail ne pose AUCUN verrou : elle ne sert qu'à
+    apprendre de quelle version il relève, puisqu'on ne peut pas verrouiller
+    une version dont on ignore l'identifiant. L'ordre déclaré porte sur les
+    verrous, pas sur les lectures.
+    """
+    composite = get_owned(
+        session, CompositePriceRow, context.organization_id, composite_id, label="Sous-détail"
+    )
+    version = _version_open_for_writing(session, context, composite.price_book_version_id)
+    return (
+        lock_owned(
+            session, CompositePriceRow, context.organization_id, composite_id, label="Sous-détail"
+        ),
+        version,
+    )
+
+
+@router.get(
+    "/composites/{composite_id}",
+    response_model=CompositePriceOut,
+    summary="Détail d'un sous-détail de prix",
+)
+def get_composite(
+    composite_id: str,
+    context: TenantContext = Depends(require(Permission.PRICEBOOK_READ)),
+    session: Session = Depends(session_scope),
+) -> CompositePriceOut:
+    composite = get_owned(
+        session, CompositePriceRow, context.organization_id, composite_id, label="Sous-détail"
+    )
+    version = get_owned(
+        session,
+        PriceBookVersion,
+        context.organization_id,
+        composite.price_book_version_id,
+        label="Version",
+    )
+    return _composite_out(session, composite, version)
+
+
+@router.put(
+    "/composites/{composite_id}",
+    response_model=CompositePriceOut,
+    summary="Modifier un sous-détail (remplacement complet)",
+)
+def update_composite(
+    composite_id: str,
+    payload: CompositePriceUpdate,
+    context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
+    session: Session = Depends(session_scope),
+) -> CompositePriceOut:
+    """Remplace le sous-détail ENTIER, composants compris, en une transaction.
+
+    Trois refus, et chacun protège d'une perte silencieuse :
+
+    * `version_published` — une version publiée ne se modifie plus ;
+    * `composite_stale` — la ligne a bougé depuis que l'appelant l'a lue ;
+    * `duplicate_code` — le code appartient déjà à un autre sous-détail.
+
+    Le remplacement est total plutôt que partiel : rapiécer une liste
+    ORDONNÉE, avec des ajouts, des retraits et des déplacements, demande une
+    sémantique de fusion que personne n'a écrite et qui se tromperait dès que
+    deux éditeurs la sollicitent.
+    """
+    composite, version = _sous_detail_ouvert(session, context, composite_id)
+
+    if composite.revision != payload.revision:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "composite_stale",
+                "message": (
+                    "Ce sous-détail a été modifié depuis son chargement "
+                    f"(révision {composite.revision}, vous avez {payload.revision}). "
+                    "Rechargez-le : écrire maintenant effacerait la modification "
+                    "de quelqu'un d'autre sans que personne ne l'apprenne."
+                ),
+                "current_revision": composite.revision,
+            },
+        )
+
+    specs = _valider_les_specs(payload.components)
+    unite = _unite_canonique(payload.unit_code)
+
+    composite.code = payload.code
+    composite.label = payload.label
+    composite.unit_code = unite
+    composite.notes = payload.notes
+    composite.revision = composite.revision + 1
+
+    # `delete-orphan` sur la relation efface les anciennes lignes au `flush`.
+    composite.components.clear()
+    session.flush()
+    _ecrire_les_composants(session, composite, specs, context.organization_id)
+
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "duplicate_code",
+                "message": f"Le code « {payload.code} » existe déjà.",
+            },
+        ) from exc
+
+    session.refresh(composite)
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="composite_price.updated",
+        object_type="composite_price",
+        object_id=composite.id,
+        summary=f"Sous-détail {composite.code} modifié",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        payload={"components": len(specs), "revision": composite.revision},
+    )
+    return _composite_out(session, composite, version)
+
+
+@router.post(
+    "/composites/{composite_id}/duplicate",
+    response_model=CompositePriceOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Dupliquer un sous-détail",
+)
+def duplicate_composite(
+    composite_id: str,
+    payload: CompositeDuplicate,
+    context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
+    session: Session = Depends(session_scope),
+) -> CompositePriceOut:
+    """Copie un sous-détail dans SA version, sous un code neuf.
+
+    Le code est demandé plutôt que dérivé : un suffixe automatique produit des
+    « SD-TER-EXC-copie-2 » que personne ne relit, et deux duplications
+    successives donnent un nom qui ne dit plus rien. La copie ne porte jamais
+    `is_demo_data` — ce qu'un utilisateur duplique devient sa donnée.
+    """
+    source = get_owned(
+        session, CompositePriceRow, context.organization_id, composite_id, label="Sous-détail"
+    )
+    version = _version_open_for_writing(session, context, source.price_book_version_id)
+
+    copie = CompositePriceRow(
+        organization_id=context.organization_id,
+        price_book_version_id=source.price_book_version_id,
+        code=payload.code,
+        label=payload.label or source.label,
+        unit_code=source.unit_code,
+        notes=source.notes,
+    )
+    session.add(copie)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "duplicate_code",
+                "message": f"Le code « {payload.code} » existe déjà.",
+            },
+        ) from exc
+
+    _ecrire_les_composants(
+        session, copie, [spec_from_row(c) for c in source.components], context.organization_id
+    )
+    session.flush()
+    session.refresh(copie)
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="composite_price.duplicated",
+        object_type="composite_price",
+        object_id=copie.id,
+        summary=f"Sous-détail {copie.code} dupliqué depuis {source.code}",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        payload={"source_id": source.id, "components": len(source.components)},
+    )
+    return _composite_out(session, copie, version)
+
+
+@router.delete(
+    "/composites/{composite_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Supprimer un sous-détail",
+)
+def delete_composite(
+    composite_id: str,
+    context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
+    session: Session = Depends(session_scope),
+) -> None:
+    """Supprime — sur version brouillon, et seulement si personne ne s'en sert.
+
+    Un sous-détail référencé par un poste ne se supprime pas : `SET NULL`
+    laisserait le poste sans prix sans le dire, et un devis brouillon
+    deviendrait incalculable au prochain recalcul, loin du geste qui l'a causé.
+    Le refus nomme le nombre de postes concernés pour que la personne sache
+    quoi faire.
+    """
+    composite, _ = _sous_detail_ouvert(session, context, composite_id)
+
+    utilisations = _references(session, composite.id)
+    if utilisations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "composite_referenced",
+                "message": (
+                    f"{utilisations} poste(s) de bordereau utilisent ce sous-détail. "
+                    "Changez leur source de prix avant de le supprimer."
+                ),
+                "referenced_by": utilisations,
+            },
+        )
+
+    code = composite.code
+    session.delete(composite)
+    session.flush()
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="composite_price.deleted",
+        object_type="composite_price",
+        object_id=composite_id,
+        summary=f"Sous-détail {code} supprimé",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+    )
+
+
+@router.post(
+    "/versions/{version_id}/composites/preview",
+    response_model=CompositePreviewOut,
+    summary="Prévisualiser le coût unitaire d'un sous-détail, sans rien écrire",
+)
+def preview_composite(
+    version_id: str,
+    payload: CompositePreviewIn,
+    context: TenantContext = Depends(require(Permission.COST_READ)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> CompositePreviewOut:
+    """Le déboursé sec d'une unité, calculé par le MOTEUR, sans écriture.
+
+    `COST_READ` et non `PRICEBOOK_READ` : cette réponse porte des montants de
+    ressources et leur ventilation par nature — c'est un coût interne, et la
+    matrice des permissions le traite comme tel partout ailleurs.
+
+    Aucune écriture : c'est ce qui permet à l'écran de montrer le chiffre
+    pendant la saisie, avant que quoi que ce soit ne soit enregistré, sans
+    jamais recopier l'arithmétique du moteur en TypeScript.
+    """
+    get_owned(session, PriceBookVersion, context.organization_id, version_id, label="Version")
+    specs = _valider_les_specs(payload.components)
+    unite = _unite_canonique(payload.unit_code)
+    try:
+        rendu = apercu(
+            specs,
+            unit_code=unite,
+            currency=settings.default_currency,
+            arrondi=rounding_from_settings(context.organization.settings),
+        )
+    except DomainError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "message": exc.message, "context": exc.context},
+        ) from exc
+    return CompositePreviewOut(**rendu)

@@ -1113,6 +1113,58 @@ class CompositePriceCreate(BaseModel):
     )
 
 
+class CompositePriceUpdate(CompositePriceCreate):
+    """Une modification COMPLÈTE, jamais partielle.
+
+    Les composants sont remplacés en bloc plutôt que rapiécés un par un :
+    fusionner une liste ordonnée avec des ajouts, retraits et déplacements
+    demande une sémantique de rapiéçage que personne n'a écrite, et qui se
+    trompe silencieusement dès que deux éditeurs la sollicitent en même temps.
+
+    `revision` est le jeton lu au chargement. Le serveur refuse en 409 si la
+    ligne a bougé depuis — c'est ce qui empêche le second éditeur d'écraser le
+    premier sans le savoir.
+    """
+
+    revision: int = Field(ge=1)
+
+
+class CompositeDuplicate(BaseModel):
+    """Le code du duplicata, obligatoire : il est unique dans la version."""
+
+    code: str = Field(min_length=1, max_length=60)
+    label: str | None = Field(default=None, max_length=255)
+
+
+class CompositePreviewIn(BaseModel):
+    """De quoi calculer un coût unitaire sans rien écrire."""
+
+    unit_code: str = Field(min_length=1, max_length=12)
+    components: list[ComponentSpecIn] = Field(
+        min_length=1, max_length=bounds.MAX_COMPONENTS_PER_LINE
+    )
+
+
+class CompositePreviewOut(ApiModel):
+    """Le déboursé sec d'une unité, et sa ventilation — calculés par le moteur."""
+
+    unit_code: str
+    currency: str
+    #: `false` quand un composant à rotations arrondies rend le coût NON
+    #: proportionnel : le chiffre reste exact pour une unité, mais le
+    #: multiplier surestime. L'écran le dit plutôt que de laisser croire à une
+    #: règle de trois.
+    scales_linearly: bool
+    #: Le décimal EXACT, non arrondi — pour qui veut recalculer.
+    unit_cost: str
+    #: Le même, arrondi selon la politique de l'organisation — pour qui lit.
+    #: Les deux voyagent ensemble, comme pour les totaux d'une estimation :
+    #: l'écran affiche le second et n'invente aucun arrondi.
+    unit_cost_display: str
+    by_kind: list[dict[str, Any]]
+    components: list[dict[str, Any]]
+
+
 class CompositePriceOut(ApiModel):
     id: str
     code: str
@@ -1120,6 +1172,15 @@ class CompositePriceOut(ApiModel):
     unit_code: str
     notes: str | None
     is_demo_data: bool
+    #: Le jeton de concurrence. À renvoyer tel quel dans une modification.
+    revision: int
+    #: `true` quand la version de bibliothèque est publiée : le sous-détail est
+    #: alors en lecture seule, et l'écran ne doit proposer aucune commande
+    #: d'écriture qui échouerait.
+    version_published: bool
+    #: Combien de postes de bordereau s'en servent. Zéro autorise la
+    #: suppression ; au-delà, elle est refusée en 409.
+    referenced_by: int
     components: list[dict[str, Any]]
 
 

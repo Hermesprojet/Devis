@@ -34,6 +34,11 @@ LOCK_CALLS: dict[str, str] = {
     "documents.fail_step_run": "DocumentStepRun",
     "documents.retry_failed_step_run": "DocumentStepRun",
     "_locked_item": "BoqItem",
+    # Verrouille DEUX lignes, dans l'ordre déclaré : la version d'abord — pour
+    # refuser une publication qui se glisserait entre le contrôle du statut et
+    # l'écriture — puis le sous-détail. C'est la seconde qui est déclarée ici :
+    # la première passe par `_version_open_for_writing`, déjà au tableau.
+    "_sous_detail_ouvert": "CompositePriceRow",
     # Trouvées par le contrôle d'enveloppes lui-même, au-delà des trois
     # signalées : `transition_item` verrouille pour `approve_item`, et
     # `_version` pour les routes d'estimation lorsqu'on le lui demande.

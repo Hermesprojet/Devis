@@ -101,6 +101,11 @@ _classer(
     # Cherche l'utilisateur et signe un jeton. Aucune écriture — le mode n'existe
     # d'ailleurs qu'en développement.
     "POST /api/v1/auth/dev-login",
+    # Calcule le déboursé sec d'un sous-détail en cours de saisie. POST parce
+    # qu'elle reçoit une liste de composants, pas parce qu'elle enregistre :
+    # elle ne touche aucune ligne. C'est ce qui permet à l'écran de montrer le
+    # chiffre AVANT que quoi que ce soit ne soit enregistré.
+    "POST /api/v1/price-books/versions/{version_id}/composites/preview",
 )
 
 # -- Écritures accompagnées d'un événement d'audit ---------------------------
@@ -134,6 +139,9 @@ _classer(
     "POST /api/v1/price-books/versions/{version_id}/publish",
     "POST /api/v1/price-books/versions/{version_id}/items",
     "POST /api/v1/price-books/versions/{version_id}/composites",
+    "PUT /api/v1/price-books/composites/{composite_id}",
+    "POST /api/v1/price-books/composites/{composite_id}/duplicate",
+    "DELETE /api/v1/price-books/composites/{composite_id}",
     "POST /api/v1/price-books/versions/{version_id}/imports/preview",
     "POST /api/v1/price-books/imports/{batch_id}/commit",
     "POST /api/v1/projects/{project_id}/documents",

@@ -9,11 +9,18 @@ import { DocumentsDuProjet } from '@/components/DocumentsDuProjet'
 import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
 import {
+  ResumeDuSousDetail,
+  SourceDePrix,
+  sourceDe,
+  type Choix,
+} from '@/components/SourceDePrix'
+import {
   api,
   type Boq,
   type BoqItem,
   type Estimate,
   type EstimateVersion,
+  type CompositePrice,
   type PriceItem,
   type Project,
 } from '@/lib/api'
@@ -40,11 +47,18 @@ export default function ProjectPage() {
     unit_code: 'm3',
     quantity: '0',
     kind: 'item',
-    // Sans prix, la ligne est créée « sans prix » et le gel sera refusé. Le
-    // champ existe donc dès la saisie plutôt qu'après coup.
-    price_item_id: '',
+    // La SOURCE du prix vit dans `choixPrix` : une ligne peut tirer son prix
+    // de la bibliothèque ou d'un sous-détail, et les deux s'excluent. Garder
+    // ici le seul `price_item_id` rendait la seconde source insaisissable.
   })
   const [prix, setPrix] = useState<PriceItem[]>([])
+  const [composites, setComposites] = useState<CompositePrice[]>([])
+  const [versionsMelangees, setVersionsMelangees] = useState(false)
+  const [choixPrix, setChoixPrix] = useState<Choix>({
+    source: 'none',
+    price_item_id: null,
+    composite_price_id: null,
+  })
   const permissions = usePermissions()
   const ecrireBordereau = can(permissions, PERMISSIONS.boqWrite)
   const ecrireEtude = can(permissions, PERMISSIONS.estimateWrite)
@@ -63,27 +77,50 @@ export default function ProjectPage() {
       const firstBoq = loadedBoqs[0]
       setItems(firstBoq ? await api.boqItems(firstBoq.id) : [])
 
-      // Les prix de la première version de bibliothèque : c'est eux qu'on
-      // proposera à la saisie d'une ligne.
+      // La version de bibliothèque que les ESTIMATIONS de ce projet utilisent
+      // réellement — et non la première venue.
+      //
+      // L'écran prenait la première version de la première bibliothèque. Un
+      // poste pouvait donc recevoir un prix d'une version que l'étude
+      // n'emploie pas : le devis se serait calculé sur autre chose que ce que
+      // l'utilisateur avait choisi, sans qu'un seul écran le signale.
+      //
+      // Quand les estimations n'emploient pas toutes la même version, aucune
+      // n'est retenue : proposer l'une d'elles reviendrait à choisir en
+      // silence, et c'est exactement le mélange qu'on supprime.
       //
       // Dans son propre `try` : un lecteur n'a pas `pricebook:read`, et le
       // refus faisait échouer TOUT le chargement — la liste des études
       // disparaissait avec, et la page devenait illisible pour le rôle qui ne
       // fait précisément que lire. Un catalogue indisponible ne retire que le
       // sélecteur de prix.
+      const versionsUtilisees = [...new Set(loadedEstimates.map((e) => e.price_book_version_id))]
+      setVersionsMelangees(versionsUtilisees.length > 1)
+      const versionUtilisee = versionsUtilisees.length === 1 ? versionsUtilisees[0] : undefined
       try {
-        const livres = await api.priceBooks()
-        const premier = livres[0]
-        if (premier) {
-          const versionsPrix = await api.priceBookVersions(premier.id)
-          const versionCourante = versionsPrix[0]
-          if (versionCourante) {
-            setVersionPrix(versionCourante.id)
-            setPrix((await api.priceItems(versionCourante.id, '?limit=200')).items)
+        let cible = versionUtilisee
+        if (!cible) {
+          // Aucune estimation encore : on propose la version courante de la
+          // première bibliothèque, celle qu'une nouvelle étude prendra.
+          const livres = await api.priceBooks()
+          const premier = livres[0]
+          if (premier && versionsUtilisees.length === 0) {
+            const versionsPrix = await api.priceBookVersions(premier.id)
+            cible = versionsPrix[0]?.id
           }
+        }
+        if (cible) {
+          setVersionPrix(cible)
+          setPrix((await api.priceItems(cible, '?limit=200')).items)
+          setComposites(await api.composites(cible))
+        } else {
+          setPrix([])
+          setComposites([])
+          setVersionPrix('')
         }
       } catch {
         setPrix([])
+        setComposites([])
         setVersionPrix('')
       }
       const versionEntries = await Promise.all(
@@ -140,7 +177,11 @@ export default function ProjectPage() {
       // vide, il faut envoyer null.
       await api.createBoqItem(boq.id, {
         ...newItem,
-        price_item_id: newItem.price_item_id || null,
+        // Les deux champs partent ENSEMBLE, l'un à `null`. L'API refuse leur
+        // cumul ; les envoyer explicitement évite que ce refus atteigne
+        // l'utilisateur pour une exclusivité qu'il croyait avoir respectée.
+        price_item_id: choixPrix.price_item_id,
+        composite_price_id: choixPrix.composite_price_id,
       })
       setNewItem({
         position: '',
@@ -148,8 +189,8 @@ export default function ProjectPage() {
         unit_code: 'm3',
         quantity: '0',
         kind: 'item',
-        price_item_id: '',
       })
+      setChoixPrix({ source: 'none', price_item_id: null, composite_price_id: null })
       setItems(await api.boqItems(boq.id))
     } catch (caught) {
       setError(caught)
@@ -199,6 +240,11 @@ export default function ProjectPage() {
       ) : (
         <>
           <div className="card" style={{ padding: 0 }}>
+            {versionsMelangees && (
+              <div className="notice warning" data-testid="versions-melangees">
+                {t('priceSource.mixedVersions')}
+              </div>
+            )}
             <table>
               <thead>
                 <tr>
@@ -232,12 +278,15 @@ export default function ProjectPage() {
                     <td>
                       {item.kind === 'section' ? (
                         ''
-                      ) : item.composite_price_id ? (
-                        <span className="badge">sous-détail</span>
-                      ) : item.price_item_id ? (
-                        <span className="badge">bibliothèque</span>
                       ) : (
-                        <span className="badge danger">{t('estimate.missingPrice')}</span>
+                        <PrixDuPoste
+                          item={item}
+                          prix={prix}
+                          composites={composites}
+                          versionId={versionPrix}
+                          modifiable={ecrireBordereau && !versionsMelangees}
+                          onChange={() => void load()}
+                        />
                       )}
                     </td>
                   </tr>
@@ -286,23 +335,13 @@ export default function ProjectPage() {
                     onChange={(event) => setNewItem({ ...newItem, quantity: event.target.value })}
                   />
                 </div>
-                <div className="field" style={{ flex: '2 1 240px' }}>
-                  <label htmlFor="price">Prix unitaire</label>
-                  <select
-                    id="price"
-                    value={newItem.price_item_id}
-                    onChange={(event) =>
-                      setNewItem({ ...newItem, price_item_id: event.target.value })
-                    }
-                  >
-                    <option value="">Sans prix — le gel sera refusé</option>
-                    {prix.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.code} — {p.label} ({p.unit_price} €/{p.unit_code})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <SourceDePrix
+                  identifiant="nouveau"
+                  choix={choixPrix}
+                  prix={prix}
+                  composites={composites}
+                  onChange={setChoixPrix}
+                />
                 <div className="field">
                   <label htmlFor="kind">Type</label>
                   <select
@@ -405,5 +444,114 @@ export default function ProjectPage() {
         </div>
       )}
     </Shell>
+  )
+}
+
+/**
+ * Le prix d'un poste : ce qu'il est, et comment en changer la SOURCE.
+ *
+ * L'écran n'affichait qu'un badge en lecture. Un poste dont le prix venait
+ * d'un sous-détail ne montrait ni son code, ni son coût, ni combien de
+ * composants le composaient — et surtout, rien ne permettait de lui en
+ * affecter un. Les deux sources sont maintenant offertes, exclusives, et le
+ * sous-détail affiche son coût prévisualisé PAR LE SERVEUR.
+ */
+function PrixDuPoste({
+  item,
+  prix,
+  composites,
+  versionId,
+  modifiable,
+  onChange,
+}: {
+  item: BoqItem
+  prix: PriceItem[]
+  composites: CompositePrice[]
+  versionId: string
+  modifiable: boolean
+  onChange: () => void
+}) {
+  const [edite, setEdite] = useState(false)
+  const [choix, setChoix] = useState<Choix>(() => sourceDe(item))
+  const [erreur, setErreur] = useState<unknown>(null)
+  const [occupe, setOccupe] = useState(false)
+  const composite = composites.find((c) => c.id === item.composite_price_id)
+  const article = prix.find((p) => p.id === item.price_item_id)
+
+  async function enregistrer() {
+    setOccupe(true)
+    setErreur(null)
+    try {
+      // Les DEUX champs partent, l'un à `null` : basculer de source efface
+      // l'autre côté dans le même geste, sinon le poste garderait un
+      // identifiant devenu invisible à l'écran.
+      await api.updateBoqItem(item.id, {
+        price_item_id: choix.price_item_id,
+        composite_price_id: choix.composite_price_id,
+      })
+      setEdite(false)
+      onChange()
+    } catch (attrape) {
+      setErreur(attrape)
+    } finally {
+      setOccupe(false)
+    }
+  }
+
+  if (edite) {
+    return (
+      <div data-testid={`source-poste-${item.position}`}>
+        <ErrorNotice error={erreur} />
+        <SourceDePrix
+          identifiant={item.id}
+          choix={choix}
+          prix={prix}
+          composites={composites}
+          onChange={setChoix}
+        />
+        <p>
+          <button className="primary" onClick={() => void enregistrer()} disabled={occupe}>
+            {t('common.save')}
+          </button>{' '}
+          <button onClick={() => setEdite(false)}>{t('common.cancel')}</button>
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div data-testid={`prix-poste-${item.position}`}>
+      {composite ? (
+        <ResumeDuSousDetail composite={composite} versionId={versionId} />
+      ) : item.composite_price_id ? (
+        // Référencé mais introuvable dans la version chargée : le dire plutôt
+        // que d'afficher un blanc que l'on prendrait pour « sans prix ».
+        <span className="badge danger">{t('priceSource.otherVersion')}</span>
+      ) : article ? (
+        <span>
+          <span className="badge">{t('priceSource.library')}</span>{' '}
+          <span className="mono">{article.code}</span> — {article.label}{' '}
+          <span className="mono">
+            {article.unit_price} {article.currency}/{article.unit_code}
+          </span>
+        </span>
+      ) : item.price_item_id ? (
+        // Le catalogue chargé est borné : un prix au-delà de cette borne
+        // existe sans figurer ici. Le badge seul vaut mieux qu'un blanc.
+        <span className="badge">{t('priceSource.library')}</span>
+      ) : (
+        <span className="badge danger">{t('estimate.missingPrice')}</span>
+      )}{' '}
+      {modifiable && (
+        <button
+          onClick={() => {
+            setChoix(sourceDe(item))
+            setEdite(true)
+          }}
+        >
+          {t('priceSource.change')}
+        </button>
+      )}
+    </div>
   )
 }

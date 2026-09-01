@@ -13,14 +13,16 @@ from typing import Any
 
 from metreo_domain import bounds
 from metreo_domain.errors import DomainError, PricingConfigurationError, UnknownUnitError
-from metreo_domain.money import Money, canonical_text, to_decimal
+from metreo_domain.money import Money, RoundingPolicy, canonical_text, to_decimal
 from metreo_domain.pricing import (
     Component,
     ConsumptionComponent,
     LumpSumComponent,
+    MarkupPolicy,
     OutputRateComponent,
     ResourceKind,
     RotationComponent,
+    compute_line_price,
 )
 from metreo_domain.units import Density, Quantity, get_unit
 
@@ -218,3 +220,76 @@ def components_from_specs(specs: list[dict[str, Any]], currency: str) -> tuple[C
             "Un sous-détail sans composant ne calcule rien : il n'a pas de sens."
         )
     return tuple(component_from_spec(spec, currency) for spec in specs)
+
+
+# --------------------------------------------------------------------------
+# Prévisualisation : le MOTEUR calcule, personne ne recopie son arithmétique
+# --------------------------------------------------------------------------
+
+
+def apercu(
+    specs: list[dict[str, Any]],
+    *,
+    unit_code: str,
+    currency: str,
+    arrondi: RoundingPolicy | None = None,
+) -> dict[str, Any]:
+    """Le déboursé sec d'UNE unité du sous-détail, et sa ventilation.
+
+    **Le déboursé sec, et pas un prix de vente.** `MarkupPolicy()` par défaut
+    est neutre : frais de chantier, frais généraux, aléas et marge à zéro. Un
+    sous-détail décrit ce que la ressource coûte ; lui appliquer la politique
+    commerciale de l'entreprise mêlerait deux choses qui se décident
+    séparément, et le chiffre affiché dans la bibliothèque ne serait plus
+    celui que le devis reprend.
+
+    **Aucun calcul n'est refait ailleurs.** Cette fonction appelle
+    `compute_line_price`, le même point d'entrée que l'estimation. C'est
+    l'unique raison d'être de cette prévisualisation côté serveur : l'écran ne
+    doit pas réimplémenter l'arithmétique en TypeScript, sous peine de deux
+    vérités qui divergent au premier arrondi.
+    """
+    arrondi = arrondi or RoundingPolicy()
+    # Un composant à rotations ARRONDIES ne se met pas à l'échelle
+    # linéairement : une unité demande un camion entier, cent unités n'en
+    # demandent que dix. Le coût rendu ici est donc exact POUR UNE UNITÉ, et
+    # trompeur si on le multiplie. Mesuré au parcours navigateur : un aperçu à
+    # 77,50 /m³ donnait 41,50 /m³ sur un poste de 100 m³ — l'écart n'était nulle
+    # part signalé. Il l'est maintenant, et l'écran le dit.
+    proportionnel = not any(
+        spec.get("component_type") == "rotation" and spec.get("round_up", True) for spec in specs
+    )
+    composants = components_from_specs(specs, currency)
+    resultat = compute_line_price(
+        quantity=Quantity.of(1, unit_code),
+        components=composants,
+        currency=currency,
+        markup=MarkupPolicy(),
+    )
+    par_nature = resultat.cost_by_kind()
+    return {
+        "unit_code": unit_code,
+        "currency": currency,
+        "scales_linearly": proportionnel,
+        # Les deux formes, comme partout ailleurs dans ce dépôt : le décimal
+        # EXACT pour qui recalcule, et la forme arrondie selon la politique de
+        # l'organisation pour qui lit. L'écran affiche la seconde et ne
+        # l'invente pas — un arrondi décidé en TypeScript diverge du devis au
+        # premier centime.
+        "unit_cost": canonical_text(resultat.direct_cost.amount),
+        "unit_cost_display": str(arrondi.quantize(resultat.direct_cost.amount)),
+        "by_kind": [
+            {
+                "resource_kind": nature,
+                "label": ResourceKind(nature).label_fr,
+                "amount": canonical_text(montant.amount),
+                "amount_display": str(arrondi.quantize(montant.amount)),
+            }
+            for nature, montant in sorted(par_nature.items())
+        ],
+        # `to_dict` du domaine plutôt qu'une projection maison : il porte déjà
+        # la quantité de ressource, le prix unitaire, la formule et la source
+        # de densité. En réécrire une partie ici ferait diverger l'aperçu de ce
+        # que l'écran d'estimation affiche pour la MÊME ligne.
+        "components": [composant.to_dict(arrondi) for composant in resultat.components],
+    }
