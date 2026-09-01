@@ -82,6 +82,10 @@ test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis
   await page.goto('/parametres')
   const profil = page.getByTestId('profil-entreprise')
   await expect(profil).toBeVisible()
+  // Le nom d'origine, LU et non deviné : il vaut « Entreprise neuve » ici et
+  // « Organisation de répétition » dans la répétition de préproduction. Il sera
+  // rendu à la fin — voir l'étape 11.
+  const nomInitial = await page.locator('#profil-name').inputValue()
   const insuffisant = page.getByTestId('profil-insuffisant')
   await expect(insuffisant).toBeVisible()
   // Le message NOMME les champs, il ne dit pas « profil incomplet ».
@@ -347,4 +351,31 @@ test('le profil de l’entreprise remonte jusqu’à l’en-tête du devis remis
     expect(htmlClient.includes(interne), `« ${interne} » ne doit pas figurer`).toBe(false)
   }
   await contexteClient.close()
+
+  // ---- 11. rendre son nom à l'organisation partagée
+  //
+  // Les scénarios de cette suite se suivent dans UNE organisation. Celui-ci est
+  // le seul à toucher son identité ; la laisser renommée imposerait aux
+  // suivants un nom qu'ils n'ont pas choisi — et la répétition de
+  // préproduction, qui rejoue cette suite puis vérifie après restauration que
+  // l'organisation a retrouvé son nom d'amorçage, échouait précisément là.
+  //
+  // L'adresse reste complète : les scénarios qui suivent doivent pouvoir
+  // émettre. Et rendre le nom ne défait rien de ce qui précède — c'est une
+  // dernière fois la démonstration du point : les deux devis émis gardent
+  // chacun l'identité qui était la sienne.
+  await page.goto('/parametres')
+  await remplirLeProfil(page, { name: nomInitial })
+  await expect(page.getByTestId('profil-suffisant')).toBeVisible()
+
+  await page.goto(urlVersion)
+  const [ultime] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('telecharger-le-devis').click(),
+  ])
+  const cheminUltime = await ultime.path()
+  const octetsUltimes = cheminUltime ? await readFile(cheminUltime) : Buffer.alloc(0)
+  expect(empreinte(octetsUltimes), 'le premier devis a changé au dernier geste').toBe(
+    empreintePremier,
+  )
 })
