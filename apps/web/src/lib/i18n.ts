@@ -160,7 +160,8 @@ const fr: Dictionary = {
     + 'proposée par défaut.',
   'composites.hint':
     'La décomposition d\u2019un prix : ressources, rendements, rotations et forfaits. '
-    + 'Créés par l\u2019API ; cet écran les rend lisibles, il ne les modifie pas.',
+    + 'Le coût unitaire est calculé par le serveur, jamais dans le navigateur : '
+    + 'deux arithmétiques divergeraient au premier arrondi.',
   'composites.empty': 'Aucun sous-détail dans cette version.',
   'composites.noComponent': 'Ce sous-détail ne porte aucun composant.',
   'composites.code': 'Code',

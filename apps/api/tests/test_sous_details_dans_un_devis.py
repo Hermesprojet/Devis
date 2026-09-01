@@ -328,3 +328,125 @@ def test_un_lecteur_n_atteint_meme_pas_la_liste_des_sous_details(
     assert liste.status_code == 403, liste.text
     assert liste.json()["detail"]["required_permission"] == "pricebook:read"
     assert "60.00" not in liste.text
+
+
+# --------------------------------------------------------------------------
+# 6. Un poste tire son prix d'UNE source, jamais de deux
+# --------------------------------------------------------------------------
+#
+# L'écran offre désormais un choix explicite — aucun prix, prix de bibliothèque,
+# sous-détail — et remet l'autre identifiant à `null` dans le même geste. Ce que
+# l'écran promet, l'API doit le tenir seule : ces trois tests éprouvent la règle
+# côté serveur, là où elle vaut aussi pour un appel qui ne passe pas par
+# l'interface.
+
+
+def _un_prix_de_bibliotheque(
+    client: TestClient, entetes: dict[str, str], version_id: str
+) -> dict[str, Any]:
+    cree = client.post(
+        f"/api/v1/price-books/versions/{version_id}/items",
+        headers=entetes,
+        json={
+            "code": "PU-POSE",
+            "label": "Pose au mètre cube",
+            "unit_code": "m3",
+            "unit_price": "42.00",
+            "resource_kind": "labor",
+        },
+    )
+    assert cree.status_code == 201, cree.text
+    return dict(cree.json())
+
+
+def test_creer_un_poste_avec_les_deux_sources_est_refuse(
+    seeded_client: TestClient, admin: dict[str, str], chantier: dict[str, Any]
+) -> None:
+    """Porter les deux ne veut rien dire : le moteur devrait choisir au hasard."""
+    prix = _un_prix_de_bibliotheque(seeded_client, admin, chantier["price_book_version"])
+    refus = seeded_client.post(
+        f"/api/v1/boqs/{chantier['boq']}/items",
+        headers=admin,
+        json={
+            "position": "2",
+            "designation": "Poste à deux sources",
+            "unit_code": "m3",
+            "quantity": "10",
+            "kind": "item",
+            "price_item_id": prix["id"],
+            "composite_price_id": chantier["composite"],
+        },
+    )
+    assert refus.status_code == 422, refus.text
+    assert refus.json()["detail"]["code"] == "conflicting_price_sources"
+
+
+def test_poser_un_sous_detail_sur_un_poste_deja_tarife_est_refuse(
+    seeded_client: TestClient, admin: dict[str, str], chantier: dict[str, Any]
+) -> None:
+    """La règle porte sur l'état FINAL, pas sur les champs cités.
+
+    Le poste porte déjà un prix de bibliothèque ; la requête ne mentionne que
+    le sous-détail. Ne regarder que la requête laisserait passer exactement la
+    situation interdite — c'est ce que l'écran évite en effaçant l'autre côté,
+    et ce que l'API doit refuser pour qui ne passe pas par l'écran.
+    """
+    prix = _un_prix_de_bibliotheque(seeded_client, admin, chantier["price_book_version"])
+    poste = seeded_client.post(
+        f"/api/v1/boqs/{chantier['boq']}/items",
+        headers=admin,
+        json={
+            "position": "3",
+            "designation": "Poste tarifé",
+            "unit_code": "m3",
+            "quantity": "10",
+            "kind": "item",
+            "price_item_id": prix["id"],
+        },
+    )
+    assert poste.status_code == 201, poste.text
+
+    refus = seeded_client.patch(
+        f"/api/v1/boq-items/{poste.json()['id']}",
+        headers=admin,
+        json={"composite_price_id": chantier["composite"]},
+    )
+    assert refus.status_code == 422, refus.text
+    assert refus.json()["detail"]["code"] == "conflicting_price_sources"
+
+
+def test_changer_de_source_en_effacant_l_autre_est_accepte(
+    seeded_client: TestClient, admin: dict[str, str], chantier: dict[str, Any]
+) -> None:
+    """Le geste exact de l'écran : les deux champs partent ensemble.
+
+    Et le devis suit : 10 m3 × 6,00 de déboursé = 60,00, là où le prix de
+    bibliothèque n'en produisait aucun (un prix de vente n'est pas un
+    déboursé).
+    """
+    prix = _un_prix_de_bibliotheque(seeded_client, admin, chantier["price_book_version"])
+    poste = seeded_client.post(
+        f"/api/v1/boqs/{chantier['boq']}/items",
+        headers=admin,
+        json={
+            "position": "4",
+            "designation": "Poste qui change de source",
+            "unit_code": "m3",
+            "quantity": "10",
+            "kind": "item",
+            "price_item_id": prix["id"],
+        },
+    ).json()
+
+    bascule = seeded_client.patch(
+        f"/api/v1/boq-items/{poste['id']}",
+        headers=admin,
+        json={"price_item_id": None, "composite_price_id": chantier["composite"]},
+    )
+    assert bascule.status_code == 200, bascule.text
+    assert bascule.json()["price_item_id"] is None
+    assert bascule.json()["composite_price_id"] == chantier["composite"]
+
+    # Le poste initial (100 m3) et celui-ci (10 m3) partagent le sous-détail :
+    # 110 × 6,00 = 660,00.
+    assert _debourse(_calcul(seeded_client, admin, chantier["estimate"])) == Decimal("660.00")

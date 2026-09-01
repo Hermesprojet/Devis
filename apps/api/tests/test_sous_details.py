@@ -338,6 +338,73 @@ def test_un_champ_obligatoire_manquant_nomme_le_composant_fautif(
     assert any(1 in loc and "payload_value" in loc for loc in localisations), detail
 
 
+def test_une_distance_sans_tarif_au_km_est_refusee_avec_le_champ_manquant(
+    seeded_client: TestClient, admin: dict[str, str], version: str
+) -> None:
+    """`distance_km` et `rate_per_km` vont par paire, et le refus le nomme.
+
+    Une distance seule ne coûte rien, un tarif seul ne s'applique à rien. La
+    règle est tenue à deux endroits : le moteur la porte comme invariant, et le
+    schéma la refuse avant même le calcul. Ce test-ci éprouve le chemin que
+    l'écran emprunte — la route de prévisualisation — et vérifie que le refus
+    nomme le champ absent ET l'index du composant, ce dont le constructeur a
+    besoin pour surligner la bonne case plutôt que de rougir en bloc.
+    """
+    refus = seeded_client.post(
+        f"/api/v1/price-books/versions/{version}/composites/preview",
+        headers=admin,
+        json={
+            "unit_code": "t",
+            "components": [
+                {
+                    "component_type": "rotation",
+                    "label": "Camion qui roule sans tarif",
+                    "resource_kind": "transport",
+                    "payload_value": "10",
+                    "payload_unit_code": "t",
+                    "cost_per_rotation": "40.00",
+                    "distance_km": "20",
+                }
+            ],
+        },
+    )
+    assert refus.status_code == 422, refus.text
+    # Le refus vient du schéma, pas du moteur : l'union discriminée valide la
+    # PAIRE avant que le composant n'atteigne le calcul. Le détail a donc la
+    # forme d'une liste pydantic, et il porte l'index du composant.
+    detail = refus.json()["detail"]
+    assert any("rate_per_km" in str(entree.get("msg", "")) for entree in detail), detail
+    localisations = [e["loc"] for e in detail if isinstance(e.get("loc"), list)]
+    assert any(0 in loc for loc in localisations), detail
+
+
+def test_un_tarif_au_km_sans_distance_est_refuse_de_meme(
+    seeded_client: TestClient, admin: dict[str, str], version: str
+) -> None:
+    """L'autre moitié de la paire, refusée symétriquement."""
+    refus = seeded_client.post(
+        f"/api/v1/price-books/versions/{version}/composites/preview",
+        headers=admin,
+        json={
+            "unit_code": "t",
+            "components": [
+                {
+                    "component_type": "rotation",
+                    "label": "Camion tarifé qui ne va nulle part",
+                    "resource_kind": "transport",
+                    "payload_value": "10",
+                    "payload_unit_code": "t",
+                    "cost_per_rotation": "40.00",
+                    "rate_per_km": "1.00",
+                }
+            ],
+        },
+    )
+    assert refus.status_code == 422, refus.text
+    detail = refus.json()["detail"]
+    assert any("distance_km" in str(entree.get("msg", "")) for entree in detail), detail
+
+
 def test_au_dela_du_plafond_de_composants_l_api_refuse(
     seeded_client: TestClient, admin: dict[str, str], version: str
 ) -> None:
