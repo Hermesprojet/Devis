@@ -40,6 +40,7 @@ from ..schemas import (
 )
 from ..services import cycle_devis, partage
 from ..services.document_storage import ContenuRefuse, StockageLocal
+from ..services.quote_pdf import lignes_d_adresse_emetteur
 from ..transactions import RouteTransactionnelle
 
 router = APIRouter(prefix="/public", tags=["devis-public"], route_class=RouteTransactionnelle)
@@ -197,6 +198,13 @@ def read_public_quote(
         organization_name=str(organisation.get("name", "")),
         organization_legal_name=organisation.get("legal_name"),
         organization_company_number=organisation.get("company_number"),
+        # La MÊME construction que le PDF : le client lit à l'écran l'adresse
+        # qu'il lira sur le papier.
+        organization_address_lines=lignes_d_adresse_emetteur(organisation),
+        organization_email=organisation.get("email"),
+        organization_phone=organisation.get("phone"),
+        organization_website=organisation.get("website"),
+        has_logo=bool((organisation.get("logo") or {}).get("storage_key")),
         client_name=str((devis.client_snapshot or {}).get("name", "")),
         client_address_lines=_adresse(devis.client_snapshot or {}),
         project_reference=str((devis.project_snapshot or {}).get("reference", "")),
@@ -289,6 +297,63 @@ def download_public_pdf(
             "Content-Disposition": f'attachment; filename="{nom}.pdf"',
             "Content-Length": str(len(octets)),
             "X-Quote-Sha256": devis.pdf_sha256,
+        },
+    )
+    _durcir(reponse)
+    return reponse
+
+
+@router.get(
+    "/quote/logo",
+    summary="Le logo de l'émetteur, tel qu'il était à l'émission",
+    response_class=Response,
+)
+def download_public_logo(
+    request: Request,
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """La COPIE figée par ce devis, jamais le logo vivant de l'entreprise.
+
+    C'est toute la raison pour laquelle l'émission recopie les octets du logo
+    dans le dossier du devis. Servir le logo courant serait plus simple d'un
+    fichier — et ferait changer, chez un client, l'en-tête d'un devis reçu l'an
+    dernier le jour où l'entreprise change de charte. Le PDF, lui, porte
+    l'image dans ses propres octets ; la page publique doit tenir la même
+    promesse.
+
+    Aucun identifiant ne vient de la requête : la clé de stockage est celle que
+    l'instantané de CE devis porte, et le devis est celui que le lien ouvre.
+    """
+    _lien, devis = _ouvert(session, request)
+    logo = (devis.organization_snapshot or {}).get("logo") or {}
+    cle = logo.get("storage_key")
+    if not cle:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "no_logo", "message": "Ce devis ne porte pas de logo."},
+            headers=dict(ENTETES),
+        )
+    stockage = StockageLocal(settings.storage_root)
+    try:
+        octets = stockage.chemin(str(cle)).read_bytes()
+    except (OSError, ContenuRefuse) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={
+                "code": "logo_missing",
+                "message": "Le logo de ce devis n'est plus disponible.",
+            },
+            headers=dict(ENTETES),
+        ) from exc
+
+    reponse = Response(
+        content=octets,
+        media_type=str(logo.get("media_type") or "image/png"),
+        headers={
+            "Content-Disposition": "inline",
+            "Content-Length": str(len(octets)),
+            "X-Content-Type-Options": "nosniff",
         },
     )
     _durcir(reponse)

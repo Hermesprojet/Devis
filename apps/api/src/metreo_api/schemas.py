@@ -705,6 +705,16 @@ class PublicQuoteView(ApiModel):
     organization_name: str
     organization_legal_name: str | None
     organization_company_number: str | None
+    #: L'adresse et les coordonnées de l'ÉMETTEUR, telles qu'elles étaient à
+    #: l'émission. Le client doit pouvoir répondre à l'entreprise sans ouvrir
+    #: le PDF, et ce qu'il lit ici est ce que le PDF imprime.
+    organization_address_lines: list[str] = Field(default_factory=list)
+    organization_email: str | None = None
+    organization_phone: str | None = None
+    organization_website: str | None = None
+    #: Vrai quand ce devis a figé un logo. La page le demande alors à la route
+    #: publique dédiée ; elle ne reçoit jamais de chemin de stockage.
+    has_logo: bool = False
     client_name: str
     client_address_lines: list[str]
     project_reference: str

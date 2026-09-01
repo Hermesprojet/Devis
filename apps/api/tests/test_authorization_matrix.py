@@ -78,6 +78,10 @@ PUBLIC: frozenset[str] = frozenset(
         "POST /api/v1/public/quote-sessions",
         "GET /api/v1/public/quote",
         "GET /api/v1/public/quote/document.pdf",
+        # Le logo FIGÉ par ce devis. Public au même titre que le PDF qui le
+        # porte déjà dans ses octets : le lien signé est ce qui autorise, et
+        # aucun identifiant d'organisation n'entre dans le chemin.
+        "GET /api/v1/public/quote/logo",
         "POST /api/v1/public/quote/response",
     }
 )

@@ -219,6 +219,22 @@ def _image_du_logo(logo: bytes | None) -> moteur.ImagePdf | None:
     )
 
 
+def lignes_d_adresse_emetteur(organisation: dict[str, Any]) -> list[str]:
+    """L'adresse postale de l'émetteur, dans l'ordre où on l'écrit.
+
+    Publique, et c'est le sujet : la page publique du devis affiche la même
+    adresse que le PDF imprime. Deux constructions séparées divergeraient au
+    premier champ ajouté, et le client lirait une adresse à l'écran et une
+    autre sur le papier — pour le même devis.
+    """
+    postal = _adresse(organisation, "address")
+    complement = (organisation.get("address_complement") or "").strip()
+    if not postal:
+        return [complement] if complement else []
+    # Le complément suit la rue et précède la localité : c'est l'ordre postal.
+    return [postal[0], *([complement] if complement else []), *postal[1:]]
+
+
 def _lignes_d_identite(organisation: dict[str, Any]) -> list[str]:
     """L'émetteur sous le nom : raison sociale, numéro, adresse, contacts.
 
@@ -235,18 +251,7 @@ def _lignes_d_identite(organisation: dict[str, Any]) -> list[str]:
         lignes.append(str(organisation["legal_name"]))
     if organisation.get("company_number"):
         lignes.append(f"N° d'entreprise : {organisation['company_number']}")
-    # L'ordre postal : la rue, son complément, puis la localité et le pays.
-    # `_adresse` rend déjà [rue, « CP Ville », PAYS] ; le complément se glisse
-    # entre la première et les suivantes.
-    postal = _adresse(organisation, "address")
-    complement = (organisation.get("address_complement") or "").strip()
-    if postal:
-        lignes.append(postal[0])
-        if complement:
-            lignes.append(complement)
-        lignes.extend(postal[1:])
-    elif complement:
-        lignes.append(complement)
+    lignes.extend(lignes_d_adresse_emetteur(organisation))
     contacts = " — ".join(
         part
         for part in (
