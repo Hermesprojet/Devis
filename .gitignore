@@ -53,3 +53,9 @@ apps/web/blob-report/
 # Fichier d'environnement de la répétition : fabriqué à partir de l'exemple,
 # jamais versionné, comme infra/staging.env.
 infra/repetition.env
+
+# Les classeurs de fixtures sont FABRIQUÉS, pas commités :
+#   python3 scripts/fabriquer_classeurs_de_test.py
+# Un .xlsx est une archive binaire ; commité, il devient un bloc opaque que
+# personne ne relit et que rien ne protège d'une dérive silencieuse.
+fixtures/imports/*.xlsx

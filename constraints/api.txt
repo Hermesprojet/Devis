@@ -17,6 +17,7 @@ click==8.5.0
 cryptography==50.0.1
 dnspython==2.8.0
 email-validator==2.3.0
+et_xmlfile==2.0.0
 fastapi==0.141.1
 greenlet==3.5.5
 h11==0.16.0
@@ -26,8 +27,9 @@ httpx==0.28.1
 idna==3.19
 Mako==1.4.1
 MarkupSafe==3.0.3
-psycopg==3.3.4
-psycopg-binary==3.3.4
+openpyxl==3.1.5
+psycopg==3.3.5
+psycopg-binary==3.3.5
 pycparser==3.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
