@@ -125,7 +125,9 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   await page.getByLabel('Désignation').fill(POSTE.designation)
   await page.getByLabel('Unité').fill(BAREME.unite)
   await page.getByLabel('Quantité').fill(POSTE.quantite)
-  await page.locator('#source-nouveau').selectOption('price_item')
+  // « library » : le prix vient de la bibliothèque, par opposition à un
+  // sous-détail ou à l'absence de prix. C'est la valeur que l'écran emploie.
+  await page.locator('#source-nouveau').selectOption('library')
   // L'option porte le code ET le libellé : on la retrouve par son texte plutôt
   // que par un index, qui dépendrait de l'ordre des prix déjà en bibliothèque.
   const option = page.locator('#prix-nouveau option', { hasText: BAREME.code }).first()
