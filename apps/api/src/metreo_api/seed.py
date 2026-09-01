@@ -272,15 +272,35 @@ def _create_organization(
     region_code: str,
     locale: str,
     margin_rate: str,
+    address: str,
+    postal_code: str,
+    city: str,
+    email: str,
+    phone: str,
+    website: str,
 ) -> Organization:
+    """Une organisation de démonstration, profil ENTIÈREMENT rempli.
+
+    L'adresse et les coordonnées ne sont pas décoratives : sans elles,
+    l'émission d'un devis est refusée, et la démonstration s'arrêterait au
+    geste qu'elle existe pour montrer. Toutes ces valeurs sont fictives — rues
+    inventées, numéros de la plage réservée aux exemples — comme le reste du
+    jeu.
+    """
     organization = Organization(
         name=name,
         legal_name=legal_name,
         company_number=company_number,
+        address=address,
+        postal_code=postal_code,
+        city=city,
         country_code="BE",
         region_code=region_code,
         locale=locale,
         currency="EUR",
+        email=email,
+        phone=phone,
+        website=website,
     )
     session.add(organization)
     session.flush()
@@ -865,6 +885,12 @@ def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
         region_code="BE-WAL",
         locale="fr-BE",
         margin_rate="0.08",
+        address="Rue Fictive du Chantier 12",
+        postal_code="5000",
+        city="Namur",
+        email="contact@dubois.demo",
+        phone="+32 81 00 00 00",
+        website="https://dubois.demo",
     )
     org_b = _create_organization(
         session,
@@ -874,6 +900,12 @@ def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
         region_code="BE-VLG",
         locale="nl-BE",
         margin_rate="0.11",
+        address="Verzonnen Werfstraat 34",
+        postal_code="9000",
+        city="Gent",
+        email="contact@janssens.demo",
+        phone="+32 9 000 00 00",
+        website="https://janssens.demo",
     )
 
     admin_a = _add_user(

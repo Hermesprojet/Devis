@@ -17,6 +17,7 @@ from datetime import date, datetime
 from typing import Any
 
 from . import pdf as moteur
+from .images import ImageRefusee, lire_png
 
 GRIS_ENTETE = 0.88
 GRIS_TOTAL = 0.94
@@ -40,6 +41,34 @@ COLONNES_INTERNES = (
 INTERLIGNE = 13.0
 TAILLE_LIGNE = 8.5
 TAILLE_CONDITIONS = 8.5
+
+#: La boîte réservée au logo, en points. Le logo s'y inscrit en gardant ses
+#: proportions : un logo horizontal touche les bords gauche et droit, un logo
+#: carré touche le haut et le bas. Il ne DÉBORDE jamais — c'est la boîte, et
+#: non l'image, qui décide de la place prise, et c'est ce qui garantit que
+#: l'identité posée à côté reste lisible quelle que soit la forme du fichier.
+LOGO_LARGEUR_MAXIMALE = 108.0
+LOGO_HAUTEUR_MAXIMALE = 46.0
+#: L'espace entre le logo et le texte d'identité.
+LOGO_ECART = 14.0
+#: Le nom sous lequel le logo est déclaré dans les ressources du document.
+LOGO_NOM = "Im1"
+
+
+def _boite_du_logo(largeur_px: int, hauteur_px: int) -> tuple[float, float]:
+    """Les dimensions imprimées d'un logo, proportions gardées.
+
+    On inscrit dans la boîte plutôt qu'on ne remplit : déformer le logo d'une
+    entreprise pour qu'il tienne exactement dans un rectangle est la seule
+    chose qu'un document commercial ne doit jamais faire.
+    """
+    if largeur_px <= 0 or hauteur_px <= 0:
+        return (0.0, 0.0)
+    facteur = min(
+        LOGO_LARGEUR_MAXIMALE / largeur_px,
+        LOGO_HAUTEUR_MAXIMALE / hauteur_px,
+    )
+    return (largeur_px * facteur, hauteur_px * facteur)
 
 
 def _date_fr(valeur: date | datetime | str) -> str:
@@ -85,8 +114,16 @@ def composer_le_devis(
     document: dict[str, Any],
     terms: str | None,
     include_internal_costs: bool,
+    logo: bytes | None = None,
 ) -> bytes:
-    """Rend les octets du PDF. Deux appels identiques rendent les mêmes octets."""
+    """Rend les octets du PDF. Deux appels identiques rendent les mêmes octets.
+
+    `logo` porte les OCTETS du logo tel qu'il était à l'émission, jamais une
+    clé de stockage : ce module ne lit aucun fichier et ne connaît aucun
+    chemin. Un logo illisible ne fait pas échouer l'émission — le devis part
+    sans lui, avec une identité qui reste complète.
+    """
+    image = _image_du_logo(logo)
     colonnes = list(COLONNES) + (list(COLONNES_INTERNES) if include_internal_costs else [])
     largeur_utile = moteur.A4[0] - 2 * moteur.MARGE
     total_colonnes = sum(largeur for _, largeur, _ in colonnes)
@@ -99,7 +136,11 @@ def composer_le_devis(
 
     # Combien de lignes tiennent après l'en-tête complet, puis sur une page
     # suivante qui n'a que le cartouche.
-    hauteur_premiere = moteur.A4[1] - 330.0 - 180.0
+    # 380 et non 330 : l'identité de l'émetteur porte maintenant son adresse et
+    # ses coordonnées, soit quatre lignes de plus, et le bloc DESTINATAIRE
+    # descend d'autant. Réserver trop peu ferait dessiner les dernières lignes
+    # du tableau sous la marge — invisibles, sans que rien ne le signale.
+    hauteur_premiere = moteur.A4[1] - 380.0 - 180.0
     hauteur_suivante = moteur.A4[1] - 110.0 - 180.0
     par_page_premiere = max(1, int(hauteur_premiere / INTERLIGNE))
     par_page_suivante = max(1, int(hauteur_suivante / INTERLIGNE))
@@ -116,7 +157,9 @@ def composer_le_devis(
     for index, tranche in enumerate(tranches):
         page = moteur.Page()
         if index == 0:
-            y = _entete_complet(page, numero, emis_le, valid_until, organisation, client, projet)
+            y = _entete_complet(
+                page, numero, emis_le, valid_until, organisation, client, projet, image
+            )
         else:
             y = _entete_court(page, numero, organisation)
         y = _tableau(page, y, colonnes, tranche, index == 0)
@@ -147,7 +190,76 @@ def composer_le_devis(
         titre=f"Devis {numero}",
         auteur=str(organisation.get("legal_name") or organisation.get("name") or "Metreo"),
         date_pdf=emis_le.strftime("D:%Y%m%d%H%M%S"),
+        images=[image] if image is not None else [],
     )
+
+
+def _image_du_logo(logo: bytes | None) -> moteur.ImagePdf | None:
+    """Le logo décodé, ou `None` — jamais une exception.
+
+    Un logo devenu illisible entre son dépôt et l'émission — fichier tronqué
+    par une panne de volume, format qu'une version ultérieure refuserait — ne
+    doit pas empêcher un devis de partir. L'entreprise garde son identité
+    écrite ; elle perd une image. Refuser d'émettre pour cela transformerait un
+    incident cosmétique en blocage commercial.
+    """
+    if not logo:
+        return None
+    try:
+        decodee = lire_png(logo)
+    except ImageRefusee:
+        return None
+    return moteur.ImagePdf(
+        nom=LOGO_NOM,
+        largeur=decodee.largeur,
+        hauteur=decodee.hauteur,
+        espace=decodee.espace,
+        couleur=decodee.couleur,
+        alpha=decodee.alpha,
+    )
+
+
+def _lignes_d_identite(organisation: dict[str, Any]) -> list[str]:
+    """L'émetteur sous le nom : raison sociale, numéro, adresse, contacts.
+
+    Chaque ligne n'apparaît que si elle porte quelque chose. Un devis qui
+    imprimerait « Téléphone : » suivi d'un blanc dit au client que l'entreprise
+    n'a pas fini de se configurer, ce qui n'est pas ce qu'un devis doit dire.
+
+    Tout est lu dans l'INSTANTANÉ, avec `.get` : un devis émis avant que ces
+    champs n'existent n'en porte aucun, et se réimprime sans eux plutôt que de
+    lever une erreur au téléchargement.
+    """
+    lignes: list[str] = []
+    if organisation.get("legal_name"):
+        lignes.append(str(organisation["legal_name"]))
+    if organisation.get("company_number"):
+        lignes.append(f"N° d'entreprise : {organisation['company_number']}")
+    # L'ordre postal : la rue, son complément, puis la localité et le pays.
+    # `_adresse` rend déjà [rue, « CP Ville », PAYS] ; le complément se glisse
+    # entre la première et les suivantes.
+    postal = _adresse(organisation, "address")
+    complement = (organisation.get("address_complement") or "").strip()
+    if postal:
+        lignes.append(postal[0])
+        if complement:
+            lignes.append(complement)
+        lignes.extend(postal[1:])
+    elif complement:
+        lignes.append(complement)
+    contacts = " — ".join(
+        part
+        for part in (
+            (organisation.get("phone") or "").strip(),
+            (organisation.get("email") or "").strip(),
+        )
+        if part
+    )
+    if contacts:
+        lignes.append(contacts)
+    if organisation.get("website"):
+        lignes.append(str(organisation["website"]))
+    return lignes
 
 
 def _entete_complet(
@@ -158,37 +270,46 @@ def _entete_complet(
     organisation: dict[str, Any],
     client: dict[str, Any],
     projet: dict[str, Any],
+    image: moteur.ImagePdf | None = None,
 ) -> float:
     gauche = moteur.MARGE
     droite = moteur.A4[0] - moteur.MARGE
-    y = moteur.A4[1] - moteur.MARGE
+    haut = moteur.A4[1] - moteur.MARGE
     #: L'identité de l'entreprise partage sa bande avec le cartouche du devis,
     #: posé à `droite - 210`. Elle ne dispose donc pas de la pleine largeur —
     #: et une raison sociale d'intercommunale la dépasse largement.
-    largeur_identite = droite - 210 - gauche - 12
+    #: Le logo, quand il existe, lui en prend encore.
+    largeur_logo, hauteur_logo = (
+        _boite_du_logo(image.largeur, image.hauteur) if image is not None else (0.0, 0.0)
+    )
+    decalage = (largeur_logo + LOGO_ECART) if largeur_logo else 0.0
+    identite_x = gauche + decalage
+    largeur_identite = droite - 210 - identite_x - 12
     #: Les blocs DESTINATAIRE et CHANTIER, eux, passent SOUS le cartouche.
     largeur_pleine = droite - gauche
 
+    if image is not None and largeur_logo:
+        # Le coin SUPÉRIEUR du logo s'aligne sur celui du texte : un PDF place
+        # une image par son coin inférieur, d'où la soustraction.
+        page.image(LOGO_NOM, gauche, haut - hauteur_logo, largeur_logo, hauteur_logo)
+
     y = page.paragraphe(
-        gauche,
-        y - 14,
+        identite_x,
+        haut - 14,
         str(organisation.get("name") or ""),
         largeur=largeur_identite,
         police=moteur.HELVETICA_GRAS,
-        taille=16,
-        interligne=18,
+        # Un logo prend de la largeur : le nom passe à 13 points pour continuer
+        # à tenir en une ou deux lignes plutôt que quatre.
+        taille=13 if largeur_logo else 16,
+        interligne=15 if largeur_logo else 18,
     )
-    y -= 12
-    for ligne in (
-        organisation.get("legal_name") or "",
-        (
-            f"N° d'entreprise : {organisation['company_number']}"
-            if organisation.get("company_number")
-            else ""
-        ),
-    ):
-        if ligne:
-            y = page.paragraphe(gauche, y, str(ligne), largeur=largeur_identite, interligne=11)
+    y -= 10
+    for ligne in _lignes_d_identite(organisation):
+        y = page.paragraphe(identite_x, y, ligne, largeur=largeur_identite, interligne=11)
+    # Le bloc suivant ne doit pas remonter au-dessus du logo, même quand
+    # l'identité est plus courte que lui.
+    y = min(y, haut - hauteur_logo)
 
     haut_cartouche = moteur.A4[1] - moteur.MARGE - 6
     page.texte(droite - 210, haut_cartouche - 8, "DEVIS", police=moteur.HELVETICA_GRAS, taille=20)

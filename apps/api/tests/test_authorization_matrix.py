@@ -89,6 +89,12 @@ AUTH_ONLY: frozenset[str] = frozenset(
     {
         "GET /api/v1/auth/me",
         "GET /api/v1/organization",
+        # Le logo de SON entreprise. Aucune permission dédiée : toute personne
+        # qui voit l'écran voit l'en-tête que ses devis porteront, et le logo
+        # figure de toute façon sur chaque devis qu'elle peut déjà télécharger.
+        # Il n'y a pas d'identifiant dans le chemin : la seule organisation
+        # atteignable est celle de la session.
+        "GET /api/v1/organization/logo",
         "GET /api/v1/organization/settings",
         "GET /api/v1/organization/tax-rates",
     }
@@ -110,6 +116,12 @@ NO_TENANT_IDENTIFIER: frozenset[str] = frozenset(
         # proposé et rend le numéro qu'il produirait. Il n'y a donc aucun
         # identifiant d'un voisin à forger.
         "GET /api/v1/organization/quote-number-preview",
+        # Aucun identifiant de tenant dans le chemin : l'organisation visée
+        # est toujours celle de la session, jamais une désignée par l'appelant.
+        "GET /api/v1/organization/logo",
+        "PATCH /api/v1/organization",
+        "PUT /api/v1/organization/logo",
+        "DELETE /api/v1/organization/logo",
         "PATCH /api/v1/organization/settings",
         "POST /api/v1/organization/members",
         "POST /api/v1/organization/tax-rates",

@@ -57,7 +57,49 @@ class TimestampMixin:
 
 
 class Organization(TimestampMixin, Base):
+    """L'entreprise émettrice : son identité légale, son adresse, son logo.
+
+    Jusqu'ici elle n'avait qu'un nom, une raison sociale et un numéro
+    d'entreprise. Un devis remis à un client n'imprimait donc pas d'adresse —
+    ni où écrire, ni à qui téléphoner. C'est le manque que ces colonnes
+    ferment.
+
+    **Tout est nullable, et rien n'est fabriqué.** Une organisation créée avant
+    cette migration n'a pas d'adresse ; inventer « Belgique » ou reprendre celle
+    d'un chantier produirait une identité fausse sur un document commercial.
+    L'écran demande de compléter, et l'émission d'un NOUVEAU devis refuse tant
+    que le minimum manque — les devis déjà émis, eux, portent leur instantané et
+    ne bougent pas.
+    """
+
     __tablename__ = "organizations"
+    __table_args__ = (
+        # Le logo est un tout : sept colonnes qui n'ont de sens qu'ensemble.
+        # Une base qui accepterait une clé de stockage sans empreinte, ou des
+        # dimensions sans fichier, laisserait passer exactement l'état
+        # intermédiaire que la compensation applicative cherche à éviter — et
+        # c'est en cas d'échec de cette compensation que la garde sert.
+        CheckConstraint(
+            "(logo_storage_key IS NULL AND logo_sha256 IS NULL AND logo_byte_size IS NULL "
+            " AND logo_media_type IS NULL AND logo_width IS NULL AND logo_height IS NULL) "
+            "OR (logo_storage_key IS NOT NULL AND logo_sha256 IS NOT NULL "
+            " AND logo_byte_size IS NOT NULL AND logo_media_type IS NOT NULL "
+            " AND logo_width IS NOT NULL AND logo_height IS NOT NULL)",
+            name="ck_organization_logo_complet",
+        ),
+        CheckConstraint(
+            "logo_byte_size IS NULL OR logo_byte_size > 0",
+            name="ck_organization_logo_byte_size_positive",
+        ),
+        CheckConstraint(
+            "logo_sha256 IS NULL OR length(logo_sha256) = 64",
+            name="ck_organization_logo_sha256_length",
+        ),
+        CheckConstraint(
+            "(logo_width IS NULL OR logo_width > 0) AND (logo_height IS NULL OR logo_height > 0)",
+            name="ck_organization_logo_dimensions_positive",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -68,6 +110,37 @@ class Organization(TimestampMixin, Base):
     locale: Mapped[str] = mapped_column(String(10), nullable=False, default="fr-BE")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
     timezone: Mapped[str] = mapped_column(String(50), nullable=False, default="Europe/Brussels")
+
+    #: L'adresse du SIÈGE — celle qui s'imprime en tête du devis. Nommée comme
+    #: celle du chantier (`Project.address`) plutôt que comme celle du client
+    #: (`Client.billing_address`) : ce n'est pas une adresse de facturation,
+    #: c'est le domicile de l'entreprise.
+    address: Mapped[str | None] = mapped_column(String(255))
+    #: Boîte, étage, bâtiment, zoning. Une seconde ligne libre plutôt que quatre
+    #: champs devinés : la forme d'un complément n'est pas la même d'un pays à
+    #: l'autre, et la deviner mal empêcherait de l'écrire juste.
+    address_complement: Mapped[str | None] = mapped_column(String(255))
+    postal_code: Mapped[str | None] = mapped_column(String(20))
+    city: Mapped[str | None] = mapped_column(String(120))
+    #: L'e-mail et le téléphone de l'ENTREPRISE, pas d'un utilisateur : celui
+    #: qui répondra au client dans deux ans n'est pas forcément celui qui a
+    #: cliqué sur « émettre » aujourd'hui.
+    email: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(40))
+    website: Mapped[str | None] = mapped_column(String(255))
+
+    #: Le logo, décrit par ce que le SERVEUR a mesuré sur les octets reçus, et
+    #: jamais par ce que le navigateur annonçait. `logo_storage_key` ne sort
+    #: jamais de l'API : c'est un chemin interne, servi par une route qui
+    #: vérifie l'organisation.
+    logo_storage_key: Mapped[str | None] = mapped_column(String(512))
+    logo_sha256: Mapped[str | None] = mapped_column(String(64))
+    logo_byte_size: Mapped[int | None] = mapped_column(Integer)
+    logo_media_type: Mapped[str | None] = mapped_column(String(120))
+    logo_width: Mapped[int | None] = mapped_column(Integer)
+    logo_height: Mapped[int | None] = mapped_column(Integer)
+    logo_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     settings: Mapped[OrganizationSettings] = relationship(

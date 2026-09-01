@@ -278,6 +278,7 @@ class StockageLocal:
         identifiant: str,
         extension: str,
         contenu: bytes,
+        media_type: str | None = None,
     ) -> OriginalStocke:
         """Pose un artefact que l'APPLICATION a produit, et qu'elle connaît.
 
@@ -309,7 +310,11 @@ class StockageLocal:
             storage_key=str(definitif.relative_to(self._racine)),
             sha256=hashlib.sha256(contenu).hexdigest(),
             byte_size=len(contenu),
-            media_type="application/pdf" if extension == ".pdf" else "application/octet-stream",
+            # Le type est celui que l'appelant a ÉTABLI sur les octets, pas
+            # celui qu'il devine de l'extension. Le défaut historique reste
+            # pour les appels qui ne le précisent pas.
+            media_type=media_type
+            or ("application/pdf" if extension == ".pdf" else "application/octet-stream"),
             declared_media_type=None,
         )
 

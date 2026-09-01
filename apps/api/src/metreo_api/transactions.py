@@ -128,6 +128,11 @@ _classer(
     "POST /api/v1/estimates",
     "POST /api/v1/estimates/{estimate_id}/versions",
     "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/freeze",
+    # Le profil de l'entreprise : ce qui s'imprime en tête d'un devis. Audité
+    # parce qu'un changement d'adresse ou de raison sociale change l'identité
+    # de l'émetteur sur tous les devis À VENIR — ceux déjà émis portent leur
+    # instantané et ne bougent pas.
+    "PATCH /api/v1/organization",
     "POST /api/v1/organization/members",
     "PATCH /api/v1/organization/members/{membership_id}",
     "PATCH /api/v1/organization/settings",
@@ -181,6 +186,12 @@ _classer(
 # -- Écritures qui posent aussi des octets sur le volume ---------------------
 _classer(
     Famille.ECRITURE_ET_FICHIER,
+    # Le logo : des octets sur le volume ET une ligne en base, qui ne partagent
+    # aucune transaction. Le remplacement écrit le fichier neuf avant la
+    # validation — il faut le mesurer pour le décrire — et ne retire l'ancien
+    # qu'après elle.
+    "PUT /api/v1/organization/logo",
+    "DELETE /api/v1/organization/logo",
     "POST /api/v1/documents/{document_id}/revisions",
 )
 
@@ -225,8 +236,39 @@ def compenser_apres_annulation(session: Session) -> None:
             logger.warning("compensation_appliquee", extra={"compensation": quoi})
 
 
+def achever(session: Session, action: Callable[[], None], quoi: str) -> None:
+    """Enregistre le geste qui ACHÈVE un effet extérieur, une fois la base validée.
+
+    Le pendant de `compenser`, pour l'autre issue. `compenser` défait un effet
+    extérieur quand la base a refusé ; celui-ci termine un effet extérieur
+    quand la base a accepté.
+
+    Le cas qui l'a rendu nécessaire : remplacer le logo d'une entreprise. Les
+    octets neufs sont écrits avant la validation — il faut bien les mesurer
+    pour les décrire en base — mais l'ANCIEN fichier ne peut pas être retiré à
+    ce moment-là : si la transaction échouait ensuite, la ligne restaurée
+    désignerait un fichier détruit, et l'entreprise perdrait son logo pour une
+    écriture qui n'a jamais eu lieu.
+
+    L'action doit être IDEMPOTENTE, et son échec ne doit jamais faire échouer
+    une transaction déjà validée : le client a reçu son 2xx, la base est à
+    jour, et un fichier resté sur le volume est un déchet — pas une panne.
+    """
+    session.info.setdefault("achevements", []).append((quoi, action))
+
+
+def achever_apres_validation(session: Session) -> None:
+    """Joue les achèvements. Toujours APRÈS un `commit` réussi."""
+    for quoi, action in session.info.pop("achevements", []):
+        try:
+            action()
+        except Exception:  # un déchet sur le volume ne défait pas un commit réussi
+            logger.exception("achevement_impossible", extra={"achevement": quoi})
+
+
 def _oublier_compensations(session: Session) -> None:
     session.info.pop("compensations", None)
+    session.info.pop("achevements", None)
 
 
 # ---------------------------------------------------------------------------
@@ -316,9 +358,12 @@ class RouteTransactionnelle(APIRoute):
             if session is None or not famille.ecrit:
                 return reponse
             if reponse.status_code >= 400:
-                # La route a déjà décidé de refuser : rien à valider.
+                # La route a déjà décidé de refuser : rien à valider, et rien à
+                # achever non plus — un achèvement ne vaut que pour une base
+                # qui a dit oui.
                 await run_in_threadpool(session.rollback)
                 compenser_apres_annulation(session)
+                _oublier_compensations(session)
                 return reponse
             try:
                 await run_in_threadpool(session.commit)
@@ -327,6 +372,9 @@ class RouteTransactionnelle(APIRoute):
                 await run_in_threadpool(session.rollback)
                 compenser_apres_annulation(session)
                 raise
+            # La base a accepté : ce qui restait à faire sur le volume peut
+            # l'être, et seulement maintenant.
+            await run_in_threadpool(achever_apres_validation, session)
             _oublier_compensations(session)
             return reponse
 

@@ -6,20 +6,24 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from metreo_domain.errors import DomainError
 
+from ..config import Settings, get_settings
 from ..db import session_scope
 from ..models import EstimateVersion, Membership, OrganizationSettings, TaxRateRow, User
 from ..schemas import (
     CHAMPS_COMMERCIAUX_SENSIBLES,
+    LogoOut,
     MemberInvite,
     MemberOut,
     MemberUpdate,
     OrganizationOut,
+    OrganizationProfileUpdate,
     OrganizationSettingsOut,
     OrganizationSettingsUpdate,
     QuoteNumberPreviewOut,
@@ -29,16 +33,283 @@ from ..schemas import (
 )
 from ..security.auth import TenantContext, current_context, require
 from ..security.roles import Permission, Role
-from ..services import audit, numerotation
+from ..services import audit, images, numerotation, profil_entreprise
+from ..services.document_storage import StockageLocal
 from ..services.estimating import markup_from_settings
+from ..services.images import ImageRefusee
 from ..transactions import RouteTransactionnelle
 
 router = APIRouter(prefix="/organization", tags=["organization"], route_class=RouteTransactionnelle)
 
 
+def _profil(organization: Any) -> OrganizationOut:
+    """L'organisation telle que l'API la rend, logo et manques compris.
+
+    `missing_for_issue` est calculé ici plutôt que par l'écran : la règle qui
+    décide si un devis peut partir doit avoir UN seul endroit, et c'est
+    `profil_entreprise.emetteur_suffisant` — le même que l'émission consulte.
+    Deux listes, l'une à l'écran et l'autre au serveur, divergeraient au
+    premier champ ajouté, et l'écran promettrait une émission que le serveur
+    refuserait.
+    """
+    sortie = OrganizationOut.model_validate(organization)
+    sortie.logo = (
+        LogoOut(
+            sha256=organization.logo_sha256,
+            byte_size=organization.logo_byte_size,
+            media_type=organization.logo_media_type,
+            width=organization.logo_width,
+            height=organization.logo_height,
+            updated_at=organization.logo_updated_at,
+        )
+        if profil_entreprise.logo_present(organization)
+        else None
+    )
+    sortie.missing_for_issue = profil_entreprise.emetteur_suffisant(organization)
+    return sortie
+
+
 @router.get("", response_model=OrganizationOut, summary="Organisation courante")
 def get_organization(context: TenantContext = Depends(current_context)) -> OrganizationOut:
-    return OrganizationOut.model_validate(context.organization)
+    return _profil(context.organization)
+
+
+@router.patch(
+    "",
+    response_model=OrganizationOut,
+    summary="Modifier le profil de l'entreprise",
+)
+def update_organization_profile(
+    payload: OrganizationProfileUpdate,
+    context: TenantContext = Depends(require(Permission.ORG_MANAGE)),
+    session: Session = Depends(session_scope),
+) -> OrganizationOut:
+    """L'adresse, les coordonnées et l'identité qui s'impriment sur un devis.
+
+    Une chaîne vide EFFACE le champ facultatif qu'elle vise : retirer un site
+    web qu'on n'a plus doit se faire depuis l'écran, pas par la base. Le nom
+    fait exception — Pydantic lui impose une longueur minimale — parce qu'une
+    organisation sans nom ne s'imprime nulle part.
+
+    Ce que cette route ne fait PAS : toucher un devis déjà émis. Ils portent
+    leur instantané, et c'est tout le sujet de `issuance`.
+    """
+    organization = session.get(type(context.organization), context.organization_id)
+    assert organization is not None
+    changements = payload.model_dump(exclude_unset=True)
+    avant = {cle: getattr(organization, cle) for cle in changements}
+
+    for cle, valeur in changements.items():
+        # `None` et chaîne vide sont volontairement traités pareil : l'écran
+        # envoie l'un ou l'autre selon qu'il a vidé le champ ou ne l'a jamais
+        # rempli, et la différence ne veut rien dire pour une adresse.
+        propre = (valeur or "").strip() if isinstance(valeur, str) or valeur is None else valeur
+        setattr(organization, cle, propre or None)
+    # `country_code` n'est pas nullable : le vider le remettrait à NULL et la
+    # base refuserait. On garde donc la valeur d'avant plutôt que de laisser
+    # partir une erreur d'intégrité que personne ne saurait lire.
+    if not organization.country_code:
+        organization.country_code = avant.get("country_code") or "BE"
+    if not organization.name:
+        organization.name = avant.get("name") or organization.name
+    session.flush()
+
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="organization.profile.updated",
+        object_type="organization",
+        object_id=context.organization_id,
+        summary="Profil de l'entreprise modifié",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        payload={
+            "before": {
+                cle: str(valeur) if valeur is not None else None for cle, valeur in avant.items()
+            },
+            "after": {
+                cle: str(getattr(organization, cle))
+                if getattr(organization, cle) is not None
+                else None
+                for cle in changements
+            },
+        },
+    )
+    return _profil(organization)
+
+
+@router.put(
+    "/logo",
+    response_model=OrganizationOut,
+    summary="Charger ou remplacer le logo de l'entreprise",
+)
+async def upload_logo(
+    request: Request,
+    file: UploadFile = File(...),
+    context: TenantContext = Depends(require(Permission.ORG_MANAGE)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> OrganizationOut:
+    """Le logo qui s'imprimera en tête des devis.
+
+    Rien de ce que le navigateur annonce n'est cru : ni le nom du fichier, ni
+    son extension, ni son type MIME. Le contenu est décodé, et c'est lui qui
+    décide — un SVG renommé `.png`, un PDF, un exécutable ou un PNG entrelacé
+    sont refusés en le disant, avant qu'un seul octet n'atteigne le volume.
+
+    Le plafond est lu deux fois : l'en-tête `Content-Length` évite d'absorber
+    un fichier énorme pour le rejeter après, et la taille RÉELLE tranche —
+    l'en-tête est une allégation comme une autre.
+    """
+    annoncee = request.headers.get("content-length")
+    if annoncee and annoncee.isdigit() and int(annoncee) > images_plafond_enveloppe():
+        raise _refus_logo(
+            ImageRefusee(
+                "fichier_trop_volumineux",
+                f"Ce fichier dépasse le maximum de {images.OCTETS_MAXIMUM // (1024 * 1024)} Mio.",
+            )
+        )
+
+    # Lu en une fois, et borné : `verifier_un_logo` refuse au-delà du plafond,
+    # et l'en-tête ci-dessus a déjà écarté l'envoi manifestement démesuré.
+    contenu = await file.read(images.OCTETS_MAXIMUM + 1)
+    organization = session.get(type(context.organization), context.organization_id)
+    assert organization is not None
+    stockage = StockageLocal(settings.storage_root)
+    try:
+        image = profil_entreprise.poser_le_logo(
+            session, organization=organization, contenu=contenu, stockage=stockage
+        )
+    except ImageRefusee as refus:
+        raise _refus_logo(refus) from refus
+
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="organization.logo.updated",
+        object_type="organization",
+        object_id=context.organization_id,
+        summary="Logo de l'entreprise chargé",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        payload={
+            "sha256": organization.logo_sha256,
+            "byte_size": organization.logo_byte_size,
+            "width": image.largeur,
+            "height": image.hauteur,
+        },
+    )
+    return _profil(organization)
+
+
+@router.delete("/logo", response_model=OrganizationOut, summary="Retirer le logo")
+def delete_logo(
+    context: TenantContext = Depends(require(Permission.ORG_MANAGE)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> OrganizationOut:
+    """Retire le logo courant. Les devis déjà émis gardent le leur.
+
+    Retirer un logo n'est pas une erreur quand il n'y en a pas : la route rend
+    le profil dans les deux cas. Un 404 obligerait l'écran à distinguer deux
+    situations qui, pour qui clique, sont la même — « je n'en veux plus ».
+    """
+    organization = session.get(type(context.organization), context.organization_id)
+    assert organization is not None
+    stockage = StockageLocal(settings.storage_root)
+    retire = profil_entreprise.retirer_le_logo(
+        session, organization=organization, stockage=stockage
+    )
+    if retire:
+        audit.record(
+            session,
+            organization_id=context.organization_id,
+            action="organization.logo.removed",
+            object_type="organization",
+            object_id=context.organization_id,
+            summary="Logo de l'entreprise retiré",
+            actor_user_id=context.user.id,
+            actor_email=context.user.email,
+        )
+    return _profil(organization)
+
+
+@router.get("/logo", summary="Le logo de l'entreprise", response_class=StreamingResponse)
+def download_logo(
+    context: TenantContext = Depends(current_context),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Sert les octets du logo de SON organisation, et d'aucune autre.
+
+    Il n'y a pas d'identifiant dans le chemin, et c'est délibéré : la seule
+    organisation atteignable est celle de la session. Aucune valeur venue de
+    la requête n'entre dans le chemin lu — il vient de la base, où seul ce
+    module l'a écrit.
+
+    Servi en `inline` : c'est une image d'interface, affichée dans l'écran des
+    réglages, pas une pièce à télécharger. `nosniff` reste, et le type est
+    celui qui a été ÉTABLI sur les octets à la réception.
+    """
+    organization = context.organization
+    if not profil_entreprise.logo_present(organization):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "no_logo", "message": "Cette entreprise n'a pas de logo."},
+        )
+    stockage = StockageLocal(settings.storage_root)
+    cle = organization.logo_storage_key
+    assert cle is not None
+    if stockage.taille(cle) is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={
+                "code": "content_missing",
+                "message": "Le logo est absent du stockage.",
+            },
+        )
+    return StreamingResponse(
+        stockage.lire(cle),
+        media_type=organization.logo_media_type or "application/octet-stream",
+        headers={
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+            # L'empreinte fait l'étiquette : un logo remplacé change d'empreinte,
+            # donc d'étiquette, et le navigateur recharge sans qu'on ait à lui
+            # interdire tout cache.
+            "ETag": f'"{organization.logo_sha256}"',
+            "Cache-Control": "private, max-age=0, must-revalidate",
+        },
+    )
+
+
+def images_plafond_enveloppe() -> int:
+    """Le plafond appliqué à l'enveloppe multipart, marge comprise.
+
+    L'en-tête `Content-Length` mesure l'enveloppe — bornes, en-têtes de partie
+    — et non le fichier. Le comparer tel quel au plafond refuserait un fichier
+    de la taille exacte du plafond. La marge est celle des dépôts de pièces,
+    pour la même raison.
+    """
+    return images.OCTETS_MAXIMUM + 8 * 1024
+
+
+def _refus_logo(refus: ImageRefusee) -> HTTPException:
+    """Un refus d'image en réponse HTTP, jamais en 500.
+
+    Un fichier refusé est une erreur de l'appelant : il doit la lire et
+    recommencer avec un autre fichier. Le code machine vient du service et ne
+    change pas ; le message est destiné à un humain.
+    """
+    statut = (
+        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+        if refus.code == "fichier_trop_volumineux"
+        else status.HTTP_422_UNPROCESSABLE_ENTITY
+    )
+    return HTTPException(
+        status_code=statut,
+        detail={"code": refus.code, "message": refus.message, "context": refus.context},
+    )
 
 
 @router.get(

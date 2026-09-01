@@ -48,7 +48,7 @@ from ..models import (
 )
 from ..security.auth import TenantContext
 from ..transactions import compenser
-from . import audit, numerotation
+from . import audit, numerotation, profil_entreprise
 from .document_storage import StockageLocal
 from .quote_pdf import composer_le_devis
 from .tenant import get_owned
@@ -128,16 +128,57 @@ def numeroter(
 def instantane_organisation(
     organization: Organization, reglages: OrganizationSettings | None
 ) -> dict:
+    """L'identité de l'émetteur, figée telle qu'elle s'imprime.
+
+    **Tout ce qui figure sur le document est ici.** C'est la règle qui rend un
+    devis stable : déménager, changer de raison sociale ou remplacer le logo ne
+    doit rien changer à ce qu'un client a reçu l'an dernier. Un champ imprimé
+    qui resterait lu dans la table vivante serait précisément la fuite que cet
+    instantané existe pour fermer.
+
+    Le logo y figure par ses MÉTADONNÉES, pas par ses octets : ceux-ci sont
+    recopiés à part, dans le dossier du devis, par `emettre`. Un instantané est
+    du JSON en base ; y loger un fichier de deux mégaoctets encodé en base64
+    ferait grossir chaque ligne de devis sans rien apporter.
+    """
     return {
         "name": organization.name,
         "legal_name": organization.legal_name,
         "company_number": organization.company_number,
+        "address": organization.address,
+        "address_complement": organization.address_complement,
+        "postal_code": organization.postal_code,
+        "city": organization.city,
         "country_code": organization.country_code,
         "region_code": organization.region_code,
+        "email": organization.email,
+        "phone": organization.phone,
+        "website": organization.website,
         "currency": organization.currency,
         "locale": organization.locale,
         "quote_number_pattern": getattr(reglages, "quote_number_pattern", None),
     }
+
+
+def _lire_le_logo(organization: Organization, stockage: StockageLocal) -> bytes | None:
+    """Les octets du logo courant, ou `None` s'il n'y en a pas — ou plus.
+
+    Un logo absent du volume alors que la base le référence n'empêche PAS
+    d'émettre : le devis part sans logo plutôt que de refuser au dernier
+    geste pour une panne d'exploitation que celui qui émet ne peut pas
+    corriger. L'identité reste complète — nom, adresse, coordonnées — et c'est
+    elle que le document doit porter.
+    """
+    if not profil_entreprise.logo_present(organization):
+        return None
+    cle = organization.logo_storage_key
+    assert cle is not None
+    if stockage.taille(cle) is None:
+        return None
+    try:
+        return b"".join(stockage.lire(cle))
+    except OSError:
+        return None
 
 
 def instantane_client(client: Client) -> dict:
@@ -219,6 +260,19 @@ def emettre(
             "Cette version n'est pas gelée. Gelez-la avant d'émettre le devis : "
             "un devis remis doit désigner un calcul qui ne bougera plus.",
         )
+    manquants_emetteur = profil_entreprise.emetteur_suffisant(organization)
+    if manquants_emetteur:
+        # Avant le client, et délibérément : un devis sans émetteur identifiable
+        # n'est pas un document commercial, quelle que soit la qualité de la
+        # fiche client. Le refus NOMME les champs pour que l'écran conduise à
+        # l'endroit où les remplir, au lieu de dire « profil incomplet ».
+        raise EmissionRefusee(
+            "emitter_incomplete",
+            "Le profil de votre entreprise est trop incomplet pour émettre un devis. "
+            "Complétez-le dans les réglages : un devis doit dire qui l'émet et où "
+            "lui répondre.",
+            missing=manquants_emetteur,
+        )
     if project.client_id is None:
         raise EmissionRefusee(
             "client_required",
@@ -269,6 +323,13 @@ def emettre(
         )
 
     organisation_vue = instantane_organisation(organization, reglages)
+    # Le logo est LU maintenant, et ses octets seront recopiés dans le dossier
+    # de ce devis. Garder la clé du logo vivant suffirait tant qu'on ne le
+    # remplace pas — mais un remplacement écrit un fichier neuf et retire
+    # l'ancien, et la page publique d'un devis de l'an dernier afficherait
+    # alors un vide. Une copie par devis est le prix de l'immuabilité, et c'est
+    # exactement ce que l'on fait déjà pour le PDF lui-même.
+    logo_octets = _lire_le_logo(organization, stockage)
     client_vu = instantane_client(client)
     projet_vu = instantane_projet(project, estimate, version)
     document_vu = {
@@ -278,6 +339,32 @@ def emettre(
     }
 
     identifiant = new_id()
+    # Le logo est posé dans le dossier du devis AVANT le PDF, pour que
+    # l'instantané puisse le désigner. Sa compensation part avec lui : si la
+    # suite échoue, les deux fichiers repartent ensemble.
+    if logo_octets is not None:
+        copie = stockage.ecrire_octets(
+            organization_id=context.organization_id,
+            dossier="devis",
+            identifiant=f"{identifiant}-logo",
+            extension=".png",
+            contenu=logo_octets,
+            media_type=organization.logo_media_type or "image/png",
+        )
+        compenser(
+            session,
+            lambda: stockage.supprimer(copie.storage_key),
+            f"retirer le logo figé du devis {numero}",
+        )
+        organisation_vue["logo"] = {
+            "storage_key": copie.storage_key,
+            "sha256": copie.sha256,
+            "byte_size": copie.byte_size,
+            "media_type": copie.media_type,
+            "width": organization.logo_width,
+            "height": organization.logo_height,
+        }
+
     pdf = composer_le_devis(
         numero=numero,
         emis_le=emis_le,
@@ -288,6 +375,7 @@ def emettre(
         document=document_vu,
         terms=terms,
         include_internal_costs=include_internal_costs,
+        logo=logo_octets,
     )
     original = stockage.ecrire_octets(
         organization_id=context.organization_id,

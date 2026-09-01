@@ -107,6 +107,23 @@ class MeResponse(BaseModel):
 # -- organisation ----------------------------------------------------------
 
 
+class LogoOut(ApiModel):
+    """Ce que l'API dit d'un logo — jamais où il est rangé.
+
+    `logo_storage_key` reste dans la base et n'apparaît dans aucune réponse :
+    c'est un chemin interne, et le rendre inviterait à le demander. Le
+    navigateur reçoit une URL de route, l'empreinte pour éviter de recharger,
+    et les dimensions pour réserver la place sans attendre les octets.
+    """
+
+    sha256: str
+    byte_size: int
+    media_type: str
+    width: int
+    height: int
+    updated_at: datetime | None
+
+
 class OrganizationOut(ApiModel):
     id: str
     name: str
@@ -117,6 +134,40 @@ class OrganizationOut(ApiModel):
     locale: str
     currency: str
     timezone: str
+    address: str | None = None
+    address_complement: str | None = None
+    postal_code: str | None = None
+    city: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    logo: LogoOut | None = None
+    #: Les champs qui manquent pour émettre un NOUVEAU devis. Vide = on peut.
+    #: L'écran s'en sert pour surligner, et pour prévenir avant l'émission
+    #: plutôt qu'au moment où l'on croit avoir fini.
+    missing_for_issue: list[str] = Field(default_factory=list)
+
+
+class OrganizationProfileUpdate(ApiModel):
+    """Le profil, modifiable champ par champ.
+
+    Tous facultatifs : l'écran envoie ce qui a changé. Une chaîne vide vaut
+    « effacer », et c'est voulu — retirer un site web qu'on n'a plus doit être
+    possible sans passer par la base. Le nom fait exception : il ne peut pas
+    devenir vide, une organisation sans nom ne s'imprime nulle part.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    legal_name: str | None = Field(default=None, max_length=200)
+    company_number: str | None = Field(default=None, max_length=50)
+    address: str | None = Field(default=None, max_length=255)
+    address_complement: str | None = Field(default=None, max_length=255)
+    postal_code: str | None = Field(default=None, max_length=20)
+    city: str | None = Field(default=None, max_length=120)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=40)
+    website: str | None = Field(default=None, max_length=255)
 
 
 def _bounded(bound: bounds.Bound) -> Any:

@@ -25,6 +25,7 @@ lignes de données pour un seul alignement.
 
 from __future__ import annotations
 
+import zlib
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -126,6 +127,26 @@ def replier(texte: str, largeur: float, taille: float) -> list[str]:
     return lignes
 
 
+@dataclass(frozen=True, slots=True)
+class ImagePdf:
+    """Une image prête à être posée : des échantillons, et de quoi les lire.
+
+    Le PDF ne comprend pas le PNG. Il comprend un flux d'échantillons, un
+    espace de couleur et un filtre — c'est ce que `services.images` produit, et
+    ce que ce type transporte jusqu'à `assembler`.
+
+    `nom` est la clé sous laquelle la page désignera l'image dans ses
+    ressources (`/Im1`). Il vient du code, jamais d'un nom de fichier.
+    """
+
+    nom: str
+    largeur: int
+    hauteur: int
+    espace: str
+    couleur: bytes
+    alpha: bytes | None = None
+
+
 @dataclass
 class Page:
     """Les commandes de dessin d'une page, dans l'ordre où elles s'appliquent."""
@@ -187,21 +208,101 @@ class Page:
             f"{_nombre(hauteur)} re f 0 g".encode("ascii")
         )
 
+    def image(self, nom: str, x: float, y: float, largeur: float, hauteur: float) -> None:
+        """Pose une image dans un rectangle, coin INFÉRIEUR gauche en (x, y).
+
+        Un PDF dessine une image sur le carré unité et la laisse déformer par
+        la matrice courante : `largeur 0 0 hauteur x y cm` la met à l'échelle
+        et la place. Le `q`/`Q` enferme cette matrice — sans lui, tout ce qui
+        serait dessiné ensuite hériterait de l'échelle et sortirait de la page.
+        """
+        self.commandes.append(
+            f"q {_nombre(largeur)} 0 0 {_nombre(hauteur)} {_nombre(x)} {_nombre(y)} cm /".encode(
+                "ascii"
+            )
+            + nom.encode("ascii")
+            + b" Do Q"
+        )
+
     def flux(self) -> bytes:
         return b"\n".join(self.commandes)
 
 
-def assembler(pages: Sequence[Page], *, titre: str, auteur: str, date_pdf: str) -> bytes:
+def _objets_image(image: ImagePdf, numero_suivant: int) -> tuple[list[bytes], int]:
+    """Les objets PDF d'une image, et le numéro de son XObject.
+
+    Le masque de transparence vient EN PREMIER : le XObject doit le désigner
+    par son numéro, et un numéro ne se connaît qu'une fois l'objet ajouté.
+
+    Les échantillons sont comprimés par `zlib` avec un niveau fixe. Le niveau
+    est fixé plutôt que laissé par défaut parce que le déterminisme du document
+    en dépend : deux générations du même devis doivent rendre les mêmes octets,
+    et un niveau par défaut est une valeur qu'une version de Python pourrait
+    changer sous nos pieds.
+    """
+    corps: list[bytes] = []
+    numero = numero_suivant
+    numero_masque: int | None = None
+
+    if image.alpha is not None:
+        masque = zlib.compress(image.alpha, 9)
+        corps.append(
+            b"<< /Type /XObject /Subtype /Image"
+            + f" /Width {image.largeur} /Height {image.hauteur}".encode("ascii")
+            + b" /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode"
+            + f" /Length {len(masque)} >>\nstream\n".encode("ascii")
+            + masque
+            + b"\nendstream"
+        )
+        numero_masque = numero
+        numero += 1
+
+    echantillons = zlib.compress(image.couleur, 9)
+    entete = (
+        b"<< /Type /XObject /Subtype /Image"
+        + f" /Width {image.largeur} /Height {image.hauteur}".encode("ascii")
+        + b" /ColorSpace /"
+        + image.espace.encode("ascii")
+        + b" /BitsPerComponent 8 /Filter /FlateDecode"
+        + f" /Length {len(echantillons)}".encode("ascii")
+    )
+    if numero_masque is not None:
+        entete += f" /SMask {numero_masque} 0 R".encode("ascii")
+    corps.append(entete + b" >>\nstream\n" + echantillons + b"\nendstream")
+    return corps, numero
+
+
+def assembler(
+    pages: Sequence[Page],
+    *,
+    titre: str,
+    auteur: str,
+    date_pdf: str,
+    images: Sequence[ImagePdf] = (),
+) -> bytes:
     """Écrit le fichier : objets, table de références croisées, fin.
 
     `date_pdf` est au format PDF (`D:AAAAMMJJHHmmSS`) et vient de la date
     d'émission. C'est ce qui rend deux générations identiques au bit près.
+
+    Les `images` sont déclarées dans les ressources de TOUTES les pages, comme
+    les polices. Une page qui n'en dessine aucune n'en porte pas moins la
+    déclaration : c'est sans effet sur le rendu, et cela évite de fabriquer un
+    dictionnaire de ressources par page pour une économie de quelques octets.
     """
     objets: list[bytes] = []
 
     def ajouter(corps: bytes) -> int:
         objets.append(corps)
         return len(objets)  # les numéros d'objet commencent à 1
+
+    numeros_images: dict[str, int] = {}
+    for image in images:
+        corps_image, _ = _objets_image(image, len(objets) + 1)
+        numero_xobject = 0
+        for corps in corps_image:
+            numero_xobject = ajouter(corps)
+        numeros_images[image.nom] = numero_xobject
 
     numeros_polices: dict[str, int] = {}
     for nom, base in (
@@ -220,8 +321,18 @@ def assembler(pages: Sequence[Page], *, titre: str, auteur: str, date_pdf: str) 
             b"/" + nom.encode("ascii") + f" {numero} 0 R".encode("ascii")
             for nom, numero in numeros_polices.items()
         )
-        + b" >> >>"
+        + b" >>"
     )
+    if numeros_images:
+        ressources += (
+            b" /XObject << "
+            + b" ".join(
+                b"/" + nom.encode("ascii") + f" {numero} 0 R".encode("ascii")
+                for nom, numero in numeros_images.items()
+            )
+            + b" >>"
+        )
+    ressources += b" >>"
 
     # Le nœud /Pages n'existe pas encore quand les pages le désignent : on
     # écrit un jeton, et on le remplace une fois son numéro connu. Réordonner
@@ -287,6 +398,35 @@ def assembler(pages: Sequence[Page], *, titre: str, auteur: str, date_pdf: str) 
     return bytes(sortie)
 
 
+def _sans_les_images(pdf: bytes) -> bytes:
+    """Le document, ses flux d'image retirés.
+
+    Les échantillons comprimés d'un logo sont des octets quelconques : ils
+    contiennent des parenthèses, et la lecture naïve ci-dessous les prendrait
+    pour des chaînes littérales. Le texte extrait se remplirait alors d'un
+    charabia qui n'est imprimé nulle part — et une assertion d'ABSENCE, celle
+    qui vérifie qu'aucun coût interne ne figure sur un devis client, perdrait
+    tout son sens.
+
+    On ne coupe que ce qui suit un `/Subtype /Image` : les flux de contenu des
+    pages, eux, portent le vrai texte et sont conservés.
+    """
+    sortie = bytearray()
+    position = 0
+    while True:
+        marque = pdf.find(b"/Subtype /Image", position)
+        if marque == -1:
+            sortie += pdf[position:]
+            return bytes(sortie)
+        debut = pdf.find(b"stream\n", marque)
+        fin = pdf.find(b"\nendstream", debut) if debut != -1 else -1
+        if debut == -1 or fin == -1:
+            sortie += pdf[position:]
+            return bytes(sortie)
+        sortie += pdf[position : debut + len(b"stream\n")]
+        position = fin
+
+
 def extraire_le_texte(pdf: bytes) -> str:
     """Relit les chaînes littérales du document — pour les tests, et pour eux seuls.
 
@@ -294,6 +434,7 @@ def extraire_le_texte(pdf: bytes) -> str:
     un nom de client ou un total figurent dans le fichier produit, ce que ne
     disent ni sa taille ni son code de retour HTTP.
     """
+    pdf = _sans_les_images(pdf)
     morceaux: list[str] = []
     index = 0
     while True:
