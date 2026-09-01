@@ -502,3 +502,221 @@ def test_la_page_publique_ne_porte_aucun_cout_interne(
     charge = seeded_client.get("/api/v1/public/quote").text
     for interne in ("Déboursé", "déboursé", "Revient", "revient", "Marge", "marge"):
         assert interne not in charge, interne
+
+
+# --------------------------------------------------------------------------
+# 5. La mise en page : rien ne sort de la feuille, jamais
+# --------------------------------------------------------------------------
+
+
+def _coordonnees_dessinees(**remplacements: Any) -> list[tuple[float, float, float, str]]:
+    """Compose un devis en captant CHAQUE coordonnée réellement dessinée.
+
+    Vérifier la mise en page en lisant le PDF produit demanderait un moteur de
+    rendu. Instrumenter le traceur, lui, donne exactement ce qui compte : où
+    chaque chaîne a été posée. C'est la seule façon de prouver qu'aucun contenu
+    ne tombe hors de la page — et un contenu hors page est invisible, donc
+    indétectable autrement.
+    """
+    from datetime import date, datetime
+
+    from metreo_api.services import pdf as moteur
+    from metreo_api.services.quote_pdf import composer_le_devis
+
+    trace: list[tuple[float, float, float, str]] = []
+    texte_origine = moteur.Page.texte
+    image_origine = moteur.Page.image
+
+    def texte(self: Any, x: float, y: float, contenu: str, **kw: Any) -> None:
+        if contenu:
+            trace.append((x, y, float(kw.get("taille", 10.0)), contenu))
+        texte_origine(self, x, y, contenu, **kw)
+
+    def image(self: Any, nom: str, x: float, y: float, largeur: float, hauteur: float) -> None:
+        trace.append((x, y, 0.0, f"[image {largeur:.0f}x{hauteur:.0f}]"))
+        image_origine(self, nom, x, y, largeur, hauteur)
+
+    parametres: dict[str, Any] = {
+        "numero": "DEV-2026-0001",
+        "emis_le": datetime(2026, 1, 1, 12, 0),
+        "valid_until": date(2026, 12, 31),
+        "organisation": dict(PROFIL),
+        "client": {
+            "name": "Commune de Perwez",
+            "billing_address": "Rue Émile 2",
+            "postal_code": "1360",
+            "city": "Perwez",
+        },
+        "projet": {"reference": "CH-1", "name": "Chantier", "currency": "EUR"},
+        "document": {
+            "lines": [],
+            "totals": {"total_ht": "1.00", "total_ttc": "1.21", "currency": "EUR", "taxes": []},
+        },
+        "terms": None,
+        "include_internal_costs": False,
+        "logo": None,
+    }
+    parametres.update(remplacements)
+
+    moteur.Page.texte = texte  # type: ignore[method-assign]
+    moteur.Page.image = image  # type: ignore[method-assign]
+    try:
+        composer_le_devis(**parametres)
+    finally:
+        moteur.Page.texte = texte_origine  # type: ignore[method-assign]
+        moteur.Page.image = image_origine  # type: ignore[method-assign]
+    # Le pied de page est dessiné sous la marge PAR CONCEPTION : il est exclu.
+    return [t for t in trace if not (t[3].startswith("Devis DEV") or t[3].startswith("Page "))]
+
+
+def _hors_de_la_page(trace: list[tuple[float, float, float, str]]) -> list[str]:
+    from metreo_api.services import pdf as moteur
+
+    fautifs = []
+    for x, y, taille, contenu in trace:
+        if y < moteur.MARGE:
+            fautifs.append(f"sous la marge (y={y:.1f}) : {contenu[:40]!r}")
+        elif y > moteur.A4[1] - moteur.MARGE + 1:
+            fautifs.append(f"au-dessus de la marge (y={y:.1f}) : {contenu[:40]!r}")
+        largeur = len(contenu) * taille * moteur.CHASSE_HELVETICA_APPROX
+        if x + largeur > moteur.A4[0] - moteur.MARGE + 2:
+            fautifs.append(f"déborde à droite (x={x:.1f}) : {contenu[:40]!r}")
+    return fautifs
+
+
+LIGNES_ORDINAIRES = [
+    {
+        "position": f"{i:02d}.10",
+        "designation": "Déblai en terrain meuble, évacuation comprise",
+        "unit": "m3",
+        "quantity": "100",
+        "unit_price_ht": "12.50",
+        "total_ht": "1250.00",
+    }
+    for i in range(60)
+]
+
+#: Chaque champ rempli jusqu'à la borne que la base autorise. Ce n'est pas un
+#: devis vraisemblable : c'est celui qui casserait la mise en page si elle
+#: n'était pas bornée.
+EMETTEUR_MAXIMAL = {
+    "name": "S" * 200,
+    "legal_name": "L" * 200,
+    "company_number": "BE" + "9" * 48,
+    "address": "A" * 255,
+    "address_complement": "C" * 255,
+    "postal_code": "1" * 20,
+    "city": "V" * 120,
+    "country_code": "BE",
+    "email": "e" * 240 + "@exemple.invalid",
+    "phone": "+32 " + "0" * 36,
+    "website": "https://" + "w" * 240,
+    "currency": "EUR",
+}
+CLIENT_MAXIMAL = {
+    "name": "C" * 200,
+    "billing_address": "B" * 255,
+    "postal_code": "9999",
+    "city": "W" * 120,
+    "company_number": "BE0000000000",
+    "contact_name": "K" * 200,
+    "email": "k@exemple.invalid",
+    "phone": "+32 2 000 00 00",
+}
+PROJET_MAXIMAL = {"reference": "R" * 60, "name": "P" * 200, "currency": "EUR"}
+
+
+@pytest.mark.parametrize(
+    ("nom", "remplacements"),
+    [
+        ("une ligne, sans logo", {}),
+        ("une ligne, logo carré", {"logo": fixtures.carre()}),
+        ("une ligne, logo horizontal", {"logo": fixtures.horizontal()}),
+        (
+            "soixante lignes, logo carré",
+            {
+                "logo": fixtures.carre(),
+                "document": {
+                    "lines": LIGNES_ORDINAIRES,
+                    "totals": {
+                        "total_ht": "75000.00",
+                        "total_ttc": "90750.00",
+                        "currency": "EUR",
+                        "taxes": [{"label": "TVA 21 %", "rate": "0.21", "amount": "15750.00"}],
+                    },
+                },
+                "terms": "Acompte de 30 % à la commande.",
+            },
+        ),
+        (
+            "bordereau vide",
+            {"logo": fixtures.horizontal(), "document": {"lines": [], "totals": {}}},
+        ),
+        (
+            "tous les champs à leur maximum",
+            {
+                "organisation": EMETTEUR_MAXIMAL,
+                "client": CLIENT_MAXIMAL,
+                "projet": PROJET_MAXIMAL,
+                "logo": fixtures.horizontal(),
+                "terms": "T" * 4000,
+            },
+        ),
+        (
+            "maximum ET deux cents lignes",
+            {
+                "organisation": EMETTEUR_MAXIMAL,
+                "client": CLIENT_MAXIMAL,
+                "projet": PROJET_MAXIMAL,
+                "logo": fixtures.carre(),
+                "terms": "T" * 4000,
+                "document": {
+                    "lines": LIGNES_ORDINAIRES * 4,
+                    "totals": {
+                        "total_ht": "300000.00",
+                        "total_ttc": "363000.00",
+                        "currency": "EUR",
+                        "taxes": [{"label": "TVA 21 %", "rate": "0.21", "amount": "63000.00"}],
+                    },
+                },
+            },
+        ),
+    ],
+)
+def test_aucun_contenu_ne_sort_de_la_page(nom: str, remplacements: dict[str, Any]) -> None:
+    """Mesuré, pas supposé : chaque coordonnée dessinée est dans la feuille.
+
+    Ce test a trouvé un vrai défaut. L'en-tête réservait un nombre de points
+    FIXE, ce qui tenait tant qu'il ne portait qu'un nom ; l'adresse et les
+    coordonnées de l'émetteur l'ont fait déborder, et le tableau se dessinait à
+    une ordonnée négative — hors de la page, donc invisible, sans que rien ne
+    le signale. La pagination se calcule désormais sur la hauteur réellement
+    occupée, et l'identité est bornée à douze lignes avec une ellipse visible.
+    """
+    fautifs = _hors_de_la_page(_coordonnees_dessinees(**remplacements))
+    assert fautifs == [], f"{nom} : {len(fautifs)} élément(s) hors page — " + " ; ".join(
+        fautifs[:5]
+    )
+
+
+def test_une_identite_demesuree_est_coupee_visiblement() -> None:
+    """Coupée, et le disant : l'ellipse est la différence entre borner et mentir.
+
+    Une entreprise qui remplit 255 caractères d'adresse doit voir que son
+    en-tête ne dit pas tout — sur son écran d'aperçu et sur son document — au
+    lieu de le découvrir chez son client.
+    """
+    trace = _coordonnees_dessinees(organisation=EMETTEUR_MAXIMAL)
+    dessine = [contenu for _, _, _, contenu in trace]
+    assert any(contenu.endswith("…") for contenu in dessine), (
+        "une identité tronquée doit porter une ellipse"
+    )
+
+
+def test_une_identite_ordinaire_n_est_jamais_coupee() -> None:
+    """La borne ne doit pas mordre sur un profil réel."""
+    trace = _coordonnees_dessinees()
+    dessine = [contenu for _, _, _, contenu in trace]
+    assert not any(contenu.endswith("…") for contenu in dessine), dessine
+    for attendu in (PROFIL["address"], PROFIL["address_complement"], PROFIL["website"]):
+        assert any(attendu in contenu for contenu in dessine), attendu

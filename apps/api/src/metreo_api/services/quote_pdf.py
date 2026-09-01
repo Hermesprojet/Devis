@@ -39,6 +39,14 @@ COLONNES_INTERNES = (
 )
 
 INTERLIGNE = 13.0
+#: Ce qu'il faut garder sous le tableau, sur la page qui le termine : la ligne
+#: d'en-tête du tableau elle-même a déjà été retirée par `_tableau`. Cette
+#: réserve laisse la place au bloc des totaux ; les conditions et les
+#: signatures, plus volumineuses, ont leur propre bascule de page.
+RESERVE_BAS_DE_PAGE = 24.0
+#: La hauteur du bloc des totaux : cinq lignes au plus (déboursé, revient,
+#: total HT, une taxe, total TTC) et leur filet.
+HAUTEUR_DES_TOTAUX = 96.0
 TAILLE_LIGNE = 8.5
 TAILLE_CONDITIONS = 8.5
 
@@ -53,6 +61,20 @@ LOGO_HAUTEUR_MAXIMALE = 46.0
 LOGO_ECART = 14.0
 #: Le nom sous lequel le logo est déclaré dans les ressources du document.
 LOGO_NOM = "Im1"
+
+#: Combien de lignes DESSINÉES l'identité de l'émetteur peut occuper au plus.
+#:
+#: Les champs du profil acceptent des valeurs généreuses — 255 caractères pour
+#: l'adresse, autant pour le complément, 200 pour la raison sociale. Mesuré :
+#: remplis à ras bord, ils occupent une cinquantaine de lignes et repoussent le
+#: bloc DESTINATAIRE hors de la page. Le destinataire d'un devis ne peut pas
+#: disparaître parce que l'émetteur a saisi une adresse trop longue.
+#:
+#: Douze lignes tiennent largement une identité réelle — raison sociale,
+#: numéro, rue, complément, localité, pays, téléphone, courriel, site. Au-delà,
+#: la coupure est MARQUÉE par une ellipse : l'entreprise voit que son en-tête
+#: ne dit pas tout, au lieu de le découvrir chez son client.
+LIGNES_D_IDENTITE_MAXIMUM = 12
 
 
 def _boite_du_logo(largeur_px: int, hauteur_px: int) -> tuple[float, float]:
@@ -134,53 +156,72 @@ def composer_le_devis(
     totaux = document.get("totals") or {}
     devise = totaux.get("currency") or projet.get("currency") or "EUR"
 
-    # Combien de lignes tiennent après l'en-tête complet, puis sur une page
-    # suivante qui n'a que le cartouche.
-    # 380 et non 330 : l'identité de l'émetteur porte maintenant son adresse et
-    # ses coordonnées, soit quatre lignes de plus, et le bloc DESTINATAIRE
-    # descend d'autant. Réserver trop peu ferait dessiner les dernières lignes
-    # du tableau sous la marge — invisibles, sans que rien ne le signale.
-    hauteur_premiere = moteur.A4[1] - 380.0 - 180.0
-    hauteur_suivante = moteur.A4[1] - 110.0 - 180.0
-    par_page_premiere = max(1, int(hauteur_premiere / INTERLIGNE))
-    par_page_suivante = max(1, int(hauteur_suivante / INTERLIGNE))
-
-    tranches: list[list[dict[str, Any]]] = []
-    reste = list(lignes)
-    tranches.append(reste[:par_page_premiere])
-    reste = reste[par_page_premiere:]
-    while reste:
-        tranches.append(reste[:par_page_suivante])
-        reste = reste[par_page_suivante:]
-
+    # La pagination se décide sur la hauteur RÉELLEMENT occupée, pas sur une
+    # constante.
+    #
+    # L'en-tête réservait auparavant un nombre de points fixe. C'était une
+    # approximation tenable tant qu'il ne portait qu'un nom et une raison
+    # sociale ; elle a cessé de l'être quand l'émetteur y a gagné une adresse,
+    # un complément et trois contacts. Mesuré : une raison sociale de 200
+    # caractères avec une adresse de 255 pousse le tableau à une ordonnée
+    # NÉGATIVE — dessiné hors de la page, donc invisible, sans que rien ne le
+    # signale. Un devis dont les lignes disparaissent en silence est le pire
+    # défaut que ce module puisse avoir.
+    #
+    # On dessine donc l'en-tête d'abord, on lit où il s'arrête, et on en déduit
+    # ce qui tient. Quand il ne reste pas la place d'au moins une ligne, le
+    # tableau commence sur la page suivante plutôt que sous la marge.
     pages: list[moteur.Page] = []
-    for index, tranche in enumerate(tranches):
-        page = moteur.Page()
-        if index == 0:
-            y = _entete_complet(
-                page, numero, emis_le, valid_until, organisation, client, projet, image
-            )
-        else:
-            y = _entete_court(page, numero, organisation)
-        y = _tableau(page, y, colonnes, tranche, index == 0)
-        pages.append(page)
-        if index < len(tranches) - 1:
-            continue
+    premiere = moteur.Page()
+    pages.append(premiere)
+    y = _entete_complet(premiere, numero, emis_le, valid_until, organisation, client, projet, image)
 
-        y = _totaux(page, y, totaux, devise)
-        # Les conditions passent à la page suivante plutôt que sous le pied.
-        #
-        # Le champ accepte 4 000 caractères, soit une quarantaine de lignes ;
-        # les dessiner à la suite des totaux les faisait sortir de la page —
-        # tracées à une ordonnée négative, donc invisibles. Un devis dont les
-        # conditions disparaissent en silence est pire qu'un devis sans
-        # conditions : l'entreprise croit les avoir envoyées.
-        conditions = _lignes_de_conditions(terms)
-        if y - _hauteur_du_pied(conditions) < moteur.MARGE:
+    reste = list(lignes)
+    page = premiere
+    premiere_tranche = True
+    while True:
+        disponible = y - RESERVE_BAS_DE_PAGE - moteur.MARGE
+        combien = int(disponible / INTERLIGNE)
+        # `combien < 1` couvre les deux cas : il reste des lignes à poser sans
+        # place pour elles, ou il n'en reste aucune mais l'en-tête du tableau
+        # lui-même ne tiendrait pas. Un bordereau vide dessine quand même son
+        # en-tête de colonnes, et il n'a pas plus le droit de sortir de la page.
+        if combien < 1:
             page = moteur.Page()
-            y = _entete_court(page, numero, organisation)
             pages.append(page)
-        _conditions_et_signatures(page, y, conditions, client, organisation)
+            y = _entete_court(page, numero, organisation)
+            continue
+        tranche = reste[: max(combien, 0)]
+        reste = reste[max(combien, 0) :]
+        y = _tableau(page, y, colonnes, tranche, premiere_tranche)
+        premiere_tranche = False
+        if not reste:
+            break
+        page = moteur.Page()
+        pages.append(page)
+        y = _entete_court(page, numero, organisation)
+
+    # Les totaux tiennent-ils encore ? Sinon, page suivante — pour la même
+    # raison que les conditions ci-dessous.
+    if y - HAUTEUR_DES_TOTAUX < moteur.MARGE:
+        page = moteur.Page()
+        pages.append(page)
+        y = _entete_court(page, numero, organisation)
+    y = _totaux(page, y, totaux, devise)
+
+    # Les conditions passent à la page suivante plutôt que sous le pied.
+    #
+    # Le champ accepte 4 000 caractères, soit une quarantaine de lignes ; les
+    # dessiner à la suite des totaux les faisait sortir de la page — tracées à
+    # une ordonnée négative, donc invisibles. Un devis dont les conditions
+    # disparaissent en silence est pire qu'un devis sans conditions :
+    # l'entreprise croit les avoir envoyées.
+    conditions = _lignes_de_conditions(terms)
+    if y - _hauteur_du_pied(conditions) < moteur.MARGE:
+        page = moteur.Page()
+        y = _entete_court(page, numero, organisation)
+        pages.append(page)
+    _conditions_et_signatures(page, y, conditions, client, organisation)
 
     for numero_page, page in enumerate(pages, start=1):
         _pied(page, numero, numero_page, len(pages))
@@ -298,20 +339,36 @@ def _entete_complet(
         # une image par son coin inférieur, d'où la soustraction.
         page.image(LOGO_NOM, gauche, haut - hauteur_logo, largeur_logo, hauteur_logo)
 
-    y = page.paragraphe(
-        identite_x,
-        haut - 14,
-        str(organisation.get("name") or ""),
-        largeur=largeur_identite,
-        police=moteur.HELVETICA_GRAS,
-        # Un logo prend de la largeur : le nom passe à 13 points pour continuer
-        # à tenir en une ou deux lignes plutôt que quatre.
-        taille=13 if largeur_logo else 16,
-        interligne=15 if largeur_logo else 18,
+    # Un logo prend de la largeur : le nom passe à 13 points pour continuer à
+    # tenir en une ou deux lignes plutôt que quatre.
+    taille_nom = 13.0 if largeur_logo else 16.0
+    lignes_du_nom = moteur.replier(
+        str(organisation.get("name") or ""), largeur_identite, taille_nom
     )
+    y = haut - 14
+    for rang, ligne in enumerate(lignes_du_nom[:2]):
+        dernier = rang == 1 and len(lignes_du_nom) > 2
+        page.texte(
+            identite_x,
+            y,
+            f"{ligne}\u2026" if dernier else ligne,
+            police=moteur.HELVETICA_GRAS,
+            taille=taille_nom,
+        )
+        y -= 15 if largeur_logo else 18
     y -= 10
-    for ligne in _lignes_d_identite(organisation):
-        y = page.paragraphe(identite_x, y, ligne, largeur=largeur_identite, interligne=11)
+
+    # Toutes les lignes d'identité sont repliées D'ABORD, puis coupées à un
+    # nombre de lignes DESSINÉES. Compter les champs plutôt que les lignes
+    # laisserait une adresse de 255 caractères en occuper huit à elle seule.
+    repliees: list[str] = []
+    for entree in _lignes_d_identite(organisation):
+        repliees.extend(moteur.replier(entree, largeur_identite, 9.0))
+    tronque = len(repliees) > LIGNES_D_IDENTITE_MAXIMUM
+    for rang, ligne in enumerate(repliees[:LIGNES_D_IDENTITE_MAXIMUM]):
+        dernier = tronque and rang == LIGNES_D_IDENTITE_MAXIMUM - 1
+        page.texte(identite_x, y, f"{ligne}\u2026" if dernier else ligne, taille=9.0)
+        y -= 11
     # Le bloc suivant ne doit pas remonter au-dessus du logo, même quand
     # l'identité est plus courte que lui.
     y = min(y, haut - hauteur_logo)
