@@ -521,3 +521,64 @@ def test_l_application_reste_protegee_sans_proxy(client_borne: TestClient) -> No
     )
     assert reponse.status_code == 413
     assert reponse.json()["detail"]["code"] == "request_too_large"
+
+
+# --------------------------------------------------------------------------
+# La garde est TRANSPARENTE quand elle n'a rien à refuser
+# --------------------------------------------------------------------------
+
+
+def test_une_reponse_ordinaire_traverse_la_garde_intacte() -> None:
+    """Une application qui répond sans lire son corps n'est pas gênée.
+
+    C'est le cas d'un 404 ou d'un 403 : la route n'existe pas, ou l'appelant
+    n'y a pas droit, et le corps ne sera jamais lu. La garde ne doit pas
+    transformer cette réponse, ni attendre un corps que personne ne demande.
+    """
+
+    async def repond_sans_lire(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "http.response.start", "status": 404, "headers": []})
+        await send({"type": "http.response.body", "body": b"absent"})
+
+    garde = poser_la_garde(repond_sans_lire, {("POST", "/depot"): PLAFOND})
+    reponses: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"x" * 50, "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        reponses.append(message)
+
+    asyncio.run(
+        garde(
+            {"type": "http", "method": "POST", "path": "/depot", "headers": []},
+            receive,
+            send,
+        )
+    )
+    assert reponses[0]["status"] == 404
+    assert b"absent" in reponses[1]["body"]
+
+
+def test_un_scope_qui_n_est_pas_http_passe_sans_etre_touche() -> None:
+    """Une connexion WebSocket n'a pas de `Content-Length` à examiner.
+
+    La garde doit s'écarter plutôt que de raisonner sur une forme de requête
+    qu'elle ne connaît pas : lever ici casserait un transport entier pour une
+    protection qui ne le concerne pas.
+    """
+    transmis: list[Any] = []
+
+    async def application(scope: Any, receive: Any, send: Any) -> None:
+        transmis.append(scope["type"])
+
+    garde = poser_la_garde(application, {("POST", "/depot"): PLAFOND})
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "websocket.connect"}
+
+    async def send(message: dict[str, Any]) -> None:
+        pass
+
+    asyncio.run(garde({"type": "websocket", "path": "/ws"}, receive, send))
+    assert transmis == ["websocket"]
