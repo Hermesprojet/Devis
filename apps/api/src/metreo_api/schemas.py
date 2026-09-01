@@ -1150,6 +1150,11 @@ class CompositePreviewOut(ApiModel):
 
     unit_code: str
     currency: str
+    #: `false` quand un composant à rotations arrondies rend le coût NON
+    #: proportionnel : le chiffre reste exact pour une unité, mais le
+    #: multiplier surestime. L'écran le dit plutôt que de laisser croire à une
+    #: règle de trois.
+    scales_linearly: bool
     #: Le décimal EXACT, non arrondi — pour qui veut recalculer.
     unit_cost: str
     #: Le même, arrondi selon la politique de l'organisation — pour qui lit.

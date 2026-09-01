@@ -467,6 +467,11 @@ function Apercu({ apercu }: { apercu: CompositePreview | null }) {
           {apercu.unit_cost_display} {apercu.currency} / {apercu.unit_code}
         </span>
       </p>
+      {!apercu.scales_linearly && (
+        <div className="notice warning" data-testid="non-proportionnel">
+          {t('composites.notLinear')}
+        </div>
+      )}
       <table data-testid="ventilation">
         <thead>
           <tr>

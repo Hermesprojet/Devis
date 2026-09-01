@@ -331,7 +331,7 @@ export const api = {
   updateBoqItem: (itemId: string, body: Record<string, unknown>) =>
     request<BoqItem>(`/boq-items/${itemId}`, {
       method: 'PATCH',
-      body: JSON.stringify(body),
+      body,
     }),
   createBoqItem: (boqId: string, body: Record<string, unknown>) =>
     request<BoqItem>(`/boqs/${boqId}/items`, { method: 'POST', body }),
@@ -343,6 +343,8 @@ export const api = {
     request<PriceItem>(`/price-books/versions/${versionId}/items`, { method: 'POST', body }),
   priceBookVersions: (bookId: string) =>
     request<PriceBookVersion[]>(`/price-books/${bookId}/versions`),
+  publishPriceBookVersion: (versionId: string) =>
+    request<PriceBookVersion>(`/price-books/versions/${versionId}/publish`, { method: 'POST' }),
   priceItems: (versionId: string, query = '') =>
     request<Page<PriceItem>>(`/price-books/versions/${versionId}/items${query}`),
   composites: (versionId: string) =>
@@ -352,24 +354,24 @@ export const api = {
   createComposite: (versionId: string, body: CompositeInput) =>
     request<CompositePrice>(`/price-books/versions/${versionId}/composites`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body,
     }),
   updateComposite: (compositeId: string, body: CompositeInput & { revision: number }) =>
     request<CompositePrice>(`/price-books/composites/${compositeId}`, {
       method: 'PUT',
-      body: JSON.stringify(body),
+      body,
     }),
   duplicateComposite: (compositeId: string, body: { code: string; label?: string }) =>
     request<CompositePrice>(`/price-books/composites/${compositeId}/duplicate`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body,
     }),
   deleteComposite: (compositeId: string) =>
     request<void>(`/price-books/composites/${compositeId}`, { method: 'DELETE' }),
   previewComposite: (versionId: string, body: { unit_code: string; components: Composant[] }) =>
     request<CompositePreview>(`/price-books/versions/${versionId}/composites/preview`, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body,
     }),
   previewImport: (versionId: string, file: File) => {
     const form = new FormData()
@@ -755,6 +757,8 @@ export type CompositePrice = {
 export type CompositePreview = {
   unit_code: string
   currency: string
+  /** `false` quand un composant à rotations arrondies rend le coût non proportionnel. */
+  scales_linearly: boolean
   /** Le décimal exact, non arrondi. */
   unit_cost: string
   /** Le même, arrondi par le SERVEUR. C'est celui qu'on affiche. */

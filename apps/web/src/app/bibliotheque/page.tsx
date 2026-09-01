@@ -16,6 +16,8 @@ import {
   type PriceItem,
 } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { PERMISSIONS, can } from '@/lib/permissions'
+import { usePermissions } from '@/lib/usePermissions'
 
 const STRATEGIES = ['create', 'replace', 'ignore', 'merge'] as const
 
@@ -31,7 +33,9 @@ export default function PriceBookPage() {
   const [report, setReport] = useState<ImportReport | null>(null)
   const [strategy, setStrategy] = useState<(typeof STRATEGIES)[number]>('create')
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
+  const [publication, setPublication] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const permissions = usePermissions()
 
   const boot = useCallback(async () => {
     try {
@@ -74,6 +78,25 @@ export default function PriceBookPage() {
   useEffect(() => {
     void loadItems('')
   }, [loadItems])
+
+  /**
+   * Publier : irréversible, donc confirmé, et jamais offert sans le droit.
+   *
+   * Le bouton n'existait pas. Publier une version se faisait par appel d'API,
+   * ce qui laissait l'écran des sous-détails annoncer une lecture seule que
+   * personne ne pouvait déclencher depuis le navigateur.
+   */
+  async function publier() {
+    if (!versionId) return
+    try {
+      const publiee = await api.publishPriceBookVersion(versionId)
+      setVersions((liste) => liste.map((v) => (v.id === publiee.id ? publiee : v)))
+      setPublication(false)
+      setError(null)
+    } catch (caught) {
+      setError(caught)
+    }
+  }
 
   async function preview(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -118,6 +141,12 @@ export default function PriceBookPage() {
     )
   }
 
+  const versionSelectionnee = versions.find((version) => version.id === versionId)
+  const figee = versionSelectionnee?.status === 'published'
+  // Une version publiée ne se republie pas : l'API répondrait 409, et offrir
+  // une commande qui échoue est précisément ce qu'on cherche à éviter.
+  const peutPublier = Boolean(versionId) && !figee && can(permissions, PERMISSIONS.pricebookWrite)
+
   return (
     <Shell>
       <h1>{t('priceBook.title')}</h1>
@@ -146,12 +175,41 @@ export default function PriceBookPage() {
           }}
         />
         <div className="spacer" />
-        {versionId && <NouveauPrix versionId={versionId} onCree={() => void loadItems(search)} />}
+        {versionSelectionnee?.status === 'published' && (
+          <span className="badge" data-testid="version-publiee-badge">
+            {t('priceBook.published')}
+          </span>
+        )}
+        {peutPublier && (
+          <button onClick={() => setPublication(true)}>{t('priceBook.publish')}</button>
+        )}
+        {versionId && !figee && (
+          <NouveauPrix versionId={versionId} onCree={() => void loadItems(search)} />
+        )}
         <a className="button" href="/modele_import_prix.csv" download>
           Modèle CSV
         </a>
       </div>
 
+      {publication && (
+        <div className="card" data-testid="confirmation-publication">
+          <div className="notice warning" role="alert">
+            {t('priceBook.publishWarning')}
+          </div>
+          <button className="primary" onClick={() => void publier()}>
+            {t('priceBook.publishConfirm')}
+          </button>{' '}
+          <button onClick={() => setPublication(false)}>{t('common.cancel')}</button>
+        </div>
+      )}
+
+      {figee && (
+        <div className="notice info" data-testid="bibliotheque-figee">
+          {t('composites.publishedReadOnly')}
+        </div>
+      )}
+
+      {!figee && (
       <div className="card">
         <h2 style={{ marginTop: 0 }}>{t('import.title')}</h2>
         <div className="notice info">{t('import.nothingWritten')}</div>
@@ -197,6 +255,7 @@ export default function PriceBookPage() {
           </>
         )}
       </div>
+      )}
 
       <div className="card" style={{ padding: 0 }}>
         <table>

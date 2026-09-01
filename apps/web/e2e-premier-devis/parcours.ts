@@ -94,3 +94,25 @@ async function constat(page: Page): Promise<string> {
     `  session en place : ${cles.join(', ') || '(aucune)'}`
   )
 }
+
+/**
+ * Le texte imprimé d'un PDF, tel qu'un lecteur le verrait.
+ *
+ * Chercher une chaîne dans les octets bruts ne prouve rien : un opérateur
+ * `Tj` la porte échappée, un accent y est un octal, et une comparaison brute
+ * répond « absent » pour du texte pourtant imprimé. Ce décodeur ne lit que ce
+ * que le document DESSINE — c'est la seule lecture qui autorise à conclure
+ * qu'une mention interne ne figure pas sur un devis client.
+ */
+export function texteDuPdf(pdf: Buffer): string {
+  const brut = pdf.toString('latin1')
+  const morceaux: string[] = []
+  for (const trouve of brut.matchAll(/\(((?:\\.|[^\\()])*)\)\s*Tj/g)) {
+    morceaux.push(
+      (trouve[1] ?? '').replace(/\\([0-7]{3})|\\(.)/g, (_, octal: string, echappe: string) =>
+        octal ? String.fromCharCode(parseInt(octal, 8)) : echappe,
+      ),
+    )
+  }
+  return Buffer.from(morceaux.join('\n'), 'latin1').toString('latin1')
+}

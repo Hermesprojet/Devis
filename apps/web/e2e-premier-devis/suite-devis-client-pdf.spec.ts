@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { expect, test, type Download, type Page } from '@playwright/test'
 
 import { ADMIN } from './banc'
-import { seConnecter, seDeconnecter } from './parcours'
+import { seConnecter, seDeconnecter, texteDuPdf } from './parcours'
 
 /**
  * Le parcours commercial, prouvé DANS LE NAVIGATEUR.
@@ -44,26 +44,6 @@ async function octets(telechargement: Download): Promise<Buffer> {
 
 function empreinte(contenu: Buffer): string {
   return createHash('sha256').update(contenu).digest('hex')
-}
-
-/**
- * Le texte d'un PDF sans compression, tel que ce dépôt les écrit.
- *
- * On ne rend pas la page : on lit les chaînes littérales des opérateurs `Tj`.
- * C'est suffisant pour affirmer ce qui est IMPRIMÉ, et cela n'introduit
- * aucune dépendance de rendu dans la suite.
- */
-function texteDuPdf(pdf: Buffer): string {
-  const brut = pdf.toString('latin1')
-  const morceaux: string[] = []
-  for (const trouve of brut.matchAll(/\(((?:\\.|[^\\()])*)\)\s*Tj/g)) {
-    morceaux.push(
-      (trouve[1] ?? '').replace(/\\([0-7]{3})|\\(.)/g, (_, octal: string, echappe: string) =>
-        octal ? String.fromCharCode(parseInt(octal, 8)) : echappe,
-      ),
-    )
-  }
-  return Buffer.from(morceaux.join('\n'), 'latin1').toString('latin1')
 }
 
 /** Le PDF du devis, téléchargé depuis l'écran comme un utilisateur le ferait. */

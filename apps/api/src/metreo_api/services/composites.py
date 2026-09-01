@@ -250,6 +250,15 @@ def apercu(
     vérités qui divergent au premier arrondi.
     """
     arrondi = arrondi or RoundingPolicy()
+    # Un composant à rotations ARRONDIES ne se met pas à l'échelle
+    # linéairement : une unité demande un camion entier, cent unités n'en
+    # demandent que dix. Le coût rendu ici est donc exact POUR UNE UNITÉ, et
+    # trompeur si on le multiplie. Mesuré au parcours navigateur : un aperçu à
+    # 77,50 /m³ donnait 41,50 /m³ sur un poste de 100 m³ — l'écart n'était nulle
+    # part signalé. Il l'est maintenant, et l'écran le dit.
+    proportionnel = not any(
+        spec.get("component_type") == "rotation" and spec.get("round_up", True) for spec in specs
+    )
     composants = components_from_specs(specs, currency)
     resultat = compute_line_price(
         quantity=Quantity.of(1, unit_code),
@@ -261,6 +270,7 @@ def apercu(
     return {
         "unit_code": unit_code,
         "currency": currency,
+        "scales_linearly": proportionnel,
         # Les deux formes, comme partout ailleurs dans ce dépôt : le décimal
         # EXACT pour qui recalcule, et la forme arrondie selon la politique de
         # l'organisation pour qui lit. L'écran affiche la seconde et ne

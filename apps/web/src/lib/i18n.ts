@@ -105,6 +105,13 @@ const fr: Dictionary = {
   'priceBook.supplier': 'Fournisseur',
   'priceBook.import': 'Importer un CSV',
   'priceBook.demoFlag': 'Donnée fictive',
+  'priceBook.publish': 'Publier cette version',
+  'priceBook.published': 'Version publiée',
+  'priceBook.publishWarning':
+    'Publier fige la version : ses prix et ses sous-détails passent en lecture seule, '
+    + 'définitivement. Les études déjà chiffrées gardent leurs montants ; pour faire évoluer '
+    + 'le catalogue, créez ensuite une nouvelle version.',
+  'priceBook.publishConfirm': 'Confirmer la publication',
 
   'priceSource.label': 'Source du prix',
   'priceSource.none': 'Aucun prix — le gel sera refusé',
@@ -135,6 +142,11 @@ const fr: Dictionary = {
   'composites.moveUp': 'Monter',
   'composites.moveDown': 'Descendre',
   'composites.unitCost': 'Coût unitaire (déboursé sec) :',
+  'composites.notLinear':
+    'Ce coût vaut pour UNE unité. Une rotation arrondie ne se met pas à l\u2019échelle : '
+    + 'une unité demande un camion entier, cent unités n\u2019en demandent pas cent fois plus. '
+    + 'Le montant du poste est calculé sur sa quantité réelle, il ne s\u2019obtient pas '
+    + 'en multipliant celui-ci.',
   'composites.kind': 'Nature',
   'composites.amount': 'Montant',
   'composites.previewUnavailable':
