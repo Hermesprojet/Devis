@@ -66,7 +66,13 @@ Les frontières sont donc **des modules, pas des processus** :
 | Bibliothèque de prix | `services/price_import.py`, `services/composites.py` | Prix, versions, imports en deux temps, sous-détails |
 | Métré | `routers/boq.py` | Bordereau, quantités, statuts |
 | Étude de prix | `services/estimating.py` | Traduction base ↔ moteur, gel, instantanés |
-| Exports | `services/exports.py` | CSV et aperçu de devis |
+| Exports | `services/exports.py` | CSV et aperçu imprimable |
+| Clients | `routers/clients.py` | Répertoire réutilisable, archivage plutôt que suppression |
+| Émission | `services/issuance.py`, `services/quote_pdf.py`, `services/numerotation.py` | Le devis REMIS : numéro validé, PDF figé, empreinte |
+| Cycle commercial | `services/cycle_devis.py`, `routers/quotes.py` | Journal append-only ; l'état est une fonction pure du journal, jamais une colonne |
+| Partage client | `services/partage.py`, `routers/devis_public.py` | Lien à secret haché, session publique courte, page sans compte |
+| Conservation | `services/conservation.py` | Décision de conservation et purge encadrée — aucune route HTTP |
+| Documents | `services/documents.py`, `services/document_storage.py` | Métadonnées et dépôt d'originaux (socle Phase 2A) |
 | Audit | `services/audit.py` | Journal chaîné append-only |
 
 Ce qui doit devenir un service asynchrone le deviendra sans changer de

@@ -33,6 +33,7 @@ n'est pas figé (voir `docs/ASSUMPTIONS.md`).
 | --- | --- | --- |
 | 0 | Cadrage, architecture, socle technique, CI | **Fonctionnellement complet** |
 | 1 | Organisation, projet, bibliothèque de prix, bordereau, moteur de calcul, gel de version, exports, audit | **Fonctionnellement complet — candidate de validation** |
+| 1+ | Répertoire de clients, devis remis en PDF figé, cycle commercial (transmission, consultation, acceptation ou refus), lien client sécurisé, conservation et effacement encadrés | **Fonctionnellement complet** |
 | 2 | Intelligence documentaire (OCR, extraction, citations, validation) | Non implémenté |
 | 3 | Métrés assistés, plans, IFC/DXF/DWG | Non implémenté |
 | 4 | Fournisseurs, demandes de prix, comparatifs | Non implémenté |
@@ -42,6 +43,19 @@ n'est pas figé (voir `docs/ASSUMPTIONS.md`).
 Aucun écran de l'application ne présente une fonction non implémentée comme
 disponible. Il n'y a **aucune intégration externe**, **aucun fournisseur IA ou
 OCR**, et **aucun envoi d'e-mail** dans cette version.
+
+Le cycle commercial fonctionne donc **sans domaine ni SMTP** : le lien client se
+copie à la main, et l'entreprise peut aussi enregistrer une réponse reçue par
+téléphone ou en rendez-vous. Ce n'est pas une signature électronique qualifiée
+et l'application ne le prétend nulle part — l'identité du répondant est
+déclarative, et les écrans le disent.
+
+**La conservation n'est pas décidée à votre place.** Détruire une organisation
+exige une décision de conservation portant sa durée, sa juridiction, sa source
+datée, sa date d'effet et son validateur. Le dépôt n'en fournit aucune : une
+durée de conservation est une règle réglementaire, et l'inventer serait rendre
+un avis juridique. Sans décision, la destruction est refusée — le refus
+conserve. Voir `docs/adr/0006-conservation-et-effacement.md`.
 
 ---
 

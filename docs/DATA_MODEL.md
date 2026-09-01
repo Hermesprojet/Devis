@@ -22,19 +22,32 @@ Organization ─1:1─ OrganizationSettings           règles de calcul de l'ent
       │
       ├─* TaxRateRow                              taux datés, hors prix HT
       ├─* Membership *─ User                      rôle par organisation
+      ├─* Client                                 répertoire réutilisable
       ├─* Project
       │      ├─* BillOfQuantities ──* BoqItem     bordereau et postes
       │      └─* Estimate
       │             └─* EstimateVersion           brouillon → gelée (instantané)
+      │                    └─0:1─ IssuedQuote     le devis REMIS : PDF figé + empreinte
+      │                             ├─* QuoteEvent         journal append-only du cycle
+      │                             ├─* QuoteShareLink     lien public, secret haché
+      │                             └─* QuotePublicSession session courte du destinataire
       ├─* PriceBook
       │      └─* PriceBookVersion                 brouillon → publiée (immuable)
       │             ├─* PriceItem                 prix unitaires
       │             ├─* CompositePriceRow ──* CompositeComponentRow   sous-détails
       │             └─* ImportBatch ──* ImportBatchRow                zone de préparation
+      ├─* QuoteRetentionDecision                  durée de conservation ET ce qui la fonde
       └─* AuditEvent                              journal chaîné, append-only
 
 RegionProfile                                     global, non tenant : packs pays/région
+OrganizationPurge                                 SANS clé étrangère : survit à l'organisation
 ```
+
+Deux tables sortent du graphe, et pour deux raisons opposées. `RegionProfile`
+est globale parce qu'un pack régional ne dépend d'aucune entreprise.
+`OrganizationPurge` est détachée parce qu'elle doit **survivre** à
+l'organisation qu'elle décrit : un registre de destruction rattaché à ce qu'il
+enregistre disparaît avec lui et ne prouve rien.
 
 ## Tables et raisons d'être
 
@@ -108,6 +121,67 @@ Une version gelée se relit depuis son instantané. Modifier un prix de référe
 après coup ne la touche pas — c'est vérifié par
 `test_a_later_price_change_does_not_move_a_frozen_total`.
 
+### Client et devis remis
+
+| Table | Ce qu'elle porte | Point à connaître |
+| --- | --- | --- |
+| `clients` | Fiche réutilisable : identité, adresse, contact | S'archive (`archived_at`), ne se supprime pas tant qu'un chantier la sert |
+| `issued_quotes` | Le devis **remis** : numéro, dates, quatre instantanés, clé et empreinte du PDF | Immuable. Corriger un devis remis, c'est une nouvelle version puis une nouvelle émission — l'ancienne reste |
+
+Un devis remis porte `organization_snapshot`, `client_snapshot`,
+`project_snapshot` et `document_snapshot` : quatre copies distinctes de ce que
+le document DIT, au moment où il a été produit. Modifier la fiche client
+ensuite ne change ni le PDF ni son empreinte, et c'est vérifié dans le parcours
+navigateur.
+
+**Aucun parent ordinaire ne l'emporte.** Chantier, estimation, version gelée et
+désormais organisation retiennent en `RESTRICT`. Reproduit sur base jetable
+avant correction : quatre suppressions sur cinq faisaient disparaître le devis
+sans un mot et laissaient son PDF orphelin sur le volume.
+
+### Cycle commercial
+
+`quote_events` est le journal du cycle : transmission, consultation,
+acceptation, refus, correction. **Append-only tenu par la base** — un
+déclencheur refuse `UPDATE` et `DELETE`. Une erreur de saisie interne se corrige
+par un événement compensatoire (`corrects_event_id` + motif obligatoire), jamais
+en réécrivant l'original.
+
+L'état commercial — Émis, Transmis, Consulté, Accepté, Refusé, Expiré — **n'est
+stocké nulle part**. C'est une fonction pure du journal et de la date du jour.
+Deux conséquences voulues : « Expiré » est exact sans tâche planifiée, et aucun
+état enregistré ne peut diverger de l'histoire qui le justifie.
+
+| Table | Ce qu'elle porte | Point à connaître |
+| --- | --- | --- |
+| `quote_events` | Type, canal, acteur interne, auteur déclaré, commentaire borné, date effective et date d'enregistrement | Append-only en base, pas seulement en code |
+| `quote_share_links` | **Empreinte** d'un secret de 256 bits, échéance, révocation | Le secret brut n'est rendu qu'une fois et n'est jamais stocké |
+| `quote_public_sessions` | Session courte du destinataire, adossée à un lien | Ne porte aucun droit propre : le lien est relu à chaque requête, donc révoquer ferme immédiatement |
+
+### Conservation et effacement
+
+| Table | Ce qu'elle porte | Point à connaître |
+| --- | --- | --- |
+| `quote_retention_decisions` | Durée, juridiction, source + date de consultation, date d'effet, validateur | Versionnée : corriger ajoute une ligne, l'ancienne reste lisible. **Le dépôt n'en sème aucune** |
+| `organization_purges` | Code de motif, référence opaque, fenêtre d'exécution, empreintes et chemins des PDF détruits | **Sans clé étrangère** — elle survit à l'organisation. Aucun texte libre n'y entre |
+
+Trois règles tiennent l'ensemble, et chacune corrige une erreur mesurée :
+
+1. **Une durée seule n'est pas une décision**, c'est une opinion sans auteur.
+   Les cinq éléments tiennent ou aucun ne tient. Sans décision en vigueur, la
+   destruction est refusée — et le refus conserve.
+2. **Une demande n'est pas une autorisation.** `demander()` inscrit et n'ouvre
+   rien ; une fenêtre d'exécution s'ouvre séparément et le déclencheur la
+   compare à l'**horloge de la base** — une borne validée par l'appelant ne
+   prouve rien, il suffirait de mentir sur l'heure.
+3. **Aucune zone durable n'accepte un nom.** Le motif est un code pris dans une
+   liste fermée ; la référence rejette blancs et ponctuation de phrase. Un
+   registre censé prouver une destruction sans conserver ce qu'elle a effacé ne
+   peut pas offrir une case où l'on écrit le nom d'un client.
+
+Détail et alternatives écartées : `docs/adr/0006-conservation-et-effacement.md`.
+Exécution : `scripts/purger_organisation.py` — aucune route HTTP.
+
 ### Audit
 
 `audit_events` est append-only, numérotée par organisation
@@ -130,8 +204,11 @@ avant :
 - Phase 4 — `Supplier`, `SupplierContact`, `SupplierQualification`, `ServiceArea`,
   `RFQ`, `RFQPackage`, `RFQRecipient`, `RFQMessage`, `SupplierOffer`,
   `SupplierOfferLine`, `Connector`, `ConnectorCredentialReference`, `ConnectorRun`
-- Transverse — `Risk`, `Assumption`, `OpenQuestion`, `Quote`, `QuoteVersion`,
-  `Approval`, `ExportArtifact`, `Notification`
+- Transverse — `Risk`, `Assumption`, `OpenQuestion`, `Approval`,
+  `ExportArtifact`, `Notification`
+
+`Quote` et `QuoteVersion` figuraient ici ; ils n'y sont plus. Le devis remis
+existe sous le nom `issued_quotes`, et son cycle commercial avec lui.
 
 Deux exigences structurantes les concernent déjà :
 
@@ -151,4 +228,11 @@ Deux exigences structurantes les concernent déjà :
 | `uq_estimateversion_number` | Numérotation continue par estimation |
 | `uq_audit_org_sequence` | Interdit deux événements de même rang, donc une insertion « entre » deux maillons |
 | `ck_boq_item_kind`, `ck_boq_item_status`, `ck_composite_component_type`, `ck_estimate_version_status` | Les énumérations sont tenues par la base, pas seulement par l'application |
+| `uq_issued_quote_number` | Le numéro d'un devis remis est unique DANS l'organisation, et c'est la base qui le tient |
+| `uq_issued_quote_version` | Une version gelée ne produit qu'un seul devis remis |
+| `uq_quote_share_link_secret`, `uq_quote_public_session_token` | Deux liens ne peuvent pas partager une empreinte |
+| `ck_quote_event_kind`, `ck_quote_event_channel`, `ck_organization_purge_reason` | Énumérations tenues par la base — dont les motifs de purge, précisément pour qu'aucune phrase libre n'y entre |
+| `ck_organization_purge_window` | Une autorisation n'existe pas sans sa borne, ni l'inverse |
+| `trg_issued_quotes_conservation` | Rien ne détruit un devis remis sans autorisation d'exécution ouverte et non expirée |
+| `trg_quote_events_append_only` (PostgreSQL) / `trg_quote_events_pas_de_modification` et `..._pas_de_suppression` (SQLite) | Rien ne réécrit le journal du cycle. Deux déclencheurs sous SQLite, qui ne sait pas conditionner un seul sur l'opération |
 | `ix_projects_org_status`, `ix_price_items_org_family`, `ix_audit_org_occurred` | Filtres de liste, toujours préfixés par l'organisation |

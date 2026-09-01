@@ -43,6 +43,11 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 | 8 | Export CSV et aperçu de devis imprimable | ✅ | `test_estimating.py` |
 | 9 | Audit des actions principales | ✅ | `test_audit.py` |
 | 10 | Tests d'isolation entre deux organisations | ✅ | `test_tenant_isolation.py` |
+| 11 | Répertoire de clients réutilisable | ✅ | `test_repertoire_clients.py` |
+| 12 | Devis remis : numéroté, figé, PDF téléchargeable et empreinte | ✅ | `test_devis_emis.py`, `test_motif_de_numerotation.py`, `suite-devis-client-pdf.spec.ts` |
+| 13 | Cycle commercial : transmission, consultation, acceptation ou refus | ✅ | `test_reponse_client.py`, `suite-devis-reponse-client.spec.ts` |
+| 14 | Lien client sécurisé, révocable, sans compte ni domaine | ✅ | `test_partage_de_devis.py` |
+| 15 | Conservation et effacement encadrés | ✅ | `test_conservation_des_devis.py`, `test_purge_encadree.py` |
 
 Fonctionne localement avec des fournisseurs factices et **aucune clé payante**.
 
@@ -50,6 +55,13 @@ Fonctionne localement avec des fournisseurs factices et **aucune clé payante**.
 sous-détails depuis l'interface (création par API seulement), scénarios bas /
 probable / haut exposés par l'API (la fonction `sensitivity` existe dans le
 domaine et est testée, aucun point d'entrée HTTP ne l'expose encore).
+
+**Ouvert autour du cycle commercial :** l'envoi d'e-mail — le lien client se
+copie à la main, ce qui est suffisant sans domaine mais ne l'est pas
+durablement. Et la **durée** de conservation, qui se décide organisation par
+organisation : le dépôt fournit la forme (durée, juridiction, source datée,
+date d'effet, validateur) et n'en remplit aucune, faute de source qu'il
+puisse tenir.
 
 ---
 
