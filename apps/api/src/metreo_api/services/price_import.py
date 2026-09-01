@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import ImportBatch, ImportBatchRow, PriceItem
+from . import classeur
 from .price_contract import validate_price_row
 
 ImportStrategy = Literal["create", "replace", "ignore", "merge"]
@@ -196,51 +197,96 @@ def _serialise_for_staging(normalized: dict[str, Any]) -> dict[str, Any]:
     return serialised
 
 
-def parse_csv(
-    payload: bytes,
-    *,
-    column_mapping: dict[str, str] | None = None,
-    default_currency: str = "EUR",
-) -> tuple[list[ParsedRow], dict[str, Any]]:
-    """Parse and validate the whole file, returning every row with its errors."""
+@dataclass
+class Lecture:
+    """Ce qu'un lecteur rend, quel que soit le format qu'il a lu.
+
+    C'est la FRONTIÈRE de la convergence. En amont vivent les questions
+    propres à un format — encodage et séparateur pour le CSV, archive et
+    feuille pour le classeur. En aval, plus rien ne sait d'où vient la donnée :
+    correspondance des colonnes, dates locales, alias de ressource, contrat
+    partagé, doublons et staging s'appliquent une seule fois, pour les deux.
+
+    Deux pipelines auraient divergé au premier alias ajouté, et l'utilisateur
+    aurait obtenu deux résultats pour un même tableau selon qu'il l'enregistre
+    en `.csv` ou en `.xlsx`.
+    """
+
+    headers: list[str]
+    #: Une ligne = en-tête brut → texte. Du TEXTE, comme un CSV en rend : c'est
+    #: au lecteur de classeur de rendre ses nombres et ses dates sous cette
+    #: forme, pas à la normalisation de connaître deux jeux de types.
+    rows: list[dict[str, str]]
+    #: Le rang tel que l'utilisateur le voit dans son fichier. Le CSV compte les
+    #: lignes, le classeur compte les rangs, et une ligne vide au milieu les
+    #: désaccorderait si on recalculait ici.
+    line_numbers: list[int]
+    #: Ce que le format seul sait dire : encodage et séparateur, ou feuille.
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+def lire_le_csv(payload: bytes) -> Lecture:
+    """Décodage, séparateur, en-têtes : tout ce qui est propre au CSV."""
     text, encoding = _decode(payload)
     if not text.strip():
-        return [], {
-            "encoding": encoding,
-            "delimiter": None,
-            "headers": [],
-            "mapping": {},
-            "unmapped_headers": [],
-            "missing_required_columns": list(REQUIRED_COLUMNS),
-            "fatal": "empty_file",
-        }
+        return Lecture(
+            headers=[],
+            rows=[],
+            line_numbers=[],
+            meta={"format": "csv", "encoding": encoding, "delimiter": None, "fatal": "empty_file"},
+        )
 
     delimiter = _sniff_delimiter(text[:4096])
     reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
     headers = [h for h in (reader.fieldnames or []) if h is not None]
+
+    rows: list[dict[str, str]] = []
+    line_numbers: list[int] = []
+    for offset, raw_row in enumerate(reader):
+        rows.append({k: (v if v is not None else "") for k, v in raw_row.items() if k is not None})
+        line_numbers.append(offset + 2)  # 1-based, header is line 1
+
+    return Lecture(
+        headers=headers,
+        rows=rows,
+        line_numbers=line_numbers,
+        meta={"format": "csv", "encoding": encoding, "delimiter": delimiter, "fatal": None},
+    )
+
+
+def normaliser(
+    lecture: Lecture,
+    *,
+    column_mapping: dict[str, str] | None = None,
+    default_currency: str = "EUR",
+) -> tuple[list[ParsedRow], dict[str, Any]]:
+    """La normalisation, une seule fois, pour tous les formats."""
+    headers = lecture.headers
     detected_mapping, unmapped = build_column_mapping(headers)
     mapping = {**detected_mapping, **(column_mapping or {})}
     mapped_targets = set(mapping.values())
     missing_required = [c for c in REQUIRED_COLUMNS if c not in mapped_targets]
 
     meta: dict[str, Any] = {
-        "encoding": encoding,
-        "delimiter": delimiter,
+        "encoding": None,
+        "delimiter": None,
+        **lecture.meta,
         "headers": headers,
         "mapping": mapping,
         "unmapped_headers": unmapped,
         "missing_required_columns": missing_required,
-        "fatal": "missing_required_columns" if missing_required else None,
     }
+    if lecture.meta.get("fatal"):
+        meta["missing_required_columns"] = list(REQUIRED_COLUMNS)
+        return [], meta
+    meta["fatal"] = "missing_required_columns" if missing_required else None
     if missing_required:
         return [], meta
 
     rows: list[ParsedRow] = []
     seen_codes: dict[str, int] = {}
 
-    for offset, raw_row in enumerate(reader):
-        line_number = offset + 2  # 1-based, header is line 1
-        raw = {k: (v if v is not None else "") for k, v in raw_row.items() if k is not None}
+    for raw, line_number in zip(lecture.rows, lecture.line_numbers, strict=True):
         errors: list[RowError] = []
         values: dict[str, Any] = {}
         for header, canonical in mapping.items():
@@ -250,9 +296,9 @@ def parse_csv(
             continue  # blank line
 
         # Toute règle métier vit dans le contrat partagé. Ce qui reste ici est
-        # propre au CSV : décodage, séparateur, correspondance des colonnes,
-        # doublons DANS LE FICHIER — que le contrat ne peut pas voir, n'ayant
-        # qu'une ligne sous les yeux.
+        # propre à l'IMPORT, quel qu'en soit le format : dates écrites à la
+        # locale, alias de type de ressource, et doublons DANS LE FICHIER — que
+        # le contrat ne peut pas voir, n'ayant qu'une ligne sous les yeux.
         for column in ("valid_from", "valid_to"):
             if values.get(column):
                 values[column] = coerce_local_date(values[column])
@@ -297,6 +343,55 @@ def parse_csv(
     return rows, meta
 
 
+def lire_le_classeur(payload: bytes, *, feuille: str | None = None) -> Lecture:
+    """Le classeur, ramené à la forme que rend le lecteur CSV.
+
+    Tout ce qui pouvait refuser le fichier — signature, bornes de l'archive,
+    macros, formules, liens externes — a déjà été prononcé par `classeur.lire`.
+    Ce qui arrive ici est un tableau de texte, et rien d'autre.
+    """
+    lue, meta = classeur.lire(payload, feuille=feuille)
+    return Lecture(
+        headers=lue.headers,
+        rows=lue.lignes,
+        line_numbers=lue.rangs,
+        meta={**meta, "fatal": None},
+    )
+
+
+def lire(payload: bytes, *, feuille: str | None = None) -> Lecture:
+    """Choisit le lecteur d'après le CONTENU du fichier, jamais d'après son nom.
+
+    Un `.csv` renommé `.xlsx` est courant, et l'inverse aussi. Choisir sur le
+    nom enverrait un texte au lecteur d'archive, qui échouerait par une erreur
+    illisible au lieu d'un refus clair — ou pire, enverrait une archive au
+    lecteur CSV, qui rendrait des lignes de charabia sans rien refuser.
+    """
+    if classeur.detecter_le_format(payload) == "csv":
+        return lire_le_csv(payload)
+    return lire_le_classeur(payload, feuille=feuille)
+
+
+def parse_csv(
+    payload: bytes,
+    *,
+    column_mapping: dict[str, str] | None = None,
+    default_currency: str = "EUR",
+    feuille: str | None = None,
+) -> tuple[list[ParsedRow], dict[str, Any]]:
+    """Lit un fichier de prix — CSV ou classeur — et rend chaque ligne validée.
+
+    Le nom reste celui d'avant : il est cité par les appelants et par les tests,
+    et le changer aurait été un renommage de plus dans un changement qui en
+    porte déjà assez. Ce qu'il fait, lui, a changé : il choisit le lecteur.
+    """
+    return normaliser(
+        lire(payload, feuille=feuille),
+        column_mapping=column_mapping,
+        default_currency=default_currency,
+    )
+
+
 def create_preview(
     session: Session,
     *,
@@ -308,10 +403,14 @@ def create_preview(
     column_mapping: dict[str, str] | None = None,
     default_currency: str = "EUR",
     created_by: str | None = None,
+    feuille: str | None = None,
 ) -> tuple[ImportBatch, dict[str, Any]]:
     """Validate a file and persist it as a staging batch."""
     rows, meta = parse_csv(
-        payload, column_mapping=column_mapping, default_currency=default_currency
+        payload,
+        column_mapping=column_mapping,
+        default_currency=default_currency,
+        feuille=feuille,
     )
 
     existing_codes = set(

@@ -43,6 +43,7 @@ from ..schemas import (
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import audit, price_import, pricebook_versions
+from ..services.classeur import ClasseurRefuse
 from ..services.composites import apercu, spec_from_row, validate_spec
 from ..services.estimating import rounding_from_settings
 from ..services.locking import lock_owned
@@ -339,16 +340,27 @@ def _version_open_for_writing(
 @router.post(
     "/versions/{version_id}/imports/preview",
     response_model=ImportPreviewOut,
-    summary="Prévisualiser un import CSV (aucune écriture)",
+    summary="Prévisualiser un import CSV ou XLSX (aucune écriture)",
 )
-async def preview_import(
+def preview_import(
     version_id: str,
     file: UploadFile = File(...),
     strategy: str = Form(default="create"),
+    feuille: str | None = Form(default=None),
     context: TenantContext = Depends(require(Permission.PRICEBOOK_WRITE)),
     session: Session = Depends(session_scope),
     settings: Settings = Depends(get_settings),
 ) -> ImportPreviewOut:
+    """Prévisualise un fichier de prix, CSV ou classeur.
+
+    **`def` et non `async def`, délibérément.** L'analyse d'un fichier est un
+    travail de processeur : décompresser une archive, lire du XML, valider
+    quelques milliers de lignes. Dans une coroutine, il s'exécuterait DANS la
+    boucle d'événements et gèlerait toutes les requêtes de tous les locataires
+    le temps de sa durée. Déclarée ainsi, FastAPI l'exécute dans un fil séparé.
+    Le classeur rend ce point critique là où le CSV le rendait seulement
+    fâcheux : une archive dilate le coût d'un facteur qu'on ne choisit pas.
+    """
     # Lecture simple, sans verrou : la suite `await file.read()` peut durer, et
     # tenir une ligne verrouillée pendant la lecture d'un fichier bloquerait
     # toute publication. La prévisualisation n'écrit aucun prix ; c'est le
@@ -358,7 +370,10 @@ async def preview_import(
     )
     _refuse_if_published(version)
 
-    payload = await file.read()
+    # `file.file` est le tampon synchrone sous-jacent : la lecture se fait dans
+    # le fil que FastAPI a déjà réservé à cette fonction. Un octet de plus que
+    # le plafond suffit à conclure — inutile de charger le reste pour refuser.
+    payload = file.file.read(settings.max_upload_bytes + 1)
     if len(payload) > settings.max_upload_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -373,16 +388,30 @@ async def preview_import(
             detail={"code": "invalid_strategy", "message": f"Stratégie « {strategy} » inconnue."},
         )
 
-    batch, meta = price_import.create_preview(
-        session,
-        organization_id=context.organization_id,
-        price_book_version_id=version_id,
-        filename=file.filename or "import.csv",
-        payload=payload,
-        strategy=strategy,  # type: ignore[arg-type]
-        default_currency=context.organization.currency,
-        created_by=context.user.id,
-    )
+    try:
+        batch, meta = price_import.create_preview(
+            session,
+            organization_id=context.organization_id,
+            price_book_version_id=version_id,
+            filename=file.filename or "import.csv",
+            payload=payload,
+            strategy=strategy,  # type: ignore[arg-type]
+            default_currency=context.organization.currency,
+            created_by=context.user.id,
+            feuille=feuille,
+        )
+    except ClasseurRefuse as refus:
+        # Le refus porte un CODE, et l'écran choisit son message : « macros »,
+        # « formules », « trop de lignes » n'appellent pas la même correction,
+        # et une phrase unique les confondrait toutes.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": refus.code,
+                "message": refus.message,
+                **({"feuilles": refus.context["feuilles"]} if "feuilles" in refus.context else {}),
+            },
+        ) from refus
     audit.record(
         session,
         organization_id=context.organization_id,

@@ -25,6 +25,13 @@ dependencies = [
   # déclaré en dépendance de développement seulement, ce qui suffisait aux
   # tests et pas à l'application.
   "httpx>=0.27",
+  # Lecture des classeurs XLSX. Une bibliothèque maintenue plutôt qu'un
+  # analyseur OOXML maison : le format est vaste — chaînes partagées, styles,
+  # dates sérielles — et en écrire un lecteur ici reviendrait à en devenir le
+  # mainteneur. La défense contre les archives hostiles, elle, reste à nous :
+  # openpyxl n'a jamais promis d'y résister, et `services/classeur.py` borne
+  # l'archive avant de la lui donner.
+  "openpyxl>=3.1,<4.0",
   "metreo-domain",
 ]
 
