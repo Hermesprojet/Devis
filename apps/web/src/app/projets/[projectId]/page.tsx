@@ -447,7 +447,6 @@ export default function ProjectPage() {
   )
 }
 
-
 /**
  * Le prix d'un poste : ce qu'il est, et comment en changer la SOURCE.
  *
@@ -477,6 +476,7 @@ function PrixDuPoste({
   const [erreur, setErreur] = useState<unknown>(null)
   const [occupe, setOccupe] = useState(false)
   const composite = composites.find((c) => c.id === item.composite_price_id)
+  const article = prix.find((p) => p.id === item.price_item_id)
 
   async function enregistrer() {
     setOccupe(true)
@@ -527,7 +527,17 @@ function PrixDuPoste({
         // Référencé mais introuvable dans la version chargée : le dire plutôt
         // que d'afficher un blanc que l'on prendrait pour « sans prix ».
         <span className="badge danger">{t('priceSource.otherVersion')}</span>
+      ) : article ? (
+        <span>
+          <span className="badge">{t('priceSource.library')}</span>{' '}
+          <span className="mono">{article.code}</span> — {article.label}{' '}
+          <span className="mono">
+            {article.unit_price} {article.currency}/{article.unit_code}
+          </span>
+        </span>
       ) : item.price_item_id ? (
+        // Le catalogue chargé est borné : un prix au-delà de cette borne
+        // existe sans figurer ici. Le badge seul vaut mieux qu'un blanc.
         <span className="badge">{t('priceSource.library')}</span>
       ) : (
         <span className="badge danger">{t('estimate.missingPrice')}</span>

@@ -700,6 +700,11 @@ def _sous_detail_ouvert(
     publication peut se glisser entre le contrôle du statut et l'écriture, et
     le sous-détail serait modifié dans une version que le produit présente
     comme figée.
+
+    La première lecture du sous-détail ne pose AUCUN verrou : elle ne sert qu'à
+    apprendre de quelle version il relève, puisqu'on ne peut pas verrouiller
+    une version dont on ignore l'identifiant. L'ordre déclaré porte sur les
+    verrous, pas sur les lectures.
     """
     composite = get_owned(
         session, CompositePriceRow, context.organization_id, composite_id, label="Sous-détail"
