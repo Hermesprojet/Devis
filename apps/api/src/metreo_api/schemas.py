@@ -1510,20 +1510,85 @@ class ScenariosIn(BaseModel):
     haut: HypothesesIn = Field(default_factory=HypothesesIn)
 
 
+class HypothesesOut(BaseModel):
+    """Les hypothèses TELLES QU'APPLIQUÉES, relues du serveur.
+
+    Rendues plutôt que supposées identiques à l'envoi : l'écran affiche ce qui
+    a servi au calcul, pas ce qu'il croit avoir demandé.
+    """
+
+    prix: str
+    prix_categories: list[str]
+    productivite: str
+    distance: str
+
+
+class EcartOut(BaseModel):
+    """L'écart au scénario probable."""
+
+    absolu: str
+    #: `None` quand la référence est nulle : une division par zéro n'a pas de
+    #: résultat, et rendre « 0 % » ferait passer une absence d'information pour
+    #: une information.
+    pourcentage: str | None
+
+
+class ScenarioCalculeOut(BaseModel):
+    """Un scénario qui a produit des totaux."""
+
+    status: Literal["success"] = "success"
+    nom: str
+    hypotheses: HypothesesOut
+    #: La même structure que `ComputationOut.result`, filtrée par les mêmes
+    #: décisions `cost:read` / `margin:read`.
+    totaux: dict[str, Any]
+    #: Les lignes sans prix, NOMMÉES et jamais comptées pour zéro.
+    lignes_sans_prix: list[str]
+    bloquant: bool
+    #: Absent tant que le scénario probable n'a pas lui-même abouti.
+    ecart: EcartOut | None = None
+
+
+class ScenarioRefuseOut(BaseModel):
+    """Un scénario qui n'a pas pu être chiffré.
+
+    Il vit dans la même liste que les autres, à sa place : un refus ne doit pas
+    faire disparaître les deux scénarios voisins, et l'écran a besoin de savoir
+    POUR LEQUEL il n'a rien à montrer.
+    """
+
+    status: Literal["refused"] = "refused"
+    nom: str
+    hypotheses: HypothesesOut
+    refus: dict[str, Any]
+
+
+#: Union DISCRIMINÉE : un scénario porte ses totaux ou son refus, jamais les
+#: deux et jamais aucun des deux. Un `dict[str, Any]` ne promettait rien de
+#: tel, et l'écran devait deviner en testant la présence d'une clé.
+ScenarioOut = Annotated[ScenarioCalculeOut | ScenarioRefuseOut, Field(discriminator="status")]
+
+
 class ScenariosOut(BaseModel):
     """Le résultat de la simulation. Rien n'a été écrit pour le produire."""
 
     version: EstimateVersionOut
     computed_at: datetime
     from_snapshot: bool
+    #: `cost:read` : ressources, déboursés et coûts.
     includes_internal_costs: bool
+    #: `margin:read` : étapes de markup, avec leurs taux, bases et formules.
+    #: Séparé des coûts, parce que le rôle `estimator` porte l'un sans l'autre.
+    includes_margin_steps: bool
     currency: str
-    #: Un par scénario, dans l'ordre bas / probable / haut. Chaque entrée porte
-    #: soit ses totaux, soit son refus — jamais les deux, jamais aucun des deux.
-    scenarios: list[dict[str, Any]]
+    #: Un par scénario, dans l'ordre bas / probable / haut — jamais réordonné.
+    scenarios: list[ScenarioOut]
     #: Les totaux ne suivent pas l'ordre que les libellés suggèrent. Signalé,
     #: jamais corrigé : réordonner masquerait l'information la plus utile.
     ordre_incoherent: bool
+    #: Les catégories que l'écran peut proposer, avec leur libellé. Rendues par
+    #: le serveur pour que l'interface n'en tienne pas une seconde liste.
+    categories: dict[str, str]
 
 
 # -- audit -----------------------------------------------------------------

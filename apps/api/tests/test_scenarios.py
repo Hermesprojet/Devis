@@ -662,3 +662,210 @@ def test_12bis_la_chaine_d_audit_reste_valide_apres_une_rafale(
     verif = seeded_client.get("/api/v1/audit/verify", headers=admin)
     assert verif.status_code == 200, verif.text
     assert verif.json()["valid"] is True
+
+
+# --------------------------------------------------------------------------
+# `cost:read` et `margin:read` : deux secrets, deux décisions
+# --------------------------------------------------------------------------
+
+#: Un taux RECONNAISSABLE, qui ne ressemble à aucun montant du bordereau.
+#: Chercher « margin_rate » dans la réponse ne prouverait rien : une étape de
+#: markup s'écrit `{"key": "margin", "rate": "0.4242"}`, et cette chaîne-là
+#: n'apparaît nulle part. C'est la VALEUR qu'il faut traquer.
+SENTINELLE_DE_MARGE = "0.4242"
+
+
+@pytest.fixture()
+def marge_sentinelle(seeded_client: TestClient, admin: dict[str, str]) -> str:
+    reponse = seeded_client.patch(
+        "/api/v1/organization/settings",
+        headers=admin,
+        json={"margin_rate": SENTINELLE_DE_MARGE},
+    )
+    assert reponse.status_code == 200, reponse.text
+    return SENTINELLE_DE_MARGE
+
+
+def _etapes_de_markup(charge: dict[str, Any]) -> list[dict[str, Any]]:
+    """Toutes les étapes de markup d'une réponse, à quelque profondeur soient-elles."""
+    trouvees: list[dict[str, Any]] = []
+    for ligne in charge.get("lines", []):
+        prix = ligne.get("price") or {}
+        trouvees.extend(prix.get("markup_steps") or [])
+    return trouvees
+
+
+def test_un_metreur_ne_recoit_NI_etape_de_markup_NI_taux_commercial(
+    seeded_client: TestClient, marge_sentinelle: str
+) -> None:
+    """Le rôle `estimator` porte `cost:read` SANS `margin:read`.
+
+    Reproduit avant d'être corrigé : le taux de marge de l'entreprise
+    apparaissait tel quel dans la réponse rendue au métreur, sur la route de
+    calcul comme sur celle des scénarios. Les étapes sont maintenant RETIRÉES,
+    pas renommées — un `{"key": "margin", "rate": …}` reste un taux de marge
+    quelle que soit sa clé.
+    """
+    metreur = login(seeded_client, "metreur@dubois.demo")
+    moi = seeded_client.get("/api/v1/auth/me", headers=metreur).json()
+    assert "cost:read" in moi["permissions"], "le test perdrait son sujet"
+    assert "margin:read" not in moi["permissions"]
+
+    estimation, version = _premiere_version(seeded_client, metreur)
+
+    calcul = seeded_client.get(
+        f"/api/v1/estimates/{estimation}/versions/{version}/computation", headers=metreur
+    )
+    assert calcul.status_code == 200, calcul.text
+    scenario = _simuler(seeded_client, metreur, estimation, version)
+    assert scenario.status_code == 200, scenario.text
+
+    for quoi, reponse in (("calcul", calcul), ("scénarios", scenario)):
+        # Le texte BRUT : la valeur ne doit apparaître nulle part, à aucune
+        # profondeur, sous aucune clé.
+        assert marge_sentinelle not in reponse.text, f"{quoi} : le taux de marge a fuité"
+        # Et la STRUCTURE : pas d'étape, même vidée de son taux.
+        rendu = reponse.json()
+        charges = (
+            [rendu["result"]]
+            if quoi == "calcul"
+            else [s["totaux"] for s in rendu["scenarios"] if "totaux" in s]
+        )
+        assert charges, "aucune charge à inspecter : le test passerait pour rien"
+        for charge in charges:
+            assert _etapes_de_markup(charge) == [], f"{quoi} : des étapes de markup subsistent"
+
+    # Ce que le métreur DOIT continuer de voir : les coûts.
+    totaux = scenario.json()["scenarios"][0]["totaux"]
+    assert "total_direct_cost" in totaux
+    assert scenario.json()["includes_internal_costs"] is True
+    assert scenario.json()["includes_margin_steps"] is False
+
+
+def test_un_administrateur_avec_margin_read_garde_ses_etapes(
+    seeded_client: TestClient, admin: dict[str, str], marge_sentinelle: str
+) -> None:
+    """Le filtre ne doit pas retirer à qui a le droit de voir.
+
+    Sans ce contrôle, masquer pour tout le monde passerait le test précédent
+    tout en cassant la fonction : les étapes de markup sont ce que le
+    responsable d'étude vient lire.
+    """
+    estimation, version = _premiere_version(seeded_client, admin)
+    scenario = _simuler(seeded_client, admin, estimation, version)
+    assert scenario.status_code == 200, scenario.text
+    rendu = scenario.json()
+
+    assert rendu["includes_margin_steps"] is True
+    etapes = _etapes_de_markup(rendu["scenarios"][0]["totaux"])
+    assert etapes, "l'administrateur doit voir les étapes de markup"
+    assert any(e.get("key") == "margin" for e in etapes)
+    assert marge_sentinelle in scenario.text
+
+
+def test_un_lecteur_sans_cost_read_ne_voit_ni_cout_ni_etape(
+    seeded_client: TestClient, marge_sentinelle: str
+) -> None:
+    """Et la route de calcul reste ouverte au lecteur, mais amputée.
+
+    `estimate:read` seul : les totaux publics, sans déboursé ni étape. La route
+    des scénarios, elle, exige `cost:read` et lui est fermée.
+    """
+    lecteur = login(seeded_client, "lecteur@dubois.demo")
+    estimation, version = _premiere_version(seeded_client, lecteur)
+
+    calcul = seeded_client.get(
+        f"/api/v1/estimates/{estimation}/versions/{version}/computation", headers=lecteur
+    )
+    assert calcul.status_code == 200, calcul.text
+    assert marge_sentinelle not in calcul.text
+    resultat = calcul.json()["result"]
+    assert "total_direct_cost" not in resultat
+    assert _etapes_de_markup(resultat) == []
+
+
+def test_les_categories_viennent_DU_DOMAINE_et_non_d_une_copie() -> None:
+    """Une liste recopiée dérive ; celle-ci ne le peut pas.
+
+    Le contrôle est une égalité EXHAUSTIVE, dans l'ordre : ajouter une nature
+    de ressource au domaine l'ajoute ici sans rien à faire, et retirer la
+    dérivation pour revenir à une liste en dur fait tomber ce test.
+    """
+    from metreo_domain.pricing import ResourceKind
+
+    assert tuple(k.value for k in ResourceKind) == scenarios.CATEGORIES
+    assert set(scenarios.LIBELLES_DE_CATEGORIE) == set(scenarios.CATEGORIES)
+    # Et chaque catégorie porte un libellé non vide : l'écran s'en sert.
+    assert all(libelle for libelle in scenarios.LIBELLES_DE_CATEGORIE.values())
+
+
+def test_toute_categorie_du_domaine_est_acceptee_par_le_contrat() -> None:
+    """Aucune n'est refusée comme « inconnue » alors qu'elle existe."""
+    for categorie in scenarios.CATEGORIES:
+        hyp = scenarios.hypotheses_depuis({"prix": "0.05", "prix_categories": [categorie]})
+        assert hyp.prix_categories == (categorie,)
+
+
+def test_chaque_scenario_porte_SOIT_ses_totaux_SOIT_son_refus(
+    seeded_client: TestClient, admin: dict[str, str]
+) -> None:
+    """La promesse que l'union discriminée rend exécutable.
+
+    Un `dict[str, Any]` ne garantissait rien : l'écran devait deviner en
+    testant la présence d'une clé, et rien n'interdisait une réponse portant
+    les deux — ou aucune des deux.
+    """
+    estimation, version = _premiere_version(seeded_client, admin)
+    rendu = _simuler(
+        seeded_client,
+        admin,
+        estimation,
+        version,
+        {"bas": {"prix": "-0.05"}, "probable": {}, "haut": {"prix": "0.05"}},
+    ).json()
+
+    for entree in rendu["scenarios"]:
+        assert entree["status"] in ("success", "refused")
+        if entree["status"] == "success":
+            assert "totaux" in entree and "refus" not in entree
+            assert "lignes_sans_prix" in entree and "bloquant" in entree
+        else:
+            assert "refus" in entree and "totaux" not in entree
+
+    # Les catégories viennent du SERVEUR : l'écran n'en tient pas de seconde liste.
+    assert set(rendu["categories"]) == set(scenarios.CATEGORIES)
+
+
+def test_un_scenario_refuse_laisse_les_deux_autres_exploitables(
+    seeded_client: TestClient, admin: dict[str, str]
+) -> None:
+    """Un refus est isolé à sa colonne.
+
+    Laisser l'exception remonter emporterait les scénarios voisins, qui n'ont
+    rien à se reprocher — et l'utilisateur perdrait une comparaison entière
+    pour une hypothèse mal saisie sur un tiers de l'écran.
+    """
+    estimation, version = _premiere_version(seeded_client, admin)
+    # Un rendement divisé par cent mille : les heures explosent et le total
+    # franchit la borne des montants. Le scénario « haut » échoue, seul.
+    reponse = _simuler(
+        seeded_client,
+        admin,
+        estimation,
+        version,
+        {
+            "bas": {"prix": "-0.05"},
+            "probable": {},
+            "haut": {"productivite": "-0.999999"},
+        },
+    )
+    assert reponse.status_code == 200, reponse.text
+    par_nom = {s["nom"]: s for s in reponse.json()["scenarios"]}
+
+    assert par_nom["bas"]["status"] == "success"
+    assert par_nom["probable"]["status"] == "success"
+    # Le troisième a pu aboutir ou être refusé selon la borne franchie ; dans
+    # les deux cas les deux premiers restent lisibles, et c'est le point.
+    assert par_nom["haut"]["status"] in ("success", "refused")
+    assert "totaux" in par_nom["bas"]
+    assert "totaux" in par_nom["probable"]

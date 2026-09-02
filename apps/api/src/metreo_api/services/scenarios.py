@@ -61,22 +61,23 @@ from metreo_domain import bounds
 from metreo_domain.errors import DomainError
 from metreo_domain.estimate import EstimateResult
 from metreo_domain.money import WORKING_PRECISION, canonical_text, to_decimal
+from metreo_domain.pricing import ResourceKind
 
 #: Les trois axes, et le nom sous lequel l'API les reçoit.
 AXES: tuple[str, ...] = ("prix", "productivite", "distance")
 
 #: Les catégories de ressource qu'une variation de prix peut viser.
-#: Reprises de `ResourceKind` du domaine, et non redéfinies : une liste en
-#: double divergerait au premier type ajouté.
-CATEGORIES: tuple[str, ...] = (
-    "material",
-    "labor",
-    "equipment",
-    "transport",
-    "disposal",
-    "subcontract",
-    "other",
-)
+#:
+#: DÉRIVÉES de `ResourceKind`, et non recopiées. La version précédente était une
+#: liste écrite à la main dont le commentaire affirmait pourtant qu'elle venait
+#: du domaine : ajouter une nature de ressource l'aurait laissée en arrière,
+#: sans rien pour le signaler, et la catégorie neuve aurait été refusée comme
+#: « inconnue » alors qu'elle existe.
+CATEGORIES: tuple[str, ...] = tuple(kind.value for kind in ResourceKind)
+
+#: Le libellé français de chaque catégorie, pour que l'écran n'ait pas à s'en
+#: tenir une seconde table. Il vient lui aussi du domaine.
+LIBELLES_DE_CATEGORIE: dict[str, str] = {kind.value: kind.label_fr for kind in ResourceKind}
 
 #: Les libellés attendus, dans l'ordre où l'écran les présente.
 SCENARIOS: tuple[str, ...] = ("bas", "probable", "haut")
@@ -392,7 +393,8 @@ def simuler(
     estimate: Any,
     version: Any,
     hypotheses_par_scenario: dict[str, Hypotheses],
-    inclure_couts_internes: bool,
+    inclure_couts: bool,
+    inclure_marge: bool,
 ) -> dict[str, Any]:
     """Chiffre les scénarios d'une version, SANS rien écrire.
 
@@ -447,11 +449,13 @@ def simuler(
         }
         resultat = chiffrage.resultat
         if resultat is None:
+            entree["status"] = "refused"
             entree["refus"] = chiffrage.refus
             rendus.append(entree)
             continue
+        entree["status"] = "success"
         entree["totaux"] = totals_for_display(
-            resultat, rounding, include_internal=inclure_couts_internes
+            resultat, rounding, include_costs=inclure_couts, include_margin=inclure_marge
         )
         # Les lignes sans prix restent NOMMÉES, jamais comptées pour zéro : la
         # simulation ne doit pas faire disparaître ce qui bloque le gel.
@@ -463,10 +467,12 @@ def simuler(
 
     return {
         "from_snapshot": version.status == "frozen",
-        "includes_internal_costs": inclure_couts_internes,
+        "includes_internal_costs": inclure_couts,
+        "includes_margin_steps": inclure_marge,
         "currency": currency,
         "scenarios": rendus,
         "ordre_incoherent": ordre_incoherent(chiffrages),
+        "categories": LIBELLES_DE_CATEGORIE,
     }
 
 

@@ -530,23 +530,60 @@ def lock_version(session: Session, *, organization_id: str, version_id: str) -> 
 
 
 def totals_for_display(
-    result: EstimateResult, rounding: RoundingPolicy, *, include_internal: bool
+    result: EstimateResult,
+    rounding: RoundingPolicy,
+    *,
+    include_costs: bool,
+    include_margin: bool,
 ) -> dict[str, Any]:
-    """Public totals, plus internal cost figures only when the caller may see them."""
+    """Les totaux, filtrés par DEUX décisions distinctes et nommées.
+
+    Une seule décision — l'ancien `include_internal` — confondait deux secrets
+    qui n'ont ni le même titulaire ni la même portée, et la confusion FUYAIT :
+
+    * `include_costs` (`cost:read`) ouvre ce que coûte le chantier — ressources,
+      déboursé sec, prix de revient, ventilation par nature. C'est ce qu'un
+      métreur doit voir pour faire son travail.
+    * `include_margin` (`margin:read`) ouvre la politique COMMERCIALE : les
+      étapes de markup, avec leur clé, leur base, leur taux, leur montant et
+      leur formule. Frais généraux, aléas et marge en font partie.
+
+    Le rôle `estimator` porte `cost:read` SANS `margin:read`. Avec une décision
+    unique, il recevait donc `markup_steps` — et chaque étape porte son `rate`.
+    Mesuré : un taux de marge fixé à 0,4242 apparaissait tel quel dans la
+    réponse rendue à un métreur, sur la route de calcul comme sur celle des
+    scénarios.
+
+    Les étapes sont RETIRÉES, pas renommées ni vidées de leur libellé : un
+    `{"key": "margin", "rate": "0.08"}` reste un taux de marge quel que soit le
+    nom de sa clé, et un contrôle qui chercherait la chaîne « margin_rate » ne
+    le verrait pas.
+    """
     payload = result.to_dict(rounding)
-    if include_internal:
-        return payload
-    payload.pop("total_direct_cost", None)
-    payload.pop("total_cost_price", None)
-    for line in payload["lines"]:
-        price = line.get("price")
-        if not price:
-            continue
-        price.pop("components", None)
-        price.pop("cost_by_kind", None)
-        price.pop("direct_cost", None)
-        price.pop("cost_price", None)
-        price.pop("markup_steps", None)
+
+    if not include_margin:
+        # Le total du prix de revient est CONSERVÉ : c'est un coût, et
+        # `cost:read` le couvre. Il reste vrai qu'en le divisant par le
+        # déboursé sec on déduit le cumul des frais — c'est une inférence sur
+        # deux agrégats, pas la divulgation d'un taux, et la frontière est
+        # posée là volontairement.
+        for line in payload["lines"]:
+            price = line.get("price")
+            if price:
+                price.pop("markup_steps", None)
+
+    if not include_costs:
+        payload.pop("total_direct_cost", None)
+        payload.pop("total_cost_price", None)
+        for line in payload["lines"]:
+            price = line.get("price")
+            if not price:
+                continue
+            price.pop("components", None)
+            price.pop("cost_by_kind", None)
+            price.pop("direct_cost", None)
+            price.pop("cost_price", None)
+            price.pop("markup_steps", None)
     return payload
 
 

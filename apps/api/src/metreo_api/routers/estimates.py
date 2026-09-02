@@ -332,7 +332,15 @@ def compute(
         rounding = estimating.rounding_from_settings(settings)
 
     include_internal = context.can(Permission.COST_READ)
-    payload = estimating.totals_for_display(result, rounding, include_internal=include_internal)
+    payload = estimating.totals_for_display(
+        result,
+        rounding,
+        include_costs=include_internal,
+        # `margin:read` gouverne les ÉTAPES de markup, séparément des coûts :
+        # un métreur porte `cost:read` sans `margin:read`, et recevait donc
+        # jusqu'ici le taux de marge de l'entreprise.
+        include_margin=context.can(Permission.MARGIN_READ),
+    )
     return ComputationOut(
         version=EstimateVersionOut.model_validate(version),
         computed_at=datetime.now(UTC),
@@ -399,11 +407,12 @@ def simuler_des_scenarios(
         estimate=estimate,
         version=version,
         hypotheses_par_scenario=hypotheses,
-        # La marge n'apparaît nulle part dans cette réponse : les totaux
-        # passent par `totals_for_display`, qui retire les étapes de markup
-        # sans `cost:read`. `margin:read` garde les TAUX, qui vivent dans les
-        # réglages et ne sont pas rendus ici.
-        inclure_couts_internes=context.can(Permission.COST_READ),
+        # Deux décisions distinctes, prises par le MÊME filtre que la route de
+        # calcul : une logique de masquage propre aux scénarios divergerait de
+        # l'autre au premier champ ajouté, et c'est exactement ainsi qu'un
+        # taux finit par sortir d'un côté et pas de l'autre.
+        inclure_couts=context.can(Permission.COST_READ),
+        inclure_marge=context.can(Permission.MARGIN_READ),
     )
     return ScenariosOut(
         version=EstimateVersionOut.model_validate(version),
