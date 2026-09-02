@@ -437,23 +437,34 @@ def ordre_incoherent(chiffrages: list[Chiffrage]) -> bool:
     return not (totaux[0] <= totaux[1] <= totaux[2])
 
 
-def _ecart(montant: Decimal, reference: Decimal) -> dict[str, str | None]:
+def _ecart(montant: Decimal, reference: Decimal, arrondi: Any) -> dict[str, str | None]:
     """L'écart d'un scénario au scénario probable, en valeur et en pourcentage.
+
+    **Deux formes de la valeur absolue, comme partout ailleurs dans ce dépôt** :
+    le décimal EXACT pour qui recalcule, et la forme arrondie selon la politique
+    de l'organisation pour qui lit. Un écart de productivité ne tombe pas juste
+    — 750,00 ÷ 1,1 est périodique — et l'écran affichait alors
+    « -68.18181818181818181818181818 EUR ». Arrondir dans le navigateur ferait
+    diverger ce chiffre du devis au premier centime ; l'arrondi vient donc d'ici,
+    avec la même politique que les totaux.
 
     Le pourcentage vaut `None` quand la référence est nulle : une division par
     zéro n'a pas de résultat, et rendre « 0 % » ou « ∞ » ferait passer une
     absence d'information pour une information.
     """
     absolu = montant - reference
+    rendu: dict[str, str | None] = {
+        "absolu": canonical_text(absolu),
+        "absolu_display": str(arrondi.quantize(absolu)),
+    }
     if reference == 0:
-        return {"absolu": canonical_text(absolu), "pourcentage": None}
+        rendu["pourcentage"] = None
+        return rendu
     with localcontext() as ctx:
         ctx.prec = WORKING_PRECISION
         pourcentage = absolu / reference * Decimal(100)
-    return {
-        "absolu": canonical_text(absolu),
-        "pourcentage": canonical_text(pourcentage.quantize(Decimal("0.01"))),
-    }
+    rendu["pourcentage"] = canonical_text(pourcentage.quantize(Decimal("0.01")))
+    return rendu
 
 
 def simuler(
@@ -531,7 +542,7 @@ def simuler(
         entree["lignes_sans_prix"] = list(resultat.missing_price_line_ids)
         entree["bloquant"] = resultat.blocking
         if reference is not None:
-            entree["ecart"] = _ecart(resultat.total_selling_price_ht.amount, reference)
+            entree["ecart"] = _ecart(resultat.total_selling_price_ht.amount, reference, rounding)
         rendus.append(entree)
 
     return {

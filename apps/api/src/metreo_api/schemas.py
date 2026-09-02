@@ -1526,7 +1526,13 @@ class HypothesesOut(BaseModel):
 class EcartOut(BaseModel):
     """L'écart au scénario probable."""
 
+    #: Le décimal EXACT, pour qui recalcule. Un écart de productivité est
+    #: périodique : 750,00 ÷ 1,1 ne tombe pas juste.
     absolu: str
+    #: Le même écart, arrondi par la politique de l'organisation. C'est celui
+    #: que l'écran affiche — arrondir dans le navigateur ferait diverger ce
+    #: chiffre du devis au premier centime.
+    absolu_display: str
     #: `None` quand la référence est nulle : une division par zéro n'a pas de
     #: résultat, et rendre « 0 % » ferait passer une absence d'information pour
     #: une information.

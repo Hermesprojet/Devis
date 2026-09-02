@@ -461,6 +461,10 @@ def test_la_route_rend_trois_scenarios_et_leurs_ecarts(
     # voyager une quantité PostgreSQL et SQLite sous la même forme.
     assert par_nom["probable"]["ecart"]["absolu"] == "0"
     assert par_nom["probable"]["ecart"]["pourcentage"] == "0"
+    # Et sa forme AFFICHABLE, arrondie par la politique de l'organisation :
+    # un écart de productivité est périodique (750,00 ÷ 1,1), et l'écran ne
+    # doit pas l'arrondir lui-même — deux arrondis, deux chiffres.
+    assert par_nom["probable"]["ecart"]["absolu_display"] == "0.00"
     # Les deux autres s'écartent dans le sens attendu de leurs hypothèses.
     assert Decimal(par_nom["bas"]["ecart"]["absolu"]) < 0
     assert Decimal(par_nom["haut"]["ecart"]["absolu"]) > 0

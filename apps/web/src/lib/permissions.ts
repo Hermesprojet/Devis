@@ -22,6 +22,15 @@ export const PERMISSIONS = {
   pricebookWrite: 'pricebook:write',
   boqWrite: 'boq:write',
   estimateWrite: 'estimate:write',
+  /** Déboursés, coûts et ressources. Le rôle `estimator` la porte. */
+  costRead: 'cost:read',
+  /**
+   * Taux et étapes commerciales — frais généraux, aléas, marge.
+   * SÉPARÉE de `cost:read` : le rôle `estimator` porte l'une SANS l'autre, et
+   * les confondre a déjà fait apparaître le taux de marge de l'entreprise
+   * dans la réponse rendue à un métreur.
+   */
+  marginRead: 'margin:read',
   documentWrite: 'document:write',
   projectRead: 'project:read',
   projectWrite: 'project:write',
