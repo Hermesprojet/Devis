@@ -49,12 +49,17 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 | 14 | Lien client sécurisé, révocable, sans compte ni domaine | ✅ | `test_partage_de_devis.py` |
 | 15 | Conservation et effacement encadrés | ✅ | `test_conservation_des_devis.py`, `test_purge_encadree.py` |
 | 16 | Sous-détails construits, corrigés et employés dans un devis depuis l'interface | ✅ | `test_sous_details.py`, `test_sous_details_dans_un_devis.py`, `suite-sous-detail-au-devis.spec.ts` |
+| 17 | Import XLSX, converti par le même pipeline que le CSV | ✅ | `test_price_import.py`, `test_import_xlsx.py`, `suite-import-xlsx-au-devis.spec.ts` |
+| 18 | Scénarios bas / probable / haut, utilisables depuis l'interface | ✅ | `docs/SCENARIOS_DE_CHIFFRAGE.md`, `test_scenarios.py`, `suite-scenarios-de-chiffrage.spec.ts` |
 
 Fonctionne localement avec des fournisseurs factices et **aucune clé payante**.
 
-**Reste ouvert en phase 1 :** import XLSX (seul le CSV est fait), scénarios bas /
-probable / haut exposés par l'API (la fonction `sensitivity` existe dans le
-domaine et est testée, aucun point d'entrée HTTP ne l'expose encore).
+**Phase 1 fonctionnellement close.** Les deux manques qui restaient — l'import
+XLSX et les scénarios bas / probable / haut — sont livrés, éprouvés côté API et
+parcourus au navigateur. Aucune exigence de la liste ci-dessus n'attend plus de
+code. Ce que la phase 1 ne prétend toujours pas être : *déployable* (voir
+l'encadré) et *prête pour la production* (exploitation, sauvegardes,
+supervision).
 
 **Ouvert autour du cycle commercial :** l'envoi d'e-mail — le lien client se
 copie à la main, ce qui est suffisant sans domaine mais ne l'est pas
@@ -158,6 +163,3 @@ calcul** — seulement un pack versionné et des traductions.
 | --- | --- | --- |
 | Pas de RLS PostgreSQL | L'isolation repose sur la couche service (testée) sans filet de sécurité base | Phase 5 |
 | `apps/worker` vide | Les opérations longues n'existent pas encore ; le répertoire est réservé | Phase 2 |
-| Import XLSX absent | Seul le CSV est pris en charge | Phase 2 |
-| Sous-détails non éditables depuis l'interface | Création par API uniquement | Phase 1 bis |
-| Analyse de sensibilité non exposée par l'API | Implémentée et testée dans le domaine | Phase 1 bis |

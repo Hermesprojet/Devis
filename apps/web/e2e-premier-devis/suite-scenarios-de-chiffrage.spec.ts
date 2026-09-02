@@ -90,11 +90,16 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
   // ---- 1. un sous-détail à quatre composants : un de chaque type
   await page.goto('/bibliotheque')
   const creation = page.getByRole('button', { name: 'Créer la bibliothèque' })
+  const nouvelleVersion = page.getByRole('button', { name: 'Nouvelle version' })
+  // `count()` ne PATIENTE PAS : sondé avant que l'écran n'ait fini de charger,
+  // il rend zéro pour les deux commandes et le parcours attend ensuite pendant
+  // quatre minutes une commande qui était pourtant là. Mesuré.
+  await expect(creation.or(nouvelleVersion).first()).toBeVisible({ timeout: 30_000 })
   if (await creation.count()) {
     await creation.click()
   } else {
     page.once('dialog', (dialogue) => void dialogue.accept('Scénarios'))
-    await page.getByRole('button', { name: 'Nouvelle version' }).click()
+    await nouvelleVersion.click()
   }
   const encart = page.getByTestId('sous-details')
   await expect(encart).toBeVisible()
