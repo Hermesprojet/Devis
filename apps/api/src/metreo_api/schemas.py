@@ -1471,6 +1471,61 @@ class ComputationOut(BaseModel):
     result: dict[str, Any]
 
 
+class HypothesesIn(BaseModel):
+    """Les écarts relatifs d'un scénario : `0.10` vaut « +10 % ».
+
+    Aucune valeur par défaut autre que zéro. Proposer « -10 % / 0 / +10 % »
+    reviendrait à souffler à l'utilisateur des hypothèses que rien ne fonde :
+    la dispersion d'un chiffrage dépend du chantier, du marché et du moment,
+    et personne ici n'est en position de la deviner à sa place.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Coûts unitaires d'entrée : prix de ressource, taux horaire, coût de
+    #: rotation et coût kilométrique. PAS les forfaits.
+    prix: Decimal = Decimal("0")
+    #: Vide = toutes les catégories de ressource.
+    prix_categories: list[str] = Field(default_factory=list)
+    #: Rendement des composants qui en ont un. `+0.10` = produire 10 % de plus
+    #: par heure, donc MOINS d'heures, donc un coût qui BAISSE.
+    productivite: Decimal = Decimal("0")
+    #: Distance des transports. Traverse le nombre ENTIER de rotations, donc
+    #: son effet n'est pas proportionnel.
+    distance: Decimal = Decimal("0")
+
+
+class ScenariosIn(BaseModel):
+    """Les trois scénarios à chiffrer.
+
+    Les trois sont facultatifs et valent « neutre » par défaut : trois
+    scénarios neutres reproduisent trois fois le calcul de référence, ce qui
+    est le point de départ honnête d'une comparaison.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    bas: HypothesesIn = Field(default_factory=HypothesesIn)
+    probable: HypothesesIn = Field(default_factory=HypothesesIn)
+    haut: HypothesesIn = Field(default_factory=HypothesesIn)
+
+
+class ScenariosOut(BaseModel):
+    """Le résultat de la simulation. Rien n'a été écrit pour le produire."""
+
+    version: EstimateVersionOut
+    computed_at: datetime
+    from_snapshot: bool
+    includes_internal_costs: bool
+    currency: str
+    #: Un par scénario, dans l'ordre bas / probable / haut. Chaque entrée porte
+    #: soit ses totaux, soit son refus — jamais les deux, jamais aucun des deux.
+    scenarios: list[dict[str, Any]]
+    #: Les totaux ne suivent pas l'ordre que les libellés suggèrent. Signalé,
+    #: jamais corrigé : réordonner masquerait l'information la plus utile.
+    ordre_incoherent: bool
+
+
 # -- audit -----------------------------------------------------------------
 
 

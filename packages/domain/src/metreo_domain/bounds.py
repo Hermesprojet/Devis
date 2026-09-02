@@ -126,6 +126,26 @@ COEFFICIENT: Final = Bound("coefficient", _d("0"), _d("1e6"), useful_decimals=6)
 #: terrestre est de 20 000 km.
 DISTANCE_KM: Final = Bound("distance_km", _d("0"), _d("20000"), useful_decimals=3, unit="km")
 
+#: Écart relatif d'une hypothèse de scénario : 0,10 vaut « +10 % ».
+#:
+#: La borne basse est **strictement** exclue, et c'est le point qui compte.
+#: Un écart de -1 vaut « -100 % » : appliqué à un rendement, il le met à zéro,
+#: c'est-à-dire un diviseur nul — la même raison qui rend `OUTPUT_RATE`
+#: strictement positif. Appliqué à un prix, il l'annule, ce qui est absurde
+#: sans être dangereux ; une seule borne pour les trois axes évite d'avoir à
+#: se souvenir lequel supporte quoi.
+#:
+#: La borne haute reprend celle de `RATE` : 10 vaut « +1000 % », déjà au-delà
+#: de toute hypothèse défendable ; au-delà, c'est une faute de saisie — un
+#: pourcentage entier écrit là où une fraction est attendue.
+SCENARIO_VARIATION: Final = Bound(
+    "scenario_variation",
+    _d("-1"),
+    _d("10"),
+    useful_decimals=6,
+    minimum_inclusive=False,
+)
+
 #: Nombre de composants d'un sous-détail. Au-delà, ce n'est plus un
 #: sous-détail mais un bordereau : il faut le découper.
 MAX_COMPONENTS_PER_LINE: Final[int] = 200

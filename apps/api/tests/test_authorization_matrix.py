@@ -275,6 +275,10 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
         },
         "POST /api/v1/estimates/{estimate_id}/versions": {"label": "v1"},
         "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/freeze": {"confirm": True},
+        # Trois scénarios neutres : le corps le plus petit que la route
+        # accepte, et le seul qui n'introduise aucune hypothèse dans un test
+        # qui porte sur l'isolation, pas sur le chiffrage.
+        "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/scenarios": {},
         # Corps vide mais PRÉSENT : tous les champs d'émission sont
         # facultatifs, or un corps absent est refusé en 422 avant la
         # moindre lecture de tenant — le 404 attendu ne prouverait rien.

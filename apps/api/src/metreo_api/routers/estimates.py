@@ -34,10 +34,12 @@ from ..schemas import (
     FreezeRequest,
     IssuedQuoteOut,
     QuoteIssueRequest,
+    ScenariosIn,
+    ScenariosOut,
 )
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
-from ..services import audit, estimating, exports, issuance
+from ..services import audit, estimating, exports, issuance, scenarios
 from ..services.document_storage import ContenuRefuse, StockageLocal
 from ..services.estimating import FreezeRefused, PricingInputError
 from ..services.issuance import EmissionRefusee
@@ -337,6 +339,76 @@ def compute(
         from_snapshot=version.status == "frozen",
         includes_internal_costs=include_internal,
         result=payload,
+    )
+
+
+@router.post(
+    "/estimates/{estimate_id}/versions/{version_id}/scenarios",
+    response_model=ScenariosOut,
+    summary="Chiffrer trois scénarios (aucune écriture)",
+)
+def simuler_des_scenarios(
+    estimate_id: str,
+    version_id: str,
+    payload: ScenariosIn,
+    context: TenantContext = Depends(require(Permission.ESTIMATE_READ)),
+    session: Session = Depends(session_scope),
+) -> ScenariosOut:
+    """Compare trois hypothèses de chiffrage, sans rien enregistrer.
+
+    **`POST` pour un calcul, et non `GET`.** Les hypothèses forment un corps
+    structuré — trois jeux de quatre champs, dont une liste de catégories — que
+    la chaîne de requête rendrait illisible et bornerait mal. Le verbe ne dit
+    donc rien d'une écriture : la route est inscrite au registre transactionnel
+    comme LECTURE, et le contrôle de démarrage l'y tient.
+
+    **`cost:read` en plus de `estimate:read`.** Comparer des scénarios, c'est
+    lire des déboursés : la question posée est celle du coût, pas celle du prix
+    remis au client. Sans ce droit, la fonction n'aurait aucun objet.
+
+    **Rien n'est écrit.** Pas de version, pas de bordereau, pas de
+    bibliothèque, pas d'audit, pas de devis, pas de fichier. Une simulation qui
+    laisserait une trace cesserait d'être une simulation.
+    """
+    # `cost:read` en second, dans le corps : `require` n'impose qu'une
+    # permission, et le refus doit NOMMER celle qui manque. Vérifié avant toute
+    # lecture de l'estimation, pour que l'absence de droit ne se distingue pas
+    # d'une estimation inexistante par le temps de réponse.
+    context.require(Permission.COST_READ)
+
+    estimate = _load(session, context, estimate_id)
+    version = _version(session, context, estimate, version_id)
+
+    try:
+        hypotheses = {
+            nom: scenarios.hypotheses_depuis(getattr(payload, nom).model_dump())
+            for nom in scenarios.SCENARIOS
+        }
+    except DomainError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.to_dict()
+        ) from exc
+
+    # Le calcul de RÉFÉRENCE peut échouer avant toute hypothèse — un bordereau
+    # dont une ligne n'est pas chiffrable. Le même chemin d'erreur que les
+    # quatre autres routes qui calculent, plutôt qu'un cinquième.
+    _computed(session, estimate=estimate, version=version)
+
+    rendu = scenarios.simuler(
+        session,
+        estimate=estimate,
+        version=version,
+        hypotheses_par_scenario=hypotheses,
+        # La marge n'apparaît nulle part dans cette réponse : les totaux
+        # passent par `totals_for_display`, qui retire les étapes de markup
+        # sans `cost:read`. `margin:read` garde les TAUX, qui vivent dans les
+        # réglages et ne sont pas rendus ici.
+        inclure_couts_internes=context.can(Permission.COST_READ),
+    )
+    return ScenariosOut(
+        version=EstimateVersionOut.model_validate(version),
+        computed_at=datetime.now(UTC),
+        **rendu,
     )
 
 
