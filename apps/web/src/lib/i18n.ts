@@ -442,6 +442,43 @@ const fr: Dictionary = {
   'settings.margin': 'Marge',
   'settings.marginMethod': 'Méthode de marge',
   'settings.missingPricePolicy': 'Poste sans prix',
+  'scenarios.title': 'Scénarios de chiffrage',
+  'scenarios.intro':
+    "Une simulation temporaire : rien n'est enregistré, la version chiffrée n'est pas modifiée, et le calcul est celui du moteur — pas une estimation approchée faite dans le navigateur.",
+  'scenarios.low': 'Bas',
+  'scenarios.likely': 'Probable',
+  'scenarios.high': 'Haut',
+  'scenarios.labelsWarning':
+    "« Bas », « probable » et « haut » sont des libellés que vous choisissez, pas une garantie : rien n'oblige le scénario « bas » à coûter moins cher.",
+  'scenarios.price': 'Prix des ressources',
+  'scenarios.priceHint':
+    "S'applique aux prix unitaires, taux horaires, coûts de rotation et coûts kilométriques. Pas aux forfaits, qui sont des montants convenus.",
+  'scenarios.categories': 'Limiter à certaines natures',
+  'scenarios.categoriesHint':
+    'Sans sélection, la variation de prix touche toutes les natures de ressource.',
+  'scenarios.productivity': 'Productivité',
+  'scenarios.productivityHint':
+    "Sens inversé : +10 % veut dire « on produit 10 % de plus par heure », donc moins d'heures, donc un coût qui BAISSE.",
+  'scenarios.distance': 'Distance de transport',
+  'scenarios.distanceHint':
+    "Appliquée à la distance AVANT le calcul des rotations : le nombre de rotations est un entier, donc l'effet n'est pas proportionnel.",
+  'scenarios.compute': 'Calculer les trois scénarios',
+  'scenarios.computing': 'Calcul en cours…',
+  'scenarios.notANumber': "Ce n'est pas un pourcentage. Exemples : 10 ; -7,5 ; 0.",
+  'scenarios.percentSuffix': '%',
+  'scenarios.applied': 'Hypothèses appliquées par le serveur',
+  'scenarios.refused': 'Ce scénario n\'a pas pu être chiffré',
+  'scenarios.delta': 'Écart au scénario probable',
+  'scenarios.deltaUnavailable':
+    'Écart indisponible : le scénario probable vaut zéro, et une division par zéro n\'a pas de résultat.',
+  'scenarios.outOfOrder':
+    "Les totaux ne suivent pas l'ordre des libellés : « bas » n'est pas le moins cher, ou « haut » n'est pas le plus cher. Rien n'a été réordonné — à vous de dire si c'est une erreur de saisie ou une hypothèse voulue.",
+  'scenarios.missingPriceLines': 'postes sans prix dans ce scénario',
+  'scenarios.blocking': 'Chiffrage bloqué : des postes restent sans prix.',
+  'scenarios.markupChain': 'Chaîne de prix, poste par poste',
+  'scenarios.reference': 'Référence',
+  'scenarios.beforeFirstRun':
+    "Aucun calcul n'a encore été demandé. Les trois colonnes démarrent à 0 %, ce qui reproduit exactement le chiffrage ci-dessous ; les natures de ressource proposées arrivent du serveur avec le premier résultat.",
   'settings.masked':
     "Les coefficients commerciaux ne sont pas visibles avec votre rôle.",
 }

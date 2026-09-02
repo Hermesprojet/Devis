@@ -490,6 +490,19 @@ export const api = {
     }),
   computation: (estimateId: string, versionId: string) =>
     request<Computation>(`/estimates/${estimateId}/versions/${versionId}/computation`),
+  /**
+   * Simule trois scénarios. POST parce qu'un corps est nécessaire, mais
+   * n'écrit RIEN : le registre transactionnel la classe en lecture.
+   */
+  scenarios: (
+    estimateId: string,
+    versionId: string,
+    body: Record<string, unknown>,
+  ) =>
+    request<ScenariosSimulation>(`/estimates/${estimateId}/versions/${versionId}/scenarios`, {
+      method: 'POST',
+      body,
+    }),
   freeze: (estimateId: string, versionId: string, label?: string) =>
     request<EstimateVersion>(`/estimates/${estimateId}/versions/${versionId}/freeze`, {
       method: 'POST',
@@ -1006,6 +1019,70 @@ export type Computation = {
   from_snapshot: boolean
   includes_internal_costs: boolean
   result: EstimateResult
+}
+
+/**
+ * Une simulation de scénarios. Rien n'a été écrit pour la produire.
+ *
+ * Les hypothèses sont des ÉCARTS RELATIFS sérialisés en décimal : `"0.1"` vaut
+ * « +10 % ». L'écran saisit et affiche des pourcentages humains ; la
+ * conversion est un décalage de virgule sur la chaîne, jamais une division en
+ * virgule flottante — voir `enFraction` dans le panneau.
+ */
+export type ScenarioHypotheses = {
+  prix: string
+  prix_categories: string[]
+  productivite: string
+  distance: string
+}
+
+export type ScenarioEcart = {
+  /** Le décimal EXACT, pour qui recalcule. Périodique sur un écart de productivité. */
+  absolu: string
+  /** Le même, arrondi PAR LE SERVEUR. C'est celui que l'écran affiche. */
+  absolu_display: string
+  /** `null` quand la référence vaut zéro : une division par zéro n'a pas de résultat. */
+  pourcentage: string | null
+}
+
+export type ScenarioCalcule = {
+  status: 'success'
+  nom: string
+  hypotheses: ScenarioHypotheses
+  totaux: EstimateResult
+  lignes_sans_prix: string[]
+  bloquant: boolean
+  ecart: ScenarioEcart | null
+}
+
+export type ScenarioRefuse = {
+  status: 'refused'
+  nom: string
+  hypotheses: ScenarioHypotheses
+  refus: { code?: string; message?: string; scenario?: string }
+}
+
+/**
+ * Union DISCRIMINÉE sur `status`, comme l'OpenAPI la décrit : un scénario
+ * porte ses totaux OU son refus, jamais les deux et jamais aucun des deux.
+ * L'écran n'a donc pas à deviner en testant la présence d'une clé.
+ */
+export type Scenario = ScenarioCalcule | ScenarioRefuse
+
+export type ScenariosSimulation = {
+  version: EstimateVersion
+  computed_at: string
+  from_snapshot: boolean
+  /** `cost:read` : déboursés, coûts et ressources. */
+  includes_internal_costs: boolean
+  /** `margin:read` : étapes de markup, avec leurs taux. Séparé des coûts. */
+  includes_margin_steps: boolean
+  currency: string
+  /** Dans l'ordre bas / probable / haut — jamais réordonné. */
+  scenarios: Scenario[]
+  ordre_incoherent: boolean
+  /** Les natures de ressource et leur libellé, RENDUES PAR LE SERVEUR. */
+  categories: Record<string, string>
 }
 
 export type AuditEvent = {

@@ -106,6 +106,12 @@ _classer(
     # elle ne touche aucune ligne. C'est ce qui permet à l'écran de montrer le
     # chiffre AVANT que quoi que ce soit ne soit enregistré.
     "POST /api/v1/price-books/versions/{version_id}/composites/preview",
+    # Chiffre trois scénarios d'hypothèses. POST pour la même raison que la
+    # ligne au-dessus : elle reçoit un corps structuré, pas parce qu'elle
+    # enregistre. Rien n'est écrit — ni version, ni bordereau, ni bibliothèque,
+    # ni audit, ni devis, ni fichier. Une simulation qui laisserait une trace
+    # cesserait d'être une simulation, et c'est ce classement qui l'interdit.
+    "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/scenarios",
 )
 
 # -- Écritures accompagnées d'un événement d'audit ---------------------------

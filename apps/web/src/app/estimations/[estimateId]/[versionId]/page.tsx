@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { EmissionDuDevis } from '@/components/EmissionDuDevis'
 import { ErrorNotice, Loading } from '@/components/Feedback'
+import { ScenariosDeChiffrage } from '@/components/ScenariosDeChiffrage'
 import { Shell } from '@/components/Shell'
 import { api, type Computation, type EstimateLine } from '@/lib/api'
 import { t } from '@/lib/i18n'
@@ -151,7 +152,10 @@ export default function EstimateVersionPage() {
         {version.snapshot_sha256 && (
           <>
             {' · '}
-            {t('estimate.digest')} <span className="mono">{version.snapshot_sha256.slice(0, 16)}…</span>
+            {t('estimate.digest')}{' '}
+            <span className="mono" data-testid="empreinte">
+              {version.snapshot_sha256.slice(0, 16)}…
+            </span>
           </>
         )}
       </p>
@@ -218,6 +222,11 @@ export default function EstimateVersionPage() {
       )}
 
       <EmissionDuDevis estimateId={estimateId} versionId={versionId} frozen={frozen} />
+
+      {/* Une simulation, pas une écriture : le panneau interroge le moteur avec
+          des hypothèses et affiche sa réponse. La version chiffrée ci-dessous
+          n'en est pas modifiée, gelée ou non. */}
+      <ScenariosDeChiffrage estimateId={estimateId} versionId={versionId} />
 
       <div className="card" style={{ padding: 0 }}>
         <table>

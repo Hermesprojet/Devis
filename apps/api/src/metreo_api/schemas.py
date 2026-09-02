@@ -1471,6 +1471,132 @@ class ComputationOut(BaseModel):
     result: dict[str, Any]
 
 
+class HypothesesIn(BaseModel):
+    """Les écarts relatifs d'un scénario : `0.10` vaut « +10 % ».
+
+    Aucune valeur par défaut autre que zéro. Proposer « -10 % / 0 / +10 % »
+    reviendrait à souffler à l'utilisateur des hypothèses que rien ne fonde :
+    la dispersion d'un chiffrage dépend du chantier, du marché et du moment,
+    et personne ici n'est en position de la deviner à sa place.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Coûts unitaires d'entrée : prix de ressource, taux horaire, coût de
+    #: rotation et coût kilométrique. PAS les forfaits.
+    prix: Decimal = Decimal("0")
+    #: Vide = toutes les catégories de ressource.
+    prix_categories: list[str] = Field(default_factory=list)
+    #: Rendement des composants qui en ont un. `+0.10` = produire 10 % de plus
+    #: par heure, donc MOINS d'heures, donc un coût qui BAISSE.
+    productivite: Decimal = Decimal("0")
+    #: Distance des transports. Traverse le nombre ENTIER de rotations, donc
+    #: son effet n'est pas proportionnel.
+    distance: Decimal = Decimal("0")
+
+
+class ScenariosIn(BaseModel):
+    """Les trois scénarios à chiffrer.
+
+    Les trois sont facultatifs et valent « neutre » par défaut : trois
+    scénarios neutres reproduisent trois fois le calcul de référence, ce qui
+    est le point de départ honnête d'une comparaison.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    bas: HypothesesIn = Field(default_factory=HypothesesIn)
+    probable: HypothesesIn = Field(default_factory=HypothesesIn)
+    haut: HypothesesIn = Field(default_factory=HypothesesIn)
+
+
+class HypothesesOut(BaseModel):
+    """Les hypothèses TELLES QU'APPLIQUÉES, relues du serveur.
+
+    Rendues plutôt que supposées identiques à l'envoi : l'écran affiche ce qui
+    a servi au calcul, pas ce qu'il croit avoir demandé.
+    """
+
+    prix: str
+    prix_categories: list[str]
+    productivite: str
+    distance: str
+
+
+class EcartOut(BaseModel):
+    """L'écart au scénario probable."""
+
+    #: Le décimal EXACT, pour qui recalcule. Un écart de productivité est
+    #: périodique : 750,00 ÷ 1,1 ne tombe pas juste.
+    absolu: str
+    #: Le même écart, arrondi par la politique de l'organisation. C'est celui
+    #: que l'écran affiche — arrondir dans le navigateur ferait diverger ce
+    #: chiffre du devis au premier centime.
+    absolu_display: str
+    #: `None` quand la référence est nulle : une division par zéro n'a pas de
+    #: résultat, et rendre « 0 % » ferait passer une absence d'information pour
+    #: une information.
+    pourcentage: str | None
+
+
+class ScenarioCalculeOut(BaseModel):
+    """Un scénario qui a produit des totaux."""
+
+    status: Literal["success"] = "success"
+    nom: str
+    hypotheses: HypothesesOut
+    #: La même structure que `ComputationOut.result`, filtrée par les mêmes
+    #: décisions `cost:read` / `margin:read`.
+    totaux: dict[str, Any]
+    #: Les lignes sans prix, NOMMÉES et jamais comptées pour zéro.
+    lignes_sans_prix: list[str]
+    bloquant: bool
+    #: Absent tant que le scénario probable n'a pas lui-même abouti.
+    ecart: EcartOut | None = None
+
+
+class ScenarioRefuseOut(BaseModel):
+    """Un scénario qui n'a pas pu être chiffré.
+
+    Il vit dans la même liste que les autres, à sa place : un refus ne doit pas
+    faire disparaître les deux scénarios voisins, et l'écran a besoin de savoir
+    POUR LEQUEL il n'a rien à montrer.
+    """
+
+    status: Literal["refused"] = "refused"
+    nom: str
+    hypotheses: HypothesesOut
+    refus: dict[str, Any]
+
+
+#: Union DISCRIMINÉE : un scénario porte ses totaux ou son refus, jamais les
+#: deux et jamais aucun des deux. Un `dict[str, Any]` ne promettait rien de
+#: tel, et l'écran devait deviner en testant la présence d'une clé.
+ScenarioOut = Annotated[ScenarioCalculeOut | ScenarioRefuseOut, Field(discriminator="status")]
+
+
+class ScenariosOut(BaseModel):
+    """Le résultat de la simulation. Rien n'a été écrit pour le produire."""
+
+    version: EstimateVersionOut
+    computed_at: datetime
+    from_snapshot: bool
+    #: `cost:read` : ressources, déboursés et coûts.
+    includes_internal_costs: bool
+    #: `margin:read` : étapes de markup, avec leurs taux, bases et formules.
+    #: Séparé des coûts, parce que le rôle `estimator` porte l'un sans l'autre.
+    includes_margin_steps: bool
+    currency: str
+    #: Un par scénario, dans l'ordre bas / probable / haut — jamais réordonné.
+    scenarios: list[ScenarioOut]
+    #: Les totaux ne suivent pas l'ordre que les libellés suggèrent. Signalé,
+    #: jamais corrigé : réordonner masquerait l'information la plus utile.
+    ordre_incoherent: bool
+    #: Les catégories que l'écran peut proposer, avec leur libellé. Rendues par
+    #: le serveur pour que l'interface n'en tienne pas une seconde liste.
+    categories: dict[str, str]
+
+
 # -- audit -----------------------------------------------------------------
 
 
