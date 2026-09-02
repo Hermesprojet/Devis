@@ -130,7 +130,11 @@ def hypotheses_depuis(donnees: dict[str, Any] | None) -> Hypotheses:
             continue
         try:
             valeur = to_decimal(brut)
-        except DomainError as refus:
+        except (DomainError, ArithmeticError, TypeError, ValueError) as refus:
+            # `to_decimal` ne lève PAS que des `DomainError` : une chaîne qui
+            # n'est pas un nombre remonte en `decimal.InvalidOperation`, qui
+            # descend d'`ArithmeticError`. Ne rattraper que `DomainError`
+            # laissait « abc » traverser jusqu'au client en erreur serveur.
             raise HypotheseRefusee(
                 "hypothese_illisible",
                 f"L'hypothèse « {axe} » n'est pas un nombre : {brut!r}.",
