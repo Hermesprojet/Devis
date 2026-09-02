@@ -836,8 +836,117 @@ def test_chaque_scenario_porte_SOIT_ses_totaux_SOIT_son_refus(
     assert set(rendu["categories"]) == set(scenarios.CATEGORIES)
 
 
-def test_un_scenario_refuse_laisse_les_deux_autres_exploitables(
+#: Un transport LÉGAL mais proche du plafond déclaré : `DISTANCE_KM` accepte
+#: jusqu'à 20 000 km, la demi-circonférence terrestre. 19 000 km entre en base
+#: sans réserve — c'est un acheminement maritime, pas une faute de saisie.
+#: Majoré de 10 %, il devient 20 900 km : une distance que le produit déclare
+#: inexploitable. Le moteur, lui, ne vérifie aucune borne au moment de calculer
+#: et rendrait un total d'apparence sérieuse ; la borne est donc vérifiée sur
+#: la valeur FABRIQUÉE par l'hypothèse, là où elle naît.
+TRANSPORT_LOINTAIN: dict[str, Any] = {
+    "component_type": "rotation",
+    "label": "Acheminement maritime",
+    "resource_kind": "transport",
+    "payload_value": "8",
+    "payload_unit_code": "m3",
+    "cost_per_rotation": "85",
+    "round_up": True,
+    "distance_km": "19000",
+    "rate_per_km": "1.20",
+}
+
+
+@pytest.fixture()
+def chantier_au_bord_de_la_borne(
     seeded_client: TestClient, admin: dict[str, str]
+) -> tuple[str, str]:
+    """Un devis dont l'unique poste est à 19 000 km de son exutoire."""
+    livre = seeded_client.post(
+        "/api/v1/price-books", headers=admin, json={"name": "Transport lointain"}
+    ).json()
+    version_prix = seeded_client.post(
+        f"/api/v1/price-books/{livre['id']}/versions", headers=admin, json={"label": "v1"}
+    ).json()
+    compose = seeded_client.post(
+        f"/api/v1/price-books/versions/{version_prix['id']}/composites",
+        headers=admin,
+        json={
+            "code": "SD-MER",
+            "label": "Évacuation par voie maritime",
+            "unit_code": "m3",
+            "components": [TRANSPORT_LOINTAIN],
+        },
+    )
+    # La valeur STOCKÉE est acceptée : le refus qui suit ne vient pas d'elle.
+    assert compose.status_code == 201, compose.text
+
+    projet = seeded_client.post(
+        "/api/v1/projects",
+        headers=admin,
+        json={"reference": "SCN-BORNE", "name": "Chantier au bord de la borne"},
+    ).json()
+    boq = seeded_client.post(
+        f"/api/v1/projects/{projet['id']}/boqs", headers=admin, json={"name": "Bordereau"}
+    ).json()
+    poste = seeded_client.post(
+        f"/api/v1/boqs/{boq['id']}/items",
+        headers=admin,
+        json={
+            "position": "1",
+            "designation": "Déblai évacué par mer",
+            "unit_code": "m3",
+            "quantity": "100",
+            "kind": "item",
+            "composite_price_id": compose.json()["id"],
+        },
+    )
+    assert poste.status_code == 201, poste.text
+
+    estimation = seeded_client.post(
+        "/api/v1/estimates",
+        headers=admin,
+        json={
+            "project_id": projet["id"],
+            "boq_id": boq["id"],
+            "price_book_version_id": version_prix["id"],
+            "name": "Étude",
+        },
+    ).json()
+    versions = seeded_client.get(
+        f"/api/v1/estimates/{estimation['id']}/versions", headers=admin
+    ).json()
+    return estimation["id"], versions[0]["id"]
+
+
+def test_une_hypothese_qui_franchit_une_borne_est_refusee_a_la_source() -> None:
+    """La preuve unitaire, sans HTTP : la borne est vérifiée sur la valeur créée.
+
+    19 000 km × 1,10 = 20 900 km, au-delà des 20 000 km que `DISTANCE_KM`
+    déclare. Le refus nomme le champ ET l'hypothèse fautive : sans cela,
+    l'utilisateur chercherait dans son bordereau une valeur qui, elle, est
+    parfaitement légale.
+    """
+    specs = [
+        {
+            **SPECS[0],
+            "pricing": {**SPECS[0]["pricing"], "components": [TRANSPORT_LOINTAIN]},
+        }
+    ]
+    # -10 % : 17 100 km, sous la borne. Aucun refus.
+    scenarios.appliquer(specs, scenarios.Hypotheses(distance=Decimal("-0.10")))
+
+    with pytest.raises(OutOfBoundsError) as refus:
+        scenarios.appliquer(specs, scenarios.Hypotheses(distance=Decimal("0.10")))
+    assert refus.value.code == "out_of_bounds"
+    assert refus.value.context["bound"] == "distance_km"
+    assert refus.value.context["value"] == "20900.00"
+    assert "variation de distance" in refus.value.message
+
+
+def test_un_scenario_refuse_laisse_les_deux_autres_exploitables(
+    seeded_client: TestClient,
+    admin: dict[str, str],
+    chantier_au_bord_de_la_borne: tuple[str, str],
 ) -> None:
     """Un refus est isolé à sa colonne.
 
@@ -845,27 +954,51 @@ def test_un_scenario_refuse_laisse_les_deux_autres_exploitables(
     rien à se reprocher — et l'utilisateur perdrait une comparaison entière
     pour une hypothèse mal saisie sur un tiers de l'écran.
     """
-    estimation, version = _premiere_version(seeded_client, admin)
-    # Un rendement divisé par cent mille : les heures explosent et le total
-    # franchit la borne des montants. Le scénario « haut » échoue, seul.
+    estimation, version = chantier_au_bord_de_la_borne
     reponse = _simuler(
         seeded_client,
         admin,
         estimation,
         version,
         {
-            "bas": {"prix": "-0.05"},
+            "bas": {"distance": "-0.10"},
             "probable": {},
-            "haut": {"productivite": "-0.999999"},
+            "haut": {"distance": "0.10"},
         },
     )
     assert reponse.status_code == 200, reponse.text
     par_nom = {s["nom"]: s for s in reponse.json()["scenarios"]}
 
+    # Exactement un refus, et c'est le troisième.
     assert par_nom["bas"]["status"] == "success"
     assert par_nom["probable"]["status"] == "success"
-    # Le troisième a pu aboutir ou être refusé selon la borne franchie ; dans
-    # les deux cas les deux premiers restent lisibles, et c'est le point.
-    assert par_nom["haut"]["status"] in ("success", "refused")
-    assert "totaux" in par_nom["bas"]
-    assert "totaux" in par_nom["probable"]
+    assert par_nom["haut"]["status"] == "refused"
+
+    # Les deux résultats valides restent entiers et exploitables.
+    for nom in ("bas", "probable"):
+        assert "totaux" in par_nom[nom]
+        assert "refus" not in par_nom[nom]
+        assert par_nom[nom]["totaux"]["total_selling_price_ht"]
+
+    # 13 rotations × (85 + 17 100 × 1,20) = 13 × 20 605 = 267 865 EUR de
+    # déboursé sec pour le scénario bas, posé à la main.
+    assert par_nom["bas"]["totaux"]["total_direct_cost"] == "267865.00"
+    # 13 × (85 + 19 000 × 1,20) = 13 × 22 885 = 297 505 EUR pour le neutre.
+    assert par_nom["probable"]["totaux"]["total_direct_cost"] == "297505.00"
+
+    # Le refusé ne porte AUCUN total, et son refus est exploitable tel quel :
+    # un code stable pour l'écran, un message lisible pour l'utilisateur.
+    refuse = par_nom["haut"]
+    assert "totaux" not in refuse
+    refus = refuse["refus"]
+    assert refus["code"] == "out_of_bounds"
+    assert refus["scenario"] == "haut"
+    assert refus["context"]["bound"] == "distance_km"
+    assert refus["context"]["value"] == "20900.00"
+    assert refus["context"]["maximum"] == "20000"
+    assert "20900.00" in refus["message"] and "distance" in refus["message"]
+
+    # Et l'écran sait encore quelle hypothèse a produit ce refus.
+    # `canonical_text` normalise : une valeur, une orthographe, quel que soit le
+    # dialecte SQL et quelle que soit la façon dont l'utilisateur l'a saisie.
+    assert refuse["hypotheses"]["distance"] == "0.1"

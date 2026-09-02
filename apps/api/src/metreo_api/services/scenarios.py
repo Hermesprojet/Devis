@@ -44,6 +44,18 @@ entrée n'est modifiée, et le calcul est littéralement le même.
 * Les **quantités du bordereau**. Le métré est ce qu'il est ; en faire varier
   le volume est une autre question que le coût des ressources.
 
+**Une hypothèse fabrique une entrée neuve, donc elle est bornée.** Les valeurs
+saisies passent par les bornes du domaine ; celles qu'un scénario CRÉE n'étaient
+contrôlées par personne. Le moteur, lui, ne vérifie aucune borne au moment de
+calculer : une distance de 19 000 km — légale, elle entre en base — majorée de
+10 % devenait un trajet de 20 900 km, au-delà de la demi-circonférence terrestre
+que `DISTANCE_KM` déclare comme maximum, et le total qui en sortait avait
+l'apparence d'un résultat. Chaque valeur mise à l'échelle est donc vérifiée
+contre la borne de son rôle — `UNIT_PRICE` pour les prix, `OUTPUT_RATE` pour les
+rendements, `DISTANCE_KM` pour les trajets — au moment où elle naît. Le scénario
+concerné est refusé, en nommant le champ et l'hypothèse ; ses voisins, eux,
+restent calculés.
+
 **« Bas », « probable » et « haut » sont des libellés, pas une garantie.**
 Rien n'oblige un scénario nommé « bas » à coûter moins cher : il suffit d'y
 mettre une hausse de prix. Ce module ne réordonne rien et ne corrige rien ; il
@@ -166,18 +178,36 @@ def hypotheses_depuis(donnees: dict[str, Any] | None) -> Hypotheses:
     )
 
 
-def _echelle(valeur: str | None, variation: Decimal) -> str | None:
-    """Applique un écart relatif à une valeur d'entrée sérialisée.
+def _echelle(
+    valeur: str | None,
+    variation: Decimal,
+    *,
+    borne: bounds.Bound,
+    sujet: str,
+) -> str | None:
+    """Applique un écart relatif à une valeur d'entrée sérialisée, et la borne.
 
     Rend une CHAÎNE, comme les specs en portent : elles voyagent en JSON et
     sont relues par `to_decimal`. Passer par un flottant ici perdrait
     exactement la précision que tout le moteur s'attache à conserver.
+
+    **La valeur produite est vérifiée contre la borne de son rôle métier**, la
+    même que celle qui garde la saisie et l'import. Une hypothèse fabrique une
+    entrée neuve : rien ne l'a jamais contrôlée. Sans ce passage, une distance
+    de 19 000 km majorée de 10 % devenait un trajet de 20 900 km — au-delà de
+    la demi-circonférence terrestre, qui est précisément le maximum que
+    `DISTANCE_KM` déclare — et le moteur, qui ne vérifie aucune borne au
+    moment de calculer, rendait un total d'apparence sérieuse. Le scénario
+    concerné est désormais refusé, avec le nom du champ et la valeur obtenue ;
+    les scénarios voisins, eux, restent calculés.
     """
     if valeur is None:
         return None
     with localcontext() as ctx:
         ctx.prec = WORKING_PRECISION
-        return canonical_text(to_decimal(valeur) * (Decimal(1) + variation))
+        echelle = to_decimal(valeur) * (Decimal(1) + variation)
+    borne.check(echelle, label=sujet)
+    return canonical_text(echelle)
 
 
 def _composant_modifie(composant: dict[str, Any], hyp: Hypotheses) -> dict[str, Any]:
@@ -189,35 +219,66 @@ def _composant_modifie(composant: dict[str, Any], hyp: Hypotheses) -> dict[str, 
     modifie = dict(composant)
     type_ = composant.get("component_type")
     categorie = composant.get("resource_kind")
+    nom = composant.get("label") or "composant"
     vise_le_prix = hyp.prix != 0 and (not hyp.prix_categories or categorie in hyp.prix_categories)
 
     if type_ == "consumption":
         if vise_le_prix:
-            modifie["unit_price"] = _echelle(composant.get("unit_price"), hyp.prix)
+            modifie["unit_price"] = _echelle(
+                composant.get("unit_price"),
+                hyp.prix,
+                borne=bounds.UNIT_PRICE,
+                sujet=f"prix unitaire de « {nom} » après variation de prix",
+            )
         # Ni la consommation ni le taux de perte : ce sont des quantités de
         # matière, pas des prix, et aucune hypothèse de ce bloc ne les vise.
 
     elif type_ == "output_rate":
         if vise_le_prix:
-            modifie["hourly_rate"] = _echelle(composant.get("hourly_rate"), hyp.prix)
+            modifie["hourly_rate"] = _echelle(
+                composant.get("hourly_rate"),
+                hyp.prix,
+                borne=bounds.UNIT_PRICE,
+                sujet=f"taux horaire de « {nom} » après variation de prix",
+            )
         if hyp.productivite != 0:
             # Le SEUL endroit où le signe s'inverse. Produire 10 % de plus par
             # heure, c'est un rendement multiplié par 1,10 — et comme les
             # heures valent quantité ÷ rendement, c'est un coût qui BAISSE.
-            modifie["output_rate"] = _echelle(composant.get("output_rate"), hyp.productivite)
+            modifie["output_rate"] = _echelle(
+                composant.get("output_rate"),
+                hyp.productivite,
+                borne=bounds.OUTPUT_RATE,
+                sujet=f"rendement de « {nom} » après variation de productivité",
+            )
         # `crew_size` est un effectif, pas un rendement : le faire varier
         # changerait la composition de l'équipe, ce qui est une autre décision.
 
     elif type_ == "rotation":
         if vise_le_prix:
-            modifie["cost_per_rotation"] = _echelle(composant.get("cost_per_rotation"), hyp.prix)
-            modifie["rate_per_km"] = _echelle(composant.get("rate_per_km"), hyp.prix)
+            modifie["cost_per_rotation"] = _echelle(
+                composant.get("cost_per_rotation"),
+                hyp.prix,
+                borne=bounds.UNIT_PRICE,
+                sujet=f"coût par rotation de « {nom} » après variation de prix",
+            )
+            modifie["rate_per_km"] = _echelle(
+                composant.get("rate_per_km"),
+                hyp.prix,
+                borne=bounds.UNIT_PRICE,
+                sujet=f"coût kilométrique de « {nom} » après variation de prix",
+            )
         if hyp.distance != 0:
             # Modifiée ICI, sur l'entrée : le moteur en déduira ensuite le coût
             # par rotation, puis le multipliera par un nombre ENTIER de
             # rotations. Appliquer l'écart au montant final court-circuiterait
             # cet arrondi et rendrait un chiffre qui n'existe pas.
-            modifie["distance_km"] = _echelle(composant.get("distance_km"), hyp.distance)
+            modifie["distance_km"] = _echelle(
+                composant.get("distance_km"),
+                hyp.distance,
+                borne=bounds.DISTANCE_KM,
+                sujet=f"distance de « {nom} » après variation de distance",
+            )
         # Ni la charge utile ni la masse volumique : ce sont des propriétés du
         # camion et du matériau, pas des hypothèses de conjoncture.
 
@@ -248,7 +309,15 @@ def _ligne_modifiee(spec: dict[str, Any], hyp: Hypotheses) -> dict[str, Any]:
     elif tarif["mode"] == "library_price" and hyp.prix != 0 and not hyp.prix_categories:
         modifiee["pricing"] = {
             **tarif,
-            "unit_price": _echelle(tarif.get("unit_price"), hyp.prix),
+            "unit_price": _echelle(
+                tarif.get("unit_price"),
+                hyp.prix,
+                borne=bounds.UNIT_PRICE,
+                sujet=(
+                    f"prix de bibliothèque de « {spec.get('designation') or spec.get('code')} »"
+                    " après variation de prix"
+                ),
+            ),
         }
     return modifiee
 
