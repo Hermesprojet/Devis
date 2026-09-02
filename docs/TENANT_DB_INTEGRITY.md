@@ -1,5 +1,11 @@
 # Intégrité multi-tenant tenue par la base — Phase 1
 
+> **Intégré dans `main` le 28 août 2026.** Les neuf premières relations viennent
+> de la PR #8, tête `4671ca4`, fusion `a7c920b` ; les sept suivantes de la PR #9,
+> tête `cfa3ed5`, fusion `02e283d`. `main` final : `c74906c`, seize clés
+> composites tenant et huit unicités parentes. Le déroulé complet, les CI et les
+> bases locales à recréer sont dans `INTEGRATION_2026-08-28.md`.
+
 Ce dossier ne parle que de la PR qui le porte. Il ne modifie ni ne commente le
 statut de la PR #1 : `DEPLOYABLE` y reste atteint, `PRODUCTION_READY` non, et
 rien ici ne change cela.

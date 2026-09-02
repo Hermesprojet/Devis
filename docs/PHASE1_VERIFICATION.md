@@ -1,5 +1,16 @@
 # Vérification de la Phase 1
 
+> **Intégré dans `main` le 28 août 2026.** PR #1, tête
+> `64deb092d58b085792fde19e12396aa558d2533e`, commit de fusion
+> `5c7e6e19aa11ec5bf1b54aa0dab3768295942294`, 166 fichiers. Trois PR ont suivi
+> dans le même mouvement — #8, #9 puis #6 — et le `main` final est
+> `c74906ce5f68fd9035d60fc530e86d78abf5f78d`.
+>
+> Les compteurs de ce dossier valent pour le commit qu'ils nomment et sont
+> antérieurs à ces trois PR. Ceux du `main` final, mesurés depuis un clone neuf,
+> vivent dans `INTEGRATION_2026-08-28.md`. `DEPLOYABLE` reste **atteint**,
+> `PRODUCTION_READY` reste **non atteint**, et **aucun déploiement n'a eu lieu**.
+
 > **Quatre choses distinctes, souvent confondues.** Ce document décrit une
 > *procédure* reproductible ; il nomme le *dernier commit contrôlé depuis un
 > clone propre* ; la *tête de la PR* est indiquée sur la PR elle-même et peut
