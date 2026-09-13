@@ -66,6 +66,35 @@ def test_0_l_arithmetique_attendue_se_verifie_elle_meme() -> None:
     assert TOTAL_HT + MONTANT_TVA == TOTAL_TTC
 
 
+def test_0bis_le_detecteur_rejette_un_montant_faux_sous_un_libelle_juste() -> None:
+    """Un test qui cherche le mot « Total » passe sur un document faux.
+
+    C'est exactement ce qui a laissé passer le défaut d'origine : le gabarit
+    imprimait « Total HT » et « TOTAL À PAYER TTC », et l'ancienne assertion
+    se contentait de leur présence. On vérifie donc ici que le détecteur
+    employé par les quatre surfaces distingue le bon montant du mauvais,
+    libellés présents dans les deux cas.
+    """
+    juste = f"Total HT {TOTAL_HT} EUR TOTAL À PAYER TTC {TOTAL_TTC} EUR"
+    assert _suivi_de(juste, "Total HT", TOTAL_HT)
+    assert _suivi_de(juste, "TOTAL À PAYER TTC", TOTAL_TTC)
+
+    for faux in (
+        "Total HT 0 EUR TOTAL À PAYER TTC 0 EUR",  # le défaut d'origine
+        "Total HT 5620.01 EUR TOTAL À PAYER TTC 6800.20 EUR",  # un centime
+        "Total HT 562.00 EUR TOTAL À PAYER TTC 680.02 EUR",  # virgule déplacée
+        "Total HT 5620 EUR TOTAL À PAYER TTC 6800.20 EUR",  # décimales perdues
+        "Total HT 1180.20 EUR TOTAL À PAYER TTC 6800.20 EUR",  # TVA sous HT
+    ):
+        assert not _suivi_de(faux, "Total HT", TOTAL_HT), faux
+
+    # Le montant juste présent ailleurs dans la page ne sauve pas un libellé
+    # suivi d'autre chose : c'est l'adjacence qui est contrôlée, pas la
+    # présence du nombre quelque part.
+    disjoint = f"Sous-total {TOTAL_HT} EUR Total HT 0 EUR"
+    assert not _suivi_de(disjoint, "Total HT", TOTAL_HT)
+
+
 # --------------------------------------------------------------------------
 # Le montage
 # --------------------------------------------------------------------------
