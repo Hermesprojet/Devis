@@ -137,7 +137,9 @@ def _chantier_gele(
     bordereau = seeded_client.post(
         f"/api/v1/projects/{projet['id']}/boqs", headers=admin, json={"name": "Métré"}
     ).json()
-    for (position, designation, unite, quantite, _, _), article in zip(LIGNES, articles, strict=True):
+    for (position, designation, unite, quantite, _, _), article in zip(
+        LIGNES, articles, strict=True
+    ):
         poste = seeded_client.post(
             f"/api/v1/boqs/{bordereau['id']}/items",
             headers=admin,
