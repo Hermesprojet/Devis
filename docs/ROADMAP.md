@@ -26,7 +26,10 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 > critiques du 25 août 2026. Preuves et décompte : `docs/PHASE1_VERIFICATION.md`.
 >
 > **Candidat de préproduction validé, PAS ENCORE DÉPLOYÉ.** Aucune installation
-> n'est en ligne : ni hébergeur, ni domaine, ni fournisseur d'identité réel.
+> n'est en ligne. Le domaine `metreobtp.com` est acquis et ses DNS sont tenus
+> chez Cloudflare ; ce qui manque est un **serveur d'exécution** et un
+> **fournisseur d'identité réel**. Un domaine n'est pas un hébergement : tant
+> qu'aucune machine ne répond, l'enregistrement DNS n'a pas de cible.
 > **Production réelle bloquée par des décisions externes, pas par du code** :
 > sauvegardes distantes, supervision et décisions juridiques — la liste vit dans
 > `docs/EXPLOITATION.md`, « Ce qui manque encore ».
