@@ -16,6 +16,7 @@ Ce fichier éprouve les promesses que le produit fait à qui remet un devis :
 from __future__ import annotations
 
 import hashlib
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -377,6 +378,62 @@ def test_le_pdf_imprime_le_client_le_chantier_et_les_totaux(
     premier = next(p for p in postes if p["kind"] != "section")
     assert premier["position"] in texte, "la colonne « Poste » n'imprime pas les numéros"
     assert premier["designation"][:20] in texte
+
+
+def test_le_pdf_imprime_les_MONTANTS_du_document_et_non_des_zeros(
+    seeded_client: TestClient, admin, estimate, version, pret
+) -> None:
+    """Le total du DOCUMENT, pas le mot « Total ».
+
+    Reproduit au navigateur : un devis dont la ligne s'imprimait à 33 416,94
+    portait « Total HT : 0 EUR » et « TOTAL À PAYER TTC : 0 EUR ».
+    `totaux_du_document` cherchait les totaux sous une clé `"totals"` que
+    `EstimateResult.to_dict()` n'a jamais produite — ils sont au premier
+    niveau —, rendait des chaînes vides, et `quote_pdf` les imprimait en « 0 ».
+
+    Le test qui existait vérifiait `"Total" in texte`. Le MOT était là ; le
+    montant, non. C'est précisément ce qu'une assertion sur un libellé ne peut
+    pas voir, et pourquoi celle-ci porte sur les chiffres.
+    """
+    calcul = seeded_client.get(
+        f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}/computation",
+        headers=admin,
+    ).json()["result"]
+    attendu_ht = calcul["total_selling_price_ht"]
+    attendu_ttc = calcul["total_ttc"]
+    # Le témoin du test lui-même : un devis à zéro rendrait la vérification
+    # vraie sans rien prouver.
+    assert Decimal(attendu_ht) > 0, "le devis témoin doit porter un montant"
+
+    devis = _emettre(seeded_client, admin, estimate, version).json()
+    texte = moteur_pdf.extraire_le_texte(
+        seeded_client.get(
+            f"/api/v1/issued-quotes/{devis['id']}/document.pdf", headers=admin
+        ).content
+    )
+
+    assert attendu_ht in texte, f"le PDF n'imprime pas le total HT {attendu_ht}"
+    assert attendu_ttc in texte, f"le PDF n'imprime pas le total TTC {attendu_ttc}"
+    # Et l'INSTANTANÉ du devis porte les mêmes. C'est lui que relisent le
+    # tableau des devis et la page publique du client : le même défaut leur
+    # faisait afficher « 0 EUR » à tous les deux.
+    tableau = seeded_client.get("/api/v1/quotes", headers=admin).json()
+    ligne = next(q for q in tableau["items"] if q["id"] == devis["id"])
+    assert ligne["total_ttc"] == attendu_ttc, "le tableau des devis affiche un autre total"
+
+
+def test_un_calcul_sans_totaux_refuse_d_emettre_plutot_que_d_imprimer_zero() -> None:
+    """Un total absent est un refus, jamais un « 0 EUR ».
+
+    Imprimer zéro sur un devis remis est la pire des sorties : le document a
+    l'air complet, il part signé, et il ne dit pas ce qu'il doit.
+    """
+    from metreo_api.services.issuance import EmissionRefusee, totaux_du_document
+
+    with pytest.raises(EmissionRefusee) as refus:
+        totaux_du_document({"lines": [], "currency": "EUR"}, "EUR")
+    assert refus.value.code == "totaux_introuvables"
+    assert "total_selling_price_ht" in str(refus.value)
 
 
 def test_les_conditions_sont_configurables_et_non_gravees(
