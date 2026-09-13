@@ -39,15 +39,34 @@ test('le devis témoin, du bordereau au PDF, avec des montants qui tombent juste
 }) => {
   test.setTimeout(300_000)
 
-  // Connexion
+  // Frais et marge à zéro AVANT tout : le prix de vente doit être le prix
+  // saisi, sans quoi l'attendu ne serait plus calculable à la main. La chaîne
+  // commerciale a ses propres tests ; ici elle brouillerait la démonstration.
+  //
+  // Par l'API, parce que l'écran des réglages montre ces taux sans les rendre
+  // modifiables — et c'est voulu : une marge ne se change pas d'un clic.
+  const API = process.env.TEMOIN_API ?? 'http://127.0.0.1:8055/api/v1'
+  const connexion = await page.request.post(`${API}/auth/dev-login`, {
+    data: { email: 'admin@dubois.demo' },
+  })
+  expect(connexion.ok(), await connexion.text()).toBeTruthy()
+  const jeton = (await connexion.json()).access_token as string
+  const regles = await page.request.patch(`${API}/organization/settings`, {
+    headers: { Authorization: `Bearer ${jeton}` },
+    data: {
+      site_overheads_rate: '0',
+      general_overheads_rate: '0',
+      contingency_rate: '0',
+      margin_rate: '0',
+    },
+  })
+  expect(regles.ok(), await regles.text()).toBeTruthy()
+
+  // Connexion à l'écran
   await page.goto('/')
   await page.getByLabel('Adresse e-mail').fill('admin@dubois.demo')
   await page.getByRole('button', { name: 'Se connecter' }).click()
   await expect(page).toHaveURL(/\/projets/)
-
-  // Frais et marge à zéro : le prix de vente doit être le prix saisi, sans
-  // quoi l'attendu ne serait plus calculable à la main.
-  await page.request.patch('/api/v1/organization/settings', { data: {} }).catch(() => undefined)
 
   // La bibliothèque : trois prix aux valeurs voulues
   await page.goto('/bibliotheque')
