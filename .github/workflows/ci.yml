@@ -349,6 +349,39 @@ jobs:
           API_IMAGE: metreo-api:ci
           WEB_IMAGE: metreo-web:ci
         run: docker compose -f infra/docker-compose.staging.yml config
+      - name: Composition derrière un proxy existant valide
+        # La surcouche emploie `ports: !override`, une marque que seule une
+        # résolution réelle éprouve : une faute de frappe y passerait inaperçue
+        # et republierait 80 et 443 sur toutes les interfaces.
+        env:
+          PUBLIC_HOST: http://app.example.invalid
+          PUBLIC_DOMAIN: app.example.invalid
+          PUBLIC_ORIGIN: https://app.example.invalid
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: valeur-factice-de-ci
+          POSTGRES_DB: ci
+          METREO_JWT_SECRET: valeur-factice-de-ci-0123456789abcdef
+          METREO_OIDC_ISSUER: https://issuer.example.invalid
+          METREO_OIDC_CLIENT_ID: ci
+          METREO_OIDC_CLIENT_SECRET: valeur-factice-de-ci
+          METREO_OIDC_REDIRECT_URI: https://app.example.invalid/
+          API_IMAGE: metreo-api:ci
+          WEB_IMAGE: metreo-web:ci
+        run: |
+          rendu=$(docker compose \
+            -f infra/docker-compose.staging.yml \
+            -f infra/docker-compose.derriere-proxy.yml config)
+          # Ni 80 ni 443 ne doivent rester publiés : c'est la raison d'être de
+          # la surcouche, et `!override` est ce qui la fait tenir.
+          if echo "$rendu" | grep -qE 'published: "(80|443)"'; then
+            echo "La surcouche publie encore 80 ou 443 :" >&2
+            echo "$rendu" | grep -B2 -A2 -E 'published: "(80|443)"' >&2
+            exit 1
+          fi
+          echo "$rendu" | grep -q 'host_ip: 127.0.0.1' \
+            || { echo "Le port de diagnostic n'est pas sur la boucle locale" >&2; exit 1; }
+          echo "surcouche derrière proxy : aucun port public, diagnostic en 127.0.0.1"
+
       - name: Configuration du proxy valide
         # Un Caddyfile invalide ne se voit qu'au démarrage, c'est-à-dire au
         # moment du déploiement, c'est-à-dire trop tard. `caddy validate`
