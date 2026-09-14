@@ -457,10 +457,25 @@ def enregistrer_le_telechargement(
 
 
 def totaux_du_document(payload: dict[str, Any], devise: str) -> dict[str, Any]:
-    """Les totaux tels que le devis les imprime, extraits du calcul."""
-    totaux = payload.get("totals") or {}
+    """Les totaux tels que le devis les imprime, extraits du calcul.
+
+    `payload` est la sortie de `EstimateResult.to_dict()`, qui porte ses totaux
+    AU PREMIER NIVEAU — `total_selling_price_ht`, `taxes`, `total_ttc`. Cette
+    fonction les cherchait sous une clé `"totals"` qui n'a jamais existé : elle
+    rendait donc systématiquement des chaînes vides, que `quote_pdf` imprimait
+    en « 0 ». Tout devis émis portait « Total HT : 0 EUR » et « TOTAL À PAYER
+    TTC : 0 EUR » sous des lignes pourtant chiffrées juste. Mesuré au navigateur
+    sur un devis de 33 416,94 EUR.
+
+    Les tests existants ne pouvaient pas le voir : ils vérifiaient que le PDF
+    imprime le total d'une LIGNE, jamais celui du document.
+
+    Un total absent est désormais un REFUS, pas un zéro. Imprimer « 0 EUR » sur
+    un devis remis à un client est la pire des sorties : le document a l'air
+    complet, il est signé, et il ne dit pas ce qu'il doit.
+    """
     taxes = []
-    for taxe in totaux.get("taxes", []) or []:
+    for taxe in payload.get("taxes", []) or []:
         taxes.append(
             {
                 "label": taxe.get("label") or taxe.get("code") or "Taxe",
@@ -468,11 +483,25 @@ def totaux_du_document(payload: dict[str, Any], devise: str) -> dict[str, Any]:
                 "amount": str(taxe.get("amount", "")),
             }
         )
+    total_ht = payload.get("total_selling_price_ht")
+    total_ttc = payload.get("total_ttc")
+    manquants = [
+        nom
+        for nom, valeur in (("total_selling_price_ht", total_ht), ("total_ttc", total_ttc))
+        if valeur is None or str(valeur) == ""
+    ]
+    if manquants:
+        raise EmissionRefusee(
+            "totaux_introuvables",
+            "Le calcul ne porte pas les totaux du document : "
+            + ", ".join(manquants)
+            + ". Émettre produirait un devis affichant 0 EUR.",
+        )
     return {
         "currency": devise,
-        "total_ht": str(totaux.get("total_selling_price_ht", "") or ""),
+        "total_ht": str(total_ht),
         "taxes": taxes,
-        "total_ttc": str(totaux.get("total_ttc", "") or ""),
+        "total_ttc": str(total_ttc),
     }
 
 

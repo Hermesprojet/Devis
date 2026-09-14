@@ -18,17 +18,28 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 
 ---
 
-## Phase 1 — Première tranche verticale utilisable · **Fonctionnellement complète, candidate de validation**
+## Phase 1 — Première tranche verticale utilisable · **Fonctionnellement close, candidate de préproduction**
 
-> **Phase 1 fonctionnellement complète — candidate de validation.**
-> Déploiement et clôture de sécurité **bloqués** jusqu'à Next.js 15.5.24.
-> **Production non prête** : authentification réelle, sauvegardes, supervision
-> et packs juridiques validés restent absents.
+> **Phase 1 fonctionnellement close.**
+> **Le blocage de sécurité est levé.** `apps/web/package.json` fixe
+> `next@15.5.24` — exactement la version attendue —, qui couvre les deux RCE
+> critiques du 25 août 2026. Preuves et décompte : `docs/PHASE1_VERIFICATION.md`.
 >
-> Ces trois choses sont distinctes et ne se remplacent pas : *fonctionnellement
+> **Candidat de préproduction validé, PAS ENCORE DÉPLOYÉ.** Aucune installation
+> n'est en ligne. Le domaine `metreobtp.com` est acquis et ses DNS sont tenus
+> chez Cloudflare ; ce qui manque est un **serveur d'exécution** et un
+> **fournisseur d'identité réel**. Un domaine n'est pas un hébergement : tant
+> qu'aucune machine ne répond, l'enregistrement DNS n'a pas de cible.
+> **Production réelle bloquée par des décisions externes, pas par du code** :
+> sauvegardes distantes, supervision et décisions juridiques — la liste vit dans
+> `docs/EXPLOITATION.md`, « Ce qui manque encore ».
+>
+> Quatre choses distinctes, qui ne se remplacent pas : *fonctionnellement
 > complet* décrit ce qu'un utilisateur peut faire et ce que les tests prouvent ;
-> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque ;
-> *prêt pour la production* suppose l'exploitation.
+> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque —
+> c'est désormais le cas ; *déployé* suppose qu'une installation existe et
+> réponde à une adresse — ce n'est pas le cas ; *prêt pour la production*
+> suppose l'exploitation.
 
 
 | # | Exigence | État | Preuve |

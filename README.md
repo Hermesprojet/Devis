@@ -19,20 +19,31 @@ n'est pas figé (voir `docs/ASSUMPTIONS.md`).
 
 ## État réel du produit
 
-> **Phase 1 fonctionnellement complète — candidate de validation.**
-> Déploiement et clôture de sécurité **bloqués** jusqu'à Next.js 15.5.24.
-> **Production non prête** : authentification réelle, sauvegardes, supervision
-> et packs juridiques validés restent absents.
+> **Phase 1 fonctionnellement close.**
+> **Le blocage de sécurité est levé.** `apps/web/package.json` fixe
+> `next@15.5.24` — exactement la version attendue —, qui couvre les deux RCE
+> critiques du 25 août 2026. Preuves et décompte : `docs/PHASE1_VERIFICATION.md`.
 >
-> Ces trois choses sont distinctes et ne se remplacent pas : *fonctionnellement
+> **Candidat de préproduction validé, PAS ENCORE DÉPLOYÉ.** Aucune installation
+> n'est en ligne. Le domaine `metreobtp.com` est acquis et ses DNS sont tenus
+> chez Cloudflare ; ce qui manque est un **serveur d'exécution** et un
+> **fournisseur d'identité réel**. Un domaine n'est pas un hébergement : tant
+> qu'aucune machine ne répond, l'enregistrement DNS n'a pas de cible.
+> **Production réelle bloquée par des décisions externes, pas par du code** :
+> sauvegardes distantes, supervision et décisions juridiques — la liste vit dans
+> `docs/EXPLOITATION.md`, « Ce qui manque encore ».
+>
+> Quatre choses distinctes, qui ne se remplacent pas : *fonctionnellement
 > complet* décrit ce qu'un utilisateur peut faire et ce que les tests prouvent ;
-> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque ;
-> *prêt pour la production* suppose l'exploitation.
+> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque —
+> c'est désormais le cas ; *déployé* suppose qu'une installation existe et
+> réponde à une adresse — ce n'est pas le cas ; *prêt pour la production*
+> suppose l'exploitation.
 
 | Phase | Périmètre | État |
 | --- | --- | --- |
 | 0 | Cadrage, architecture, socle technique, CI | **Fonctionnellement complet** |
-| 1 | Organisation, projet, bibliothèque de prix, bordereau, moteur de calcul, gel de version, exports, audit | **Fonctionnellement complet — candidate de validation** |
+| 1 | Organisation, projet, bibliothèque de prix, bordereau, moteur de calcul, gel de version, exports, audit, scénarios bas / probable / haut | **Fonctionnellement clos — candidat de préproduction validé** |
 | 1+ | Répertoire de clients, devis remis en PDF figé, cycle commercial (transmission, consultation, acceptation ou refus), lien client sécurisé, conservation et effacement encadrés | **Fonctionnellement complet** |
 | 2 | Intelligence documentaire (OCR, extraction, citations, validation) | Non implémenté |
 | 3 | Métrés assistés, plans, IFC/DXF/DWG | Non implémenté |
