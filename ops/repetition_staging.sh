@@ -253,6 +253,14 @@ etape_demarrage() {
 
 	verifier "le front est servi à la racine" 200 "$(code_de "$BASE/")"
 
+	# Servi par le proxy ne suffit pas : le proxy joint le conteneur par son
+	# adresse, là où la sonde de l'image interroge 127.0.0.1. Les deux peuvent
+	# diverger — c'est arrivé — et seul le second verdict dit si Docker
+	# considère le front comme sain.
+	local web_sain_au_depart
+	web_sain_au_depart=$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q web)" 2>/dev/null || echo "?")
+	verifier "le front est sain aux yeux de Docker" "healthy" "$web_sain_au_depart"
+
 	local environnement
 	environnement=$(curl -s "$API/health" | python3 -c 'import json,sys; print(json.load(sys.stdin)["environment"])' 2>/dev/null || echo "?")
 	verifier "l'environnement annoncé est staging" "staging" "$environnement"
@@ -860,9 +868,12 @@ etape_sondes_pendant_panne() {
 	redemarrages_apres=$(docker inspect -f '{{.RestartCount}}' "$(compose ps -q api)" 2>/dev/null || echo 0)
 	verifier "aucun redémarrage de l'API pendant la panne" "$redemarrages_avant" "$redemarrages_apres"
 
-	local web_debout
-	web_debout=$(docker inspect -f '{{.State.Status}}' "$(compose ps -q web)" 2>/dev/null || echo "?")
-	verifier "le front n'est pas tombé avec la base" "running" "$web_debout"
+	# `healthy`, pas `running` : un conteneur peut être debout et ne servir
+	# personne. C'est précisément ce que la première mise en ligne a trouvé —
+	# et que cette ligne, qui se contentait de `running`, laissait passer.
+	local web_sain
+	web_sain=$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q web)" 2>/dev/null || echo "?")
+	verifier "le front reste sain pendant la panne de base" "healthy" "$web_sain"
 
 	compose start db >/dev/null 2>&1
 	if attendre_code "$API/ready" 200 120; then

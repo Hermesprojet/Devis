@@ -412,6 +412,28 @@ jobs:
             test "$(docker inspect -f '{{if .Config.Healthcheck}}oui{{else}}non{{end}}' "$image")" = "oui"
             echo "$image : point de santé déclaré"
           done
+      - name: Le front devient réellement sain
+        # Déclarer une sonde ne prouve pas qu'elle passe. La première mise en
+        # ligne l'a montré : `HOSTNAME` absent de l'image, Next lié à
+        # l'adresse du conteneur, sonde sur 127.0.0.1 en échec, conteneur
+        # jamais `healthy` — et la répétition verte, parce qu'elle ne
+        # demandait au front que d'être `running`. On le lance donc pour de
+        # bon, seul, et on attend le verdict de sa propre sonde.
+        run: |
+          id=$(docker run -d --rm --name web-sain metreo-web:ci)
+          trap 'docker rm -f web-sain >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            etat=$(docker inspect -f '{{.State.Health.Status}}' "$id")
+            [ "$etat" = "healthy" ] && { echo "front sain après ${i}×3 s"; exit 0; }
+            [ "$etat" = "unhealthy" ] && break
+            sleep 3
+          done
+          echo "::error::le front n'est jamais devenu sain (état : $etat)"
+          echo "── journal de la sonde ──"
+          docker inspect -f '{{range .State.Health.Log}}{{.End}} code={{.ExitCode}} {{.Output}}{{end}}' "$id"
+          echo "── journal du conteneur ──"
+          docker logs "$id" 2>&1 | tail -30
+          exit 1
 
   audit:
     name: Vulnérabilités des dépendances
