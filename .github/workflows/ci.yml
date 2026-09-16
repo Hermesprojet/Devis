@@ -382,6 +382,39 @@ jobs:
             || { echo "Le port de diagnostic n'est pas sur la boucle locale" >&2; exit 1; }
           echo "surcouche derrière proxy : aucun port public, diagnostic en 127.0.0.1"
 
+      - name: Composition jetable de restauration valide
+        # La seconde pile d'un exercice de restauration ne doit être joignable
+        # de nulle part : aucun port publié, aucune étiquette de proxy. Les
+        # deux marques `!override` sont ce qui le garantit, et seule une
+        # résolution réelle les éprouve.
+        env:
+          PUBLIC_HOST: http://app.example.invalid
+          PUBLIC_DOMAIN: app.example.invalid
+          PUBLIC_ORIGIN: https://app.example.invalid
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: valeur-factice-de-ci
+          POSTGRES_DB: ci
+          METREO_JWT_SECRET: valeur-factice-de-ci-0123456789abcdef
+          METREO_OIDC_ISSUER: https://issuer.example.invalid
+          METREO_OIDC_CLIENT_ID: ci
+          METREO_OIDC_CLIENT_SECRET: valeur-factice-de-ci
+          METREO_OIDC_REDIRECT_URI: https://app.example.invalid/
+          API_IMAGE: metreo-api:ci
+          WEB_IMAGE: metreo-web:ci
+        run: |
+          rendu=$(docker compose --project-name ci-jetable \
+            -f infra/docker-compose.staging.yml \
+            -f infra/docker-compose.derriere-proxy.yml \
+            -f infra/docker-compose.jetable.yml config)
+          if echo "$rendu" | grep -qE '^\s+published:'; then
+            echo "La pile jetable publie encore un port :" >&2
+            echo "$rendu" | grep -B3 -E '^\s+published:' >&2; exit 1
+          fi
+          if echo "$rendu" | grep -q 'traefik.enable'; then
+            echo "La pile jetable porte encore des étiquettes Traefik" >&2; exit 1
+          fi
+          echo "pile jetable : aucun port publié, aucune étiquette de proxy"
+
       - name: Configuration du proxy valide
         # Un Caddyfile invalide ne se voit qu'au démarrage, c'est-à-dire au
         # moment du déploiement, c'est-à-dire trop tard. `caddy validate`

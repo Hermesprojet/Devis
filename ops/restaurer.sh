@@ -48,6 +48,20 @@ STOCKAGE="$(find "$TRAVAIL" -name '*-storage.tar' | head -1)"
 # base, délibérément. La procédure documentée ne fonctionnait donc pas contre
 # la pile pour laquelle elle était écrite.
 if [[ -n "${RESTORE_COMPOSE_PROJECT:-}" ]]; then
+  # La garde de jetabilité ci-dessus porte sur le nom de la BASE. Elle ne
+  # protégeait pas de ceci : la base est bien recréée à part, mais le stockage
+  # des fichiers est détaré dans le conteneur `api` du projet nommé — donc
+  # dans SON volume, celui de la pile en service si c'est elle qu'on nomme.
+  # Une archive d'il y a un mois fusionnée par-dessus les pièces vivantes,
+  # sans un message. Le nom du projet doit donc porter le même marqueur.
+  case "$RESTORE_COMPOSE_PROJECT" in
+    *restore*|*scratch*|*jetable*|*tmp*|*repetition*) : ;;
+    *)
+      echo "refus : le projet « $RESTORE_COMPOSE_PROJECT » ne porte aucun marqueur de jetabilité." >&2
+      echo "  Le stockage de l'archive serait détaré dans le volume de CETTE pile." >&2
+      echo "  Montez une pile à part (autre --project-name, ports non publiés) et restaurez dedans." >&2
+      exit 1 ;;
+  esac
   read -r -a FICHIERS_COMPOSE <<< "${RESTORE_COMPOSE_FILES:--f $RACINE/infra/docker-compose.staging.yml}"
   CIBLE_COMPOSE=(docker compose --project-name "$RESTORE_COMPOSE_PROJECT" "${FICHIERS_COMPOSE[@]}")
   [[ -n "${RESTORE_ENV_FILE:-}" ]] && CIBLE_COMPOSE+=(--env-file "$RESTORE_ENV_FILE")
