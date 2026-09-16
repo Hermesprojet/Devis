@@ -50,9 +50,16 @@ apps/web/test-results/
 apps/web/playwright-report/
 apps/web/blob-report/
 
-# Fichier d'environnement de la répétition : fabriqué à partir de l'exemple,
-# jamais versionné, comme infra/staging.env.
+# Fichiers d'environnement de l'infrastructure : fabriqués à partir des
+# exemples, jamais versionnés. Ils portent le mot de passe PostgreSQL, le
+# secret JWT et le secret client OIDC.
+#
+# `staging.env` a longtemps manqué ici alors que le commentaire ci-dessus le
+# promettait et que `infra/staging.env.example` l'affirmait. Rien ne l'ignorait
+# : un `git add -A` lancé sur le serveur où on vient de le renseigner poussait
+# les trois secrets vers la forge.
 infra/repetition.env
+infra/staging.env
 
 # Les classeurs de fixtures sont FABRIQUÉS, pas commités :
 #   python3 scripts/fabriquer_classeurs_de_test.py

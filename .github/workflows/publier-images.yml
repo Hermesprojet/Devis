@@ -62,7 +62,28 @@ jobs:
           WEB_IMAGE: ghcr.io/${{ steps.cible.outputs.depot }}-web:${{ steps.cible.outputs.sha }}
         run: |
           docker build -f infra/api.Dockerfile -t "$API_IMAGE" .
-          docker build -f infra/web.Dockerfile -t "$WEB_IMAGE" .
+          # `--build-arg` OBLIGATOIRE : l'URL de l'API est compilée dans le
+          # JavaScript livré, et le défaut de `infra/web.Dockerfile` vaut
+          # `http://localhost:8000/api/v1`. Sans cette ligne, l'image publiée
+          # démarrait, répondait 200 à tous les contrôles d'exploitation, et
+          # affichait « Chargement… » indéfiniment dans un vrai navigateur :
+          # le front appelait la boucle locale de la machine du VISITEUR.
+          #
+          # Chemin RELATIF et non URL absolue. Le proxy sert le front et l'API
+          # sur une seule origine — `handle /api/*` dans `infra/Caddyfile` —,
+          # donc `/api/v1` suffit. Et l'image redevient agnostique au domaine :
+          # la même sert la préproduction et la production, survit à un
+          # changement de nom, et devient enfin une cible de retour arrière
+          # valable. Une URL absolue liait chaque image à un domaine.
+          #
+          # La valeur est `/api/v1` et rien d'autre : le cookie de la page
+          # client est posé sur `path="/api/v1/public"`
+          # (`routers/devis_public.py`). Une base `/api` ferait poser le cookie
+          # sur un chemin que les requêtes suivantes ne portent pas — la page
+          # du devis s'ouvrirait, puis tout répondrait 401.
+          docker build -f infra/web.Dockerfile \
+            --build-arg NEXT_PUBLIC_API_URL=/api/v1 \
+            -t "$WEB_IMAGE" .
           docker push "$API_IMAGE"
           docker push "$WEB_IMAGE"
           {

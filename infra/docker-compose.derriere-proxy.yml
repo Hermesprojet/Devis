@@ -1,0 +1,93 @@
+# Préproduction DERRIÈRE un proxy déjà en place sur la machine.
+#
+#   docker compose \
+#     -f infra/docker-compose.staging.yml \
+#     -f infra/docker-compose.derriere-proxy.yml \
+#     --env-file infra/staging.env up -d
+#
+# Quand l'employer : la machine porte déjà un proxy qui tient 80 et 443 — un
+# Traefik, un Nginx Proxy Manager, un Caddy d'une autre pile. Sans cette
+# surcouche, le Caddy de Metreo échoue à prendre ces ports, et `restart:
+# unless-stopped` le fait réessayer indéfiniment. Pire au redémarrage de
+# l'hôte : si Metreo gagne la course au bind, c'est le proxy de la machine qui
+# ne remonte pas, et la terminaison TLS de TOUTES les autres piles disparaît.
+#
+# Ce que cette surcouche NE fait pas : elle ne supprime pas le Caddy de Metreo.
+# Il porte le routage `/api/*` sur une origine unique, le plafond de corps, les
+# quatre en-têtes de sécurité et l'identifiant de corrélation que l'API
+# journalise — tout cela vit dans `infra/Caddyfile`, que la CI éprouve. Le
+# rebrancher en étiquettes de proxy le sortirait de ce contrôle.
+#
+# Le partage des rôles devient donc : le proxy de devant termine le TLS et
+# possède le certificat, Caddy garde tout le reste.
+
+services:
+  proxy:
+    # `!override` et non un simple ajout : Compose FUSIONNE les listes de
+    # ports. Sans cette marque, la pile publierait ENCORE 80 et 443 sur toutes
+    # les interfaces, ce que cette surcouche existe précisément pour éviter.
+    ports: !override
+      # Boucle locale seulement, et le port 80 seulement.
+      #
+      # Ce port n'est PAS le chemin qu'emprunte le proxy de devant : avec le
+      # provider Docker de Traefik, celui-ci vise l'IP du conteneur sur le
+      # port DU CONTENEUR, jamais une publication sur 127.0.0.1. Il n'est là
+      # que pour le diagnostic, et il vaut son coût :
+      #
+      #   curl -H 'Host: preprod.metreobtp.com' http://127.0.0.1:8081/api/v1/live
+      #
+      # sépare « Caddy est sain » de « le proxy de devant ne l'atteint pas »,
+      # qui sans lui se ressemblent trait pour trait.
+      #
+      # Pas de publication du 443 : avec `PUBLIC_HOST=http://…` Caddy sert en
+      # clair et n'ouvre pas ce port. Le publier réserverait un port de l'hôte
+      # derrière lequel rien n'écoute, et enverrait chercher un défaut dans
+      # Caddy au premier `curl` qui échoue.
+      - "127.0.0.1:${HTTP_DIAGNOSTIC_PORT:-8081}:80"
+
+    # Étiquettes pour un Traefik configuré avec `--providers.docker=true`.
+    # Elles sont inertes si aucun Traefik ne tourne : ce ne sont que des
+    # métadonnées de conteneur.
+    #
+    # Un autre proxy (Nginx Proxy Manager, Caddy tiers) ignore ces étiquettes
+    # et se configure de son côté ; la cible à lui donner est alors l'IP du
+    # conteneur `proxy` sur le port 80, ou `127.0.0.1:8081` ci-dessus.
+    labels:
+      traefik.enable: "true"
+
+      # Le nom du réseau porte le préfixe du projet, que `name:` fixe à
+      # `metreo-staging` dans la composition de base.
+      #
+      # Posée MÊME AVEC un seul réseau, et c'est délibéré : le jour où le
+      # conteneur en gagne un second, Traefik itère sur une map Go — donc dans
+      # un ordre ALÉATOIRE — et choisit sans écrire une ligne de journal. Le
+      # symptôme est un 502 intermittent que rien n'explique. Avec cette
+      # étiquette le choix est déterministe, et si le nom devient faux Traefik
+      # le DIT : « Could not find network named ... ».
+      traefik.docker.network: "metreo-staging_default"
+
+      traefik.http.routers.metreo.rule: "Host(`${PUBLIC_DOMAIN:?PUBLIC_DOMAIN est obligatoire avec cette surcouche : le nom d hote seul, sans schema}`)"
+
+      # `entrypoints` explicite : sans lui le routeur s'attache à TOUS les
+      # points d'entrée, y compris celui du port 80, où une redirection
+      # globale vers HTTPS le court-circuiterait.
+      traefik.http.routers.metreo.entrypoints: "websecure"
+
+      # Ces deux lignes ne sont PAS facultatives, et leur absence ne produit
+      # aucune erreur — seulement deux pannes trompeuses :
+      #
+      #   sans `tls`           : Traefik sert du HTTP EN CLAIR sur le port 443.
+      #                          Le navigateur échoue sur la poignée de main,
+      #                          pas sur un certificat, et le diagnostic part
+      #                          dans la mauvaise direction.
+      #   sans `certresolver`  : aucun routeur ne nomme le résolveur, donc
+      #                          aucun certificat n'est JAMAIS demandé. Il ne
+      #                          manque pas parce que l'émission échoue : elle
+      #                          n'est pas déclenchée.
+      traefik.http.routers.metreo.tls: "true"
+      traefik.http.routers.metreo.tls.certresolver: "${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
+
+      # Le port DU CONTENEUR, donc 80 — jamais le port de diagnostic ci-dessus.
+      # Écrire 8081 ici ferait viser à Traefik une adresse où rien n'écoute :
+      # 502 sur tout le site, pile parfaitement saine.
+      traefik.http.services.metreo.loadbalancer.server.port: "80"
