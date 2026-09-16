@@ -91,6 +91,10 @@ services:
   web:
     <<: *restart
     image: ${WEB_IMAGE:?WEB_IMAGE est obligatoire}
+    environment:
+      # Next standalone lit HOSTNAME ; Docker donne par défaut l'identifiant du
+      # conteneur, ce qui rend la sonde 127.0.0.1:3000 injoignable.
+      HOSTNAME: "0.0.0.0"
     depends_on:
       - api
     deploy:
