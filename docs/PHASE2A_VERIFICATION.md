@@ -5,10 +5,19 @@ qu'un fichier peut déjà être téléversé ou analysé.
 
 ## Référence contrôlée
 
-- dernière tête de code : `6618e30e3d05bf4928850e401410bb3d1ffc3d21` ;
-- workflow CI : [32673926588](https://github.com/Hermesprojet/Devis/actions/runs/32673926588) ;
-- résultat : 10 jobs sur 10 réussis ;
-- PR : #6, empilée sur la PR #1 et maintenue en brouillon pendant la revue.
+**La PR #6 est fusionnée dans `main` depuis le 28 août 2026.** Ce qui suit
+décrit donc du code intégré, plus une proposition.
+
+- tête fusionnée : `7de918177b5d24b26525cb8b597acf4833b9f3ca` ;
+- commit de fusion : `c74906ce5f68fd9035d60fc530e86d78abf5f78d` ;
+- CI de ce `main` : [33212168553](https://github.com/Hermesprojet/Devis/actions/runs/33212168553) — 10 jobs sur 10 ;
+- ordre d'intégration et bases locales à recréer : `INTEGRATION_2026-08-28.md`.
+
+Les résultats du tableau ci-dessous datent de la tête de code
+`6618e30e3d05bf4928850e401410bb3d1ffc3d21` et **ne valent plus tels quels** : la
+Phase 2A a depuis hérité des seize clés composites multi-tenant des PR #8 et #9,
+et sa révision Alembic a changé d'identifiant. Les compteurs à jour, mesurés
+depuis un clone neuf du `main` final, vivent dans `INTEGRATION_2026-08-28.md`.
 
 ## Résultats reproductibles
 
@@ -84,6 +93,11 @@ pas.
 
 ## Ordre d'intégration
 
-La PR #6 a pour base la branche de la PR #1. Elle ne doit pas être fusionnée
-avant l'intégration de cette base. Une autorisation humaine de fusion ne
-remplace ni cet ordre Git, ni une CI verte sur la tête exacte à intégrer.
+**Fait le 28 août 2026.** La PR #6 était empilée sur la PR #1 ; elle a été
+replacée sur la PR #9 pendant la préparation, puis reciblée vers `main` une fois
+les PR #1, #8 et #9 fusionnées, dans cet ordre et par merge commits. Sa CI a été
+relancée sur chaque nouvelle base et exigée verte avant chaque étape.
+
+La règle qui a tenu, et qui reste valable pour la suite : une autorisation
+humaine de fusion ne remplace ni l'ordre Git, ni une CI verte sur la tête exacte
+à intégrer. Le détail est dans `INTEGRATION_2026-08-28.md`.

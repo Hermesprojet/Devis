@@ -109,5 +109,7 @@ entrer dans le domaine ou les modèles.
 
 Le diff est limité aux modèles, migration, contrats, permissions, tests et
 documentation correspondante. Lint, types, domaine, API SQLite, API PostgreSQL,
-migration round-trip et CI sont verts. La PR reste en brouillon, empilée sur la
-PR Phase 1, sans fusion ni changement de statut automatique.
+migration round-trip et CI sont verts. La PR #6 a été fusionnée dans `main` le
+28 août 2026, après les PR #1, #8 et #9 et par merge commit ; voir
+`INTEGRATION_2026-08-28.md`. Rien n'a été déployé, et `PRODUCTION_READY` reste
+non atteint.
