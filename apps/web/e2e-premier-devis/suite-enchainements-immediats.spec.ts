@@ -38,6 +38,21 @@ async function creerLeChantier(page: Page, reference: string): Promise<void> {
   await page.getByLabel(/référence/i).fill(reference)
   await page.getByLabel(/^nom/i).first().fill(`Chantier ${reference}`)
   await page.getByRole('button', { name: /^créer$/i }).first().click()
+  // On ATTEND que la création soit confirmée avant de rendre la main.
+  //
+  // Sans cette attente, la fonction rendait la main dès le clic, la requête
+  // encore en vol. Le test séquentiel ne le voyait pas : son action suivante
+  // est un `click()` sur ce même lien, et Playwright attend tout seul. Le test
+  // concurrent, lui, enchaînait sur `page.goto('/projets')` — et une
+  // navigation ANNULE les requêtes en cours de la page. La création partait
+  // alors à la poubelle, et le chantier manquait pour de bon.
+  //
+  // C'était donc une course du HARNAIS, pas du produit : le lien apparaît en
+  // place après la création, sans rechargement, et c'est exactement ce dont le
+  // test séquentiel se sert déjà. L'attendre ici rend le contrat de cette
+  // fonction honnête — « créer le chantier ET le voir » — sans rien retirer à
+  // la simultanéité, puisque les deux clics partent toujours ensemble.
+  await expect(page.getByRole('link', { name: reference }).first()).toBeVisible()
 }
 
 test("créer puis se servir aussitôt, dix fois d'affilée", async ({ page }) => {
