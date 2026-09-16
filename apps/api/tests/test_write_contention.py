@@ -370,3 +370,85 @@ class TestConcurrentWritesInOneOrganization:
         response = seeded_client.get("/api/v1/audit/verify", headers=headers)
         assert response.status_code == 200, response.text
         assert response.json()["valid"] is True, response.json()
+
+
+class TestTheBusinessRowLockDoesNotBlockReferencingInserts:
+    """Le même choix de mode de verrou, à l'autre endroit où il est fait.
+
+    `with_for_update(key_share=True)` apparaît deux fois dans le code :
+
+    * `audit.record`, sur la ligne `organizations` — couvert par
+      `TestTheAuditLockDoesNotDeadlock`, qui devient rouge si on rétablit
+      `FOR UPDATE` ;
+    * `locking.lock_owned`, sur les lignes métier — qui n'était couvert par
+      rien. Mesuré : en remplaçant `key_share=True` par un `FOR UPDATE`
+      exclusif à cet endroit, la suite complète reste verte, sur SQLite comme
+      sur PostgreSQL, y compris les quarante-quatre tests de concurrence.
+
+    La conséquence est directe. Tenir une version de bibliothèque pendant une
+    publication ou une écriture est normal ; bloquer au passage toute
+    insertion de prix qui référence cette version ne l'est pas. `FOR NO KEY
+    UPDATE` sérialise les décideurs entre eux sans s'opposer au
+    `FOR KEY SHARE` que PostgreSQL prend sur le parent à chaque insertion
+    d'enfant.
+
+    Mesuré des deux côtés, avec un `lock_timeout` de deux secondes :
+
+        code du dépôt (FOR NO KEY UPDATE)  insertion passe
+        FOR UPDATE exclusif                LockNotAvailable
+    """
+
+    def test_holding_a_version_does_not_block_inserting_a_price_into_it(
+        self, seeded: dict[str, str], database_url: str
+    ) -> None:
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.orm import Session
+
+        from metreo_api.models import PriceItem
+        from metreo_api.services.pricebook_versions import lock_version
+
+        organization_id = seeded["organization_a"]
+        version_id = seeded["price_book_version_a"]
+
+        porteuse = create_engine(database_url)
+        concurrente = create_engine(database_url)
+        try:
+            with Session(porteuse) as tenante:
+                verrouillee = lock_version(
+                    tenante, organization_id=organization_id, version_id=version_id
+                )
+                assert verrouillee.id == version_id
+
+                # Contrôle : le verrou est réellement tenu. Sans lui,
+                # supprimer le verrou tout entier ferait passer ce test.
+                with Session(concurrente) as temoin:
+                    temoin.execute(text("SET LOCAL lock_timeout = '2s'"))
+                    with pytest.raises(Exception) as bloque:
+                        lock_version(
+                            temoin,
+                            organization_id=organization_id,
+                            version_id=version_id,
+                        )
+                    assert "lock timeout" in str(bloque.value).lower(), str(bloque.value)[:200]
+
+                # Le fait mesuré : l'insertion d'un enfant n'est pas bloquée.
+                with Session(concurrente) as inserante:
+                    inserante.execute(text("SET LOCAL lock_timeout = '2s'"))
+                    inserante.add(
+                        PriceItem(
+                            organization_id=organization_id,
+                            price_book_version_id=version_id,
+                            code="VERROU-PRIX",
+                            label="Prix inséré pendant un verrou de version",
+                            unit_code="m3",
+                            resource_kind="material",
+                            unit_price="1.0000000000",
+                            currency="EUR",
+                            confidence="declared",
+                        )
+                    )
+                    inserante.flush()
+                    inserante.rollback()
+        finally:
+            porteuse.dispose()
+            concurrente.dispose()
