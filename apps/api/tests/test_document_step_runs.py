@@ -277,3 +277,80 @@ def test_low_confidence_proposal_never_becomes_business_data(session: Session) -
         table: session.scalar(text(f"SELECT count(*) FROM {table}")) for table in business_tables
     }
     assert after == before
+
+
+def test_a_failed_step_cannot_be_marked_succeeded(session: Session) -> None:
+    """La direction que `test_state_transitions_...` ne prenait pas.
+
+    Ce test-là vérifie qu'une étape réussie ne peut pas être déclarée en échec
+    (`step_already_succeeded`). L'inverse — une étape échouée déclarée réussie —
+    n'était vérifié nulle part : mesuré par une campagne de mutation, en
+    retirant les deux refus de `succeed_step_run` la suite complète restait
+    verte, alors que la mutation symétrique sur `fail_step_run` était bien
+    attrapée.
+
+    Sur un registre en ajout seul, c'est la moitié qui compte : effacer une
+    panne en la déclarant réussie réécrit l'histoire du pipeline.
+    """
+    organization, revision = _revision_graph(session, label="ECHEC-FIGE")
+    echouee, _created = _claim(session, organization.id, revision.id)
+    documents.fail_step_run(
+        session,
+        organization_id=organization.id,
+        step_run_id=echouee.id,
+        error_code="provider_unavailable",
+        duration_ms=7,
+    )
+    assert echouee.status == "failed"
+
+    with pytest.raises(documents.DocumentStepRunRefused) as refused:
+        documents.succeed_step_run(
+            session,
+            organization_id=organization.id,
+            step_run_id=echouee.id,
+            duration_ms=1,
+        )
+    assert refused.value.code == "step_already_failed"
+
+    # Le refus n'a rien laissé passer : l'étape reste échouée, avec sa durée.
+    assert echouee.status == "failed"
+    assert echouee.duration_ms == 7
+
+    # Contrôle positif : la même opération sur une étape en cours réussit,
+    # donc le refus ci-dessus vient bien de l'état et non de l'appel lui-même.
+    en_cours, _created = _claim(session, organization.id, revision.id, model_version="ocr-9")
+    aboutie = documents.succeed_step_run(
+        session,
+        organization_id=organization.id,
+        step_run_id=en_cours.id,
+        duration_ms=3,
+    )
+    assert aboutie.status == "succeeded"
+
+
+def test_only_a_declared_pipeline_step_can_be_claimed(session: Session) -> None:
+    """`DOCUMENT_PIPELINE_STEPS` n'était pas exercé.
+
+    Mesuré : en retirant le refus `invalid_document_step`, la suite complète
+    restait verte — n'importe quel nom d'étape entrait alors dans le registre,
+    et le journal du pipeline cessait d'être lisible.
+    """
+    organization, revision = _revision_graph(session, label="ETAPES")
+
+    with pytest.raises(documents.DocumentStepRunRefused) as refused:
+        _claim(session, organization.id, revision.id, step="etape-qui-nexiste-pas")
+    assert refused.value.code == "invalid_document_step"
+
+    # Contrôle positif : chaque étape déclarée est acceptée. Sans lui, vider
+    # `DOCUMENT_PIPELINE_STEPS` ferait passer le refus ci-dessus tout en
+    # bloquant le pipeline entier.
+    assert documents.DOCUMENT_PIPELINE_STEPS, "l'ensemble des étapes ne peut pas être vide"
+    for etape in sorted(documents.DOCUMENT_PIPELINE_STEPS):
+        course, _created = _claim(
+            session,
+            organization.id,
+            revision.id,
+            step=etape,
+            model_version=f"modele-{etape}",
+        )
+        assert course.step == etape
