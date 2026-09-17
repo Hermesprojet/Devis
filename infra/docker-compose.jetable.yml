@@ -1,10 +1,19 @@
 # Une SECONDE pile, jetable, pour éprouver une restauration sans toucher à
 # celle qui sert.
 #
+# `ops/restaurer.sh` ne monte pas cette pile : il `exec` dans ses conteneurs
+# `db` et `api`, qui doivent donc tourner AVANT. Derrière un proxy, ajoutez
+# `infra/docker-compose.derriere-proxy.yml` entre les deux fichiers, pour que
+# `PUBLIC_DOMAIN` reste exigé de la même façon que sur la pile en service.
+#
+#   J="-p metreo-restore -f infra/docker-compose.staging.yml -f infra/docker-compose.jetable.yml --env-file infra/staging.env"
+#   docker compose $J up -d --wait --wait-timeout 240 db
+#   docker compose $J up -d --no-deps api
 #   RESTORE_COMPOSE_PROJECT=metreo-restore \
 #   RESTORE_COMPOSE_FILES="-f infra/docker-compose.staging.yml -f infra/docker-compose.jetable.yml" \
 #   RESTORE_ENV_FILE=infra/staging.env \
 #   ops/restaurer.sh <archive> metreo_restore_essai
+#   docker compose $J down --volumes
 #
 # Elle ne publie aucun port et ne porte aucune étiquette de proxy : rien de
 # ce qu'elle monte n'est joignable de l'extérieur, et Traefik ne la voit pas.

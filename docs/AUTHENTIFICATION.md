@@ -184,7 +184,7 @@ qui dit pourquoi il a refusé.
 | surface | ce qu'on y lit |
 | --- | --- |
 | l'URL de retour, `https://<application>/?login_error=<code>` | le **code** — le seul message que l'API confie au navigateur |
-| le journal JSON de l'API, `docker compose logs api` | la requête, son `request_id`, le code HTTP — jamais un jeton, jamais un secret |
+| le journal JSON de l'API — `mc logs api`, les mêmes `-f` qu'au déploiement (voir `docs/EXPLOITATION.md`), ou `docker compose -p metreo-staging logs api` | la requête, son `request_id`, le code HTTP — jamais un jeton, jamais un secret |
 | chez le fournisseur (Auth0 : *Monitoring → Logs*) | la tentative vue de son côté : `Success Login`, `Failed Login`, et sa raison |
 
 ### Les codes de `login_error`, et ce qu'ils désignent
@@ -192,15 +192,16 @@ qui dit pourquoi il a refusé.
 | code | cause | où regarder |
 | --- | --- | --- |
 | `provider_refused` | le fournisseur a renvoyé une erreur : consentement annulé, compte bloqué, application mal déclarée | le journal du fournisseur |
-| `invalid_request` | retour sans `code` ni `state` | l'URI de redirection déclarée chez le fournisseur ne pointe pas la page d'accueil |
+| `invalid_request` | le point de retour de l'API atteint sans `code` ou sans `state` — la page d'accueil ne relaie jamais l'un sans l'autre : adresse tapée à la main, ou fournisseur qui renvoie ailleurs que sur la page d'accueil | `METREO_OIDC_REDIRECT_URI` d'abord — c'est aussi là que ce code d'erreur est déposé —, puis l'URI déclarée chez le fournisseur |
 | `provider_unavailable` | découverte, JWKS ou point de jeton injoignables | le réseau sortant du conteneur `api` ; `METREO_OIDC_ISSUER` |
-| `issuer_mismatch` | le document de découverte se déclare sous un autre émetteur que celui configuré | `METREO_OIDC_ISSUER` — **barre oblique finale comprise** |
+| `issuer_mismatch` | le document de découverte se déclare sous un autre émetteur que celui configuré | `METREO_OIDC_ISSUER` : le domaine du locataire, en `https`, ou son domaine personnalisé s'il en a un. La barre oblique finale est **tolérée**, retirée avant la comparaison |
 | `provider_incomplete` | document de découverte ou réponse de jeton sans les champs attendus | le fournisseur, ou un `METREO_OIDC_ISSUER` qui pointe autre chose qu'un émetteur OIDC |
-| `invalid_state` / `expired_state` | demande de connexion inconnue, déjà consommée, ou de plus de `METREO_OIDC_TRANSACTION_TTL_SECONDS` | un retour rejoué, ou deux instances API sans base commune |
+| `invalid_state` / `expired_state` | demande de connexion inconnue, déjà consommée, ou de plus de `METREO_OIDC_TRANSACTION_TTL_SECONDS` | un retour rejoué — rechargement, bouton « précédent » —, qui **masque l'erreur de la première tentative** : lire la première URL de retour avant de recharger ; ou deux instances API sans base commune |
 | `code_rejected` | le fournisseur a refusé le code d'autorisation | `METREO_OIDC_CLIENT_SECRET` faux, ou l'URI de redirection différente entre `start` et le fournisseur |
 | `invalid_audience` / `invalid_issuer` | jeton d'identité émis pour une autre application ou par un autre émetteur | `METREO_OIDC_CLIENT_ID`, `METREO_OIDC_ISSUER` |
 | `token_expired` / `token_not_yet_valid` | horloge de la machine décalée | `date -u` sur le serveur, contre une source de temps |
-| `invalid_token` / `invalid_nonce` | signature invalide ou jeton rejoué | rare ; un JWKS servi par un autre locataire, ou un rejeu |
+| `invalid_token` | signature invérifiable — clés JWKS injoignables depuis le conteneur `api`, clé tournée, jeton d'un autre locataire — ou algorithme refusé : Metreo n'accepte que RS256/384/512 et ES256/384, jamais HS256 | le réseau sortant du conteneur `api` ; chez Auth0, *Applications → Advanced Settings → OAuth → JSON Web Token Signature Algorithm* doit être RS256 |
+| `invalid_nonce` | le jeton d'identité ne porte pas le `nonce` de la demande | un rejeu, ou un jeton obtenu ailleurs ; rare |
 | `email_not_verified` | le fournisseur ne déclare pas l'adresse vérifiée | chez le fournisseur : vérifier l'adresse de l'utilisateur |
 | `unknown_user` | aucun compte ne porte cette adresse, ou le jeton ne porte pas d'adresse | `python -m metreo_api.bootstrap` avec **exactement** l'adresse du fournisseur ; la portée `email` demandée |
 | `account_disabled` | le compte existe et est désactivé | un administrateur le réactive |
@@ -216,29 +217,39 @@ serait-ce que d'une barre oblique finale.
 ```
 # 1. L'API annonce-t-elle la connexion OIDC, sans problème de configuration ?
 curl -s https://<application>/api/v1/health | python3 -m json.tool \
-  | grep -E 'login_methods|configuration_problems|browser_login' -A2
+  | grep -E 'login_methods|configuration_problems' -A2
 
 # 2. La demande de connexion se fabrique-t-elle, et vers le bon endroit ?
 curl -s https://<application>/api/v1/auth/oidc/start | python3 -m json.tool
 ```
 
-La réponse de l'étape 2 porte une URL d'autorisation : elle doit commencer par
-`METREO_OIDC_ISSUER`, porter `client_id=` avec l'identifiant configuré,
-`redirect_uri=` avec `METREO_OIDC_REDIRECT_URI` encodée, `scope=openid email
-profile`, et `code_challenge_method=S256`. Chaque écart entre cette URL et ce
-que le fournisseur a enregistré est un refus avant même que l'utilisateur ne
-voie un formulaire. Le `state` rendu est à usage unique : cette requête a
-**consommé** une transaction, ce qui n'a aucune conséquence.
+La réponse de l'étape 2 est `{"authorization_url": "…"}`. Cette URL doit
+commencer par le point d'autorisation du fournisseur — en pratique par
+`METREO_OIDC_ISSUER` —, porter `client_id=` avec l'identifiant configuré,
+`redirect_uri=` avec `METREO_OIDC_REDIRECT_URI` encodée,
+`scope=openid+email+profile` (les espaces s'encodent en `+`), et
+`code_challenge_method=S256`. Chaque écart entre cette URL et ce que le
+fournisseur a enregistré est un refus avant même que l'utilisateur ne voie
+un formulaire. Cette requête a **ouvert** une transaction de connexion, que
+seul le retour du fournisseur consomme ; une transaction jamais rappelée
+expire après `METREO_OIDC_TRANSACTION_TTL_SECONDS` et ne gêne rien. En ouvrir
+une pour un diagnostic n'a aucune conséquence.
 
 ```
 # 3. Le retour du fournisseur atteint-il la bonne page ?
 ```
 
 Après authentification, le navigateur doit revenir sur
-`https://<application>/?code=…&state=…`. S'il atterrit sur `localhost` ou
-sur un autre hôte, ce n'est pas le fournisseur : c'est l'image `web`, qui
-porte l'URL d'API compilée à sa construction (voir `docs/EXPLOITATION.md`,
-« Produire ces images »).
+`https://<application>/?code=…&state=…`. Deux façons d'atterrir ailleurs,
+qui ne se confondent pas :
+
+- sur un autre hôte **avec** `?code=…&state=…` : c'est `METREO_OIDC_REDIRECT_URI`
+  qui désigne le mauvais hôte — la valeur que `start` a envoyée, et que le
+  fournisseur a acceptée parce qu'elle est aussi déclarée chez lui ;
+- sur la bonne page d'accueil, puis un saut vers
+  `localhost:8000/api/v1/auth/oidc/callback…` : c'est le relais de l'étape 4,
+  et l'image `web` porte l'URL d'API compilée à sa construction (voir
+  `docs/EXPLOITATION.md`, « Produire ces images »).
 
 ```
 # 4. Le retour a-t-il produit un code de connexion, ou un code d'erreur ?
@@ -248,7 +259,10 @@ La page d'accueil relaie `code` et `state` à l'API, qui répond par une
 redirection vers `/?login_code=…` — succès — ou `/?login_error=<code>` —
 la table ci-dessus. Dans le journal de l'API, la requête `GET
 /api/v1/auth/oidc/callback` porte un `303` dans les deux cas : c'est la
-destination de la redirection qui distingue, pas le code HTTP.
+destination de la redirection qui distingue, pas le code HTTP, et elle se
+lit dans la barre d'adresse du navigateur. La lire **avant** de recharger :
+un rechargement rejoue le retour sur une transaction déjà consommée, et
+`invalid_state` remplace le code d'origine.
 
 ```
 # 5. L'échange rend-il la session ?

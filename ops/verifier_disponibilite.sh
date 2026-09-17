@@ -27,8 +27,9 @@ BASE="${BASE%/}"
 DELAI="${METREO_TIMEOUT:-10}"
 # Derrière un proxy déjà en place, le Caddy de Metreo n'est joignable en
 # local que sur 127.0.0.1:8081 — et il n'ouvre qu'un seul site, celui de
-# PUBLIC_HOST. Sans cet en-tête, il répond 404 à tout, et ce script
-# conclurait INDISPONIBLE sur une pile parfaitement saine.
+# PUBLIC_HOST. Sans cet en-tête, il répond à tout un 200 VIDE, sans en-tête
+# de sécurité ni corps : ce script verrait des codes justes sur une pile qui
+# ne sert rien, et un `/health` sans JSON qu'il compterait en anomalie.
 #
 #   METREO_HOST_HEADER=preprod.metreobtp.com ops/verifier_disponibilite.sh http://127.0.0.1:8081
 HOTE="${METREO_HOST_HEADER:-}"
