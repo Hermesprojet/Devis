@@ -55,9 +55,9 @@ const fr: Dictionary = {
   'login.error.email_not_verified':
     "Le fournisseur d'identité n'a pas confirmé cette adresse e-mail.",
   'login.error.expired_state':
-    'La demande de connexion a expiré. Recommencez : le bouton ci-dessus repart de zéro.',
+    'La demande de connexion a expiré. Recommencez : le bouton de connexion repart de zéro.',
   'login.error.invalid_state':
-    'Cette demande de connexion a déjà servi. Recommencez depuis le bouton ci-dessus.',
+    'Cette demande de connexion a déjà servi. Recommencez depuis le bouton de connexion.',
   'login.error.token_expired':
     "Le fournisseur d'identité a rendu une réponse déjà périmée. Recommencez.",
   'login.error.token_not_yet_valid':
@@ -73,17 +73,21 @@ const fr: Dictionary = {
   'login.error.provider_unavailable':
     "Le fournisseur d'identité est injoignable. Réessayez dans un instant ; si cela dure, prévenez votre administrateur.",
   'login.error.invalid_nonce':
-    "Cette réponse n'a pas pu être rattachée à votre demande de connexion. Recommencez depuis le bouton ci-dessus.",
+    "Cette réponse n'a pas pu être rattachée à votre demande de connexion. Recommencez depuis le bouton de connexion.",
   'login.error.invalid_token':
     "L'identité renvoyée par le fournisseur n'a pas pu être vérifiée. Recommencez ; si cela persiste, prévenez votre administrateur.",
 
   // Défauts de configuration du déploiement. Rien de ce que l'utilisateur fera
   // ne les corrigera, et le lui laisser croire est le pire des deux. La phrase
   // ne nomme aucun réglage : cet écran est public.
+  //
+  // `provider_incomplete` n'est PAS de ce groupe, bien qu'il en ait l'air : il
+  // est aussi émis quand le point d'entrée jeton répond de travers, ce qui
+  // passe. Voir `services/oidc.py`, ses trois sites d'émission.
   'login.error.issuer_mismatch':
     "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
   'login.error.provider_incomplete':
-    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+    "Le fournisseur d'identité a répondu de façon incomplète. Réessayez ; si cela se répète, c'est un réglage du déploiement, et un administrateur doit le corriger.",
   'login.error.invalid_audience':
     "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
   'login.error.invalid_issuer':

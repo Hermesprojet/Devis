@@ -26,11 +26,18 @@ DICTIONNAIRE = RACINE / "apps" / "web" / "src" / "lib" / "i18n.ts"
 
 #: Ce que l'API construit pour refuser une connexion, sous ses deux formes :
 #: l'exception du service, et le paramètre que le routeur met dans l'URL de
-#: retour. Les deux portent des chaînes littérales — aucun code n'est calculé.
+#: retour.
+#:
+#: Limite assumée : seuls les codes écrits en toutes lettres sont vus. Un code
+#: passé par une variable échapperait à cette lecture — d'où le témoin plus
+#: bas, qui refuse une extraction devenue muette.
 MOTIFS = (
-    re.compile(r'OidcError\(\s*"([a-z_]+)"'),
-    re.compile(r'login_error="([a-z_]+)"'),
+    re.compile(r'OidcError\(\s*"([a-z0-9_]+)"'),
+    re.compile(r'login_error="([a-z0-9_]+)"'),
 )
+
+#: Le dictionnaire français, et lui seul.
+DEBUT_DICTIONNAIRE_FR = "const fr: Dictionary = {"
 
 
 def codes_emis_par_l_api() -> set[str]:
@@ -42,20 +49,64 @@ def codes_emis_par_l_api() -> set[str]:
     return codes
 
 
-def codes_traduits() -> set[str]:
+def dictionnaire_francais() -> str:
+    """Le corps du dictionnaire `fr`, commentaires retirés.
+
+    Lire le fichier entier ferait exactement l'erreur que ce fichier combat.
+    Une entrée mise en commentaire resterait « trouvée », et une clé déplacée
+    dans le dictionnaire `nl` — vide aujourd'hui, rempli en phase 5 — le
+    serait aussi. Dans les deux cas `translate` rend la clé, l'écran affiche
+    le repli générique, et un test qui lit le fichier entier reste vert.
+    """
     texte = DICTIONNAIRE.read_text(encoding="utf-8")
-    return set(re.findall(r"'login\.error\.([a-z_]+)'", texte)) - {"generic"}
+    debut = texte.index(DEBUT_DICTIONNAIRE_FR)
+    # La première accolade fermante en début de ligne clôt l'objet littéral.
+    fin = texte.index("\n}\n", debut)
+    corps = texte[debut:fin]
+    # `^\s*//` et non `//` : « http:// » vit à l'intérieur de certaines
+    # valeurs, et ne commente rien.
+    return re.sub(r"^\s*//.*$", "", corps, flags=re.MULTILINE)
+
+
+def codes_traduits() -> set[str]:
+    motif = r"'login\.error\.([a-z0-9_]+)'"
+    return set(re.findall(motif, dictionnaire_francais())) - {"generic"}
 
 
 def test_the_extraction_actually_finds_the_login_error_codes() -> None:
-    """Un extracteur qui ne trouve plus rien ferait passer le test suivant.
+    """Un extracteur qui ne trouve plus rien ferait passer les tests suivants.
 
-    Deux codes connus servent de témoin : s'ils disparaissent du résultat,
-    c'est l'extraction qui est cassée, pas le produit.
+    Des codes connus servent de témoin des deux côtés : s'ils disparaissent du
+    résultat, c'est l'extraction qui est cassée, pas le produit.
     """
     codes = codes_emis_par_l_api()
     assert {"no_membership", "unknown_user"} <= codes
-    assert len(codes) >= 15, f"extraction suspecte : {sorted(codes)}"
+    assert len(codes) >= 15, f"extraction côté API suspecte : {sorted(codes)}"
+
+    traduits = codes_traduits()
+    assert {"no_membership", "unknown_user"} <= traduits
+    assert len(traduits) >= 15, f"extraction côté dictionnaire suspecte : {sorted(traduits)}"
+
+
+def test_a_commented_out_translation_does_not_count_as_present() -> None:
+    """La complaisance que ce fichier doit refuser, éprouvée sur du vrai texte.
+
+    Commenter une entrée la laisse dans le fichier mais la retire du
+    dictionnaire : `translate` rend la clé, l'écran affiche le repli. Une
+    lecture naïve du fichier la compterait présente.
+    """
+    corps = dictionnaire_francais()
+    assert "'login.error.unknown_user'" in corps
+
+    commente = re.sub(
+        r"^(\s*)('login\.error\.unknown_user')",
+        r"\1// \2",
+        corps,
+        flags=re.MULTILINE,
+    )
+    assert commente != corps, "la mutation n'a rien changé : le témoin ne prouve rien"
+    restant = re.sub(r"^\s*//.*$", "", commente, flags=re.MULTILINE)
+    assert "'login.error.unknown_user'" not in restant
 
 
 def test_every_refusal_the_api_can_emit_reaches_the_screen_as_a_sentence() -> None:

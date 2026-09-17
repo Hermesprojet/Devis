@@ -175,12 +175,25 @@ jamais :
 | --- | --- |
 | l'adresse porte la mention vérifiée | sinon Metreo refuse, avec `email_not_verified` |
 | le compte n'est pas `Blocked` | plusieurs essais ratés déclenchent la protection anti force brute du fournisseur ; **Actions → Unblock** |
-| **ne pas** utiliser **Change Email** | changer l'adresse la repasse en non vérifiée, et détache l'identité `(issuer, subject)` du compte Metreo — la connexion échouerait ensuite en `unknown_user` |
+| **ne pas** utiliser **Change Email** *avant la première connexion réussie* | tant qu'aucune liaison n'existe, c'est l'ADRESSE qui rattache le compte du fournisseur au compte Metreo. La changer casse ce rattachement (`unknown_user`) et repasse l'adresse en non vérifiée (`email_not_verified`) |
+
+Après une première connexion réussie, la mise en garde tombe : la liaison
+`(issuer, subject)` est faite, `resolve_user` la trouve avant de regarder quoi
+que ce soit d'autre, et l'adresse ne décide plus. **Ce qui casse alors la
+liaison, c'est de supprimer puis recréer l'utilisateur chez le fournisseur** —
+le `subject` change, et le compte Metreo n'est plus rattaché à personne. Un
+changement d'adresse, lui, est sans effet.
 
 #### Ce qui se transmet, et ce qui ne se transmet jamais
 
-Pour faire diagnostiquer un échec, **une seule valeur suffit** : le code lu
-dans la barre d'adresse, `?login_error=<code>`. La table plus bas le traduit.
+Depuis l'ajout des messages de refus, **l'écran dit lui-même la plupart des
+causes** : un compte désactivé, un fournisseur injoignable, un réglage à
+corriger. Lisez la phrase affichée avant tout.
+
+Quand elle ne suffit pas, **une seule valeur est à transmettre** : le code lu
+dans la barre d'adresse, `?login_error=<code>`. Il correspond au nom de la clé
+`login.error.<code>` de `apps/web/src/lib/i18n.ts`, et il est émis par
+`apps/api/src/metreo_api/services/oidc.py`.
 
 Ne transmettez jamais, à personne :
 
