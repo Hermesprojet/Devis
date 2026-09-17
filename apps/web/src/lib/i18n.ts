@@ -63,6 +63,32 @@ const fr: Dictionary = {
   'login.error.token_not_yet_valid':
     "L'horloge du fournisseur d'identité et celle du serveur divergent trop. " +
     'Recommencez ; si le refus persiste, prévenez votre administrateur.',
+  // Refus qui viennent du fournisseur d'identité ou du réseau. L'utilisateur
+  // peut agir sur certains, sur aucun autre — la phrase le dit, plutôt que de
+  // le laisser recommencer indéfiniment.
+  'login.error.account_disabled':
+    'Ce compte est désactivé. Un administrateur de votre organisation doit le réactiver.',
+  'login.error.code_rejected':
+    "Le fournisseur d'identité a refusé cette demande de connexion. Recommencez ; si le refus persiste, prévenez votre administrateur.",
+  'login.error.provider_unavailable':
+    "Le fournisseur d'identité est injoignable. Réessayez dans un instant ; si cela dure, prévenez votre administrateur.",
+  'login.error.invalid_nonce':
+    "Cette réponse n'a pas pu être rattachée à votre demande de connexion. Recommencez depuis le bouton ci-dessus.",
+  'login.error.invalid_token':
+    "L'identité renvoyée par le fournisseur n'a pas pu être vérifiée. Recommencez ; si cela persiste, prévenez votre administrateur.",
+
+  // Défauts de configuration du déploiement. Rien de ce que l'utilisateur fera
+  // ne les corrigera, et le lui laisser croire est le pire des deux. La phrase
+  // ne nomme aucun réglage : cet écran est public.
+  'login.error.issuer_mismatch':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+  'login.error.provider_incomplete':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+  'login.error.invalid_audience':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+  'login.error.invalid_issuer':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+
   'login.error.generic': 'La connexion a échoué.',
 
   'common.loading': 'Chargement…',
