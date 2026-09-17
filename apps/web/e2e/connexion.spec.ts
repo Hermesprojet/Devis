@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { API_BASE_URL } from '../playwright.config'
+import { t } from '../src/lib/i18n'
 
 /**
  * L'écran de connexion, côté navigateur.
@@ -27,9 +28,24 @@ test("l'API de ce banc annonce la connexion de développement, et la page la pro
 
   await page.goto('/')
   await expect(page.getByRole('button', { name: 'Se connecter', exact: true })).toBeVisible()
-  // Le bouton du fournisseur n'existe pas : proposer un parcours que ce
-  // déploiement n'offre pas mène l'utilisateur sur un 404.
-  await expect(page.getByRole('button', { name: /compte de l'entreprise/ })).toHaveCount(0)
+  // Les deux libellés viennent du DICTIONNAIRE, pas d'une copie. Une copie
+  // avait rendu cette vérification complaisante : le bouton renommé, le
+  // libellé recopié ne désignait plus rien, et « aucun bouton » devenait vrai
+  // quoi qu'affiche la page.
+  //
+  // `t` rend la CLÉ quand elle manque. Sans ce garde-fou, supprimer la clé
+  // ramènerait la même complaisance par un autre chemin : on chercherait un
+  // bouton nommé « login.oidcSubmit », qui n'existe nulle part.
+  for (const cle of ['login.oidcSubmit', 'login.otherAccount']) {
+    expect(t(cle), `la clé ${cle} a disparu du dictionnaire`).not.toBe(cle)
+  }
+
+  // Ni l'un ni l'autre des boutons du fournisseur n'existe : proposer un
+  // parcours que ce déploiement n'offre pas mène l'utilisateur sur un 404.
+  const oidc = { name: t('login.oidcSubmit'), exact: true }
+  const autreCompte = { name: t('login.otherAccount'), exact: true }
+  await expect(page.getByRole('button', oidc)).toHaveCount(0)
+  await expect(page.getByRole('button', autreCompte)).toHaveCount(0)
 })
 
 // Next monte son propre `role="alert"` vide pour annoncer les changements de
