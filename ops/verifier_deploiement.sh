@@ -34,7 +34,13 @@ fi
 defauts=0
 ok() { printf '  ok   %s\n' "$1"; }
 ko() { printf '  KO   %s\n' "$1"; defauts=$((defauts + 1)); }
-code_de() { curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$@" 2>/dev/null || echo 000; }
+# `-w` imprime déjà `000` quand curl échoue : un `|| echo 000` en rajouterait
+# un second, et le code affiché mentirait. Mesuré : « 000000 ».
+code_de() {
+	local c
+	c=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$@" 2>/dev/null) || true
+	printf '%s' "${c:-000}"
+}
 
 echo "Déploiement de $DOMAINE — projet « $PROJET »"
 echo
@@ -122,7 +128,7 @@ echo
 # ---------------------------------------------------------------------------
 echo "6. Ce que le proxy de devant dit de l'émission du certificat"
 # ---------------------------------------------------------------------------
-traefik=$(docker ps -q --filter name=traefik | head -1)
+traefik=$(docker ps -q --filter name=traefik 2>/dev/null | head -1)
 if [[ -z "$traefik" ]]; then
 	ko "aucun conteneur traefik trouvé"
 else
