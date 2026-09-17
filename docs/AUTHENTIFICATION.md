@@ -140,6 +140,59 @@ Allow Google One Tap**.
 Le mot de passe se gère dans Auth0, jamais dans Metreo. Contrôler le fournisseur
 affiché sur la fiche de l'utilisateur si le compte choisi n'est pas celui attendu.
 
+### Retrouver la connexion par e-mail, sans transmettre quoi que ce soit
+
+Le cas qui bloque une première mise en ligne : le mot de passe est oublié, et
+l'écran de Metreo ne propose aucun lien pour le réinitialiser. C'est normal —
+**Metreo ne voit jamais de mot de passe**, donc il n'a rien à réinitialiser. Le
+lien vit chez le fournisseur, sur l'écran QUI DEMANDE le mot de passe. Avec un
+tenant réglé en « identifiant d'abord », cet écran n'arrive qu'après avoir
+saisi l'adresse et validé : le lien est invisible avant.
+
+Trois causes possibles, dans l'ordre où il faut les écarter.
+
+**1. On n'est jamais arrivé sur l'écran du fournisseur.** Le bouton
+« Continuer vers la connexion » n'a pas ouvert de page, ou une session Google
+a court-circuité la saisie. Reprendre avec **Utiliser un autre compte**, qui
+demande explicitement l'écran de connexion.
+
+**2. On y est, mais sans champ « mot de passe ».** Saisir l'adresse, valider,
+et regarder à nouveau. S'il n'apparaît toujours pas, la connexion base de
+données n'est pas activée pour cette application : c'est le contrôle du
+paragraphe précédent, sous **Authentication → Database →
+Username-Password-Authentication → Applications**. Sans elle, il n'existe
+aucun mot de passe à réinitialiser, et aucun lien à afficher.
+
+**3. Le lien est là, mais le courriel n'arrive pas.** Passer par le tableau de
+bord, qui ne dépend d'aucun envoi : **User Management → Users**, ouvrir la
+fiche de l'utilisateur, **Actions → Change Password**. Le nouveau mot de passe
+se saisit dans cette boîte de dialogue, et nulle part ailleurs.
+
+Sur cette fiche, deux choses se vérifient au passage, et une ne se touche
+jamais :
+
+| à vérifier | pourquoi |
+| --- | --- |
+| l'adresse porte la mention vérifiée | sinon Metreo refuse, avec `email_not_verified` |
+| le compte n'est pas `Blocked` | plusieurs essais ratés déclenchent la protection anti force brute du fournisseur ; **Actions → Unblock** |
+| **ne pas** utiliser **Change Email** | changer l'adresse la repasse en non vérifiée, et détache l'identité `(issuer, subject)` du compte Metreo — la connexion échouerait ensuite en `unknown_user` |
+
+#### Ce qui se transmet, et ce qui ne se transmet jamais
+
+Pour faire diagnostiquer un échec, **une seule valeur suffit** : le code lu
+dans la barre d'adresse, `?login_error=<code>`. La table plus bas le traduit.
+
+Ne transmettez jamais, à personne :
+
+- un mot de passe, ni le `Client Secret` de l'application ;
+- **l'URL de retour complète.** Elle porte `code` et `state`. Le `code` est un
+  jeton d'autorisation à usage unique : qui le recopie avant vous ouvre la
+  session à votre place. Le recopier dans un message, un ticket ou une
+  capture, c'est le publier. Relevez le seul `login_error`, et rien d'autre.
+
+Une capture d'écran, elle, se transmet à condition de masquer la barre
+d'adresse et l'adresse e-mail.
+
 L'identité est le couple **immuable `(issuer, subject)`**, stocké dans
 `external_identities`. C'est lui qui décide, à chaque connexion après la
 première.
