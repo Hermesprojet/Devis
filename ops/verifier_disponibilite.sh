@@ -25,6 +25,14 @@ fi
 BASE="${BASE%/}"
 
 DELAI="${METREO_TIMEOUT:-10}"
+# Derrière un proxy déjà en place, le Caddy de Metreo n'est joignable en
+# local que sur 127.0.0.1:8081 — et il n'ouvre qu'un seul site, celui de
+# PUBLIC_HOST. Sans cet en-tête, il répond à tout un 200 VIDE, sans en-tête
+# de sécurité ni corps : ce script verrait des codes justes sur une pile qui
+# ne sert rien, et un `/health` sans JSON qu'il compterait en anomalie.
+#
+#   METREO_HOST_HEADER=preprod.metreobtp.com ops/verifier_disponibilite.sh http://127.0.0.1:8081
+HOTE="${METREO_HOST_HEADER:-}"
 # Le seuil au-delà duquel une réponse, même juste, est un symptôme.
 SEUIL_LENT_MS="${METREO_SEUIL_LENT_MS:-2000}"
 
@@ -36,6 +44,7 @@ etat=0
 interroger() {
 	curl -sS -o /dev/null \
 		--max-time "$DELAI" \
+		${HOTE:+-H "Host: $HOTE"} \
 		-w '%{http_code} %{time_total}' \
 		"$1" 2>/dev/null || echo "000 0"
 }
@@ -70,7 +79,7 @@ controler "processus (/live)" "$BASE/api/v1/live" 200 || etat=$?
 
 # `/health` peut répondre 200 en se déclarant `degraded` : le code HTTP seul ne
 # suffit donc pas, il faut lire ce qu'il dit de lui-même.
-sante=$(curl -sS --max-time "$DELAI" "$BASE/api/v1/health" 2>/dev/null || echo '')
+sante=$(curl -sS --max-time "$DELAI" ${HOTE:+-H "Host: $HOTE"} "$BASE/api/v1/health" 2>/dev/null || echo '')
 resultat=0
 controler "service  (/health)" "$BASE/api/v1/health" 200 || resultat=$?
 (( resultat > etat )) && etat=$resultat

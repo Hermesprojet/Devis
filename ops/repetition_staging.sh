@@ -81,8 +81,27 @@ detail() { printf '     %s\n' "$1"; }
 
 # Un échec n'arrête pas la répétition : on veut la liste complète de ce qui ne
 # va pas, pas le premier symptôme. Le code de sortie final la résume.
+#: Une référence VIDE n'est pas une attente : c'est une étape amont qui n'a
+#: rien produit. `verifier_empreintes` plus bas le refusait déjà pour les
+#: empreintes ; le reste des contrôles ne le refusait pas.
+#:
+#: Mesuré : quand le parcours navigateur échoue, `etape_devis` rend la main
+#: avant de renseigner TOTAL_HT et EMPREINTE_DEVIS. Les étapes suivantes
+#: tournent quand même — le corps du script les enchaîne avec `|| true`, pour
+#: qu'une panne n'en cache pas une autre — et comparaient donc à du vide. Une
+#: seule panne produisait une dizaine de refus qui nommaient tous le symptôme,
+#: aucun la cause, et le rapport final accusait la sauvegarde et la
+#: restauration d'un défaut qui était dans le navigateur.
+refuser_une_reference_vide() {
+	local libelle="$1" attendu="$2"
+	[[ -n "$attendu" ]] && return 1
+	ko "$libelle — non vérifiable : l'étape qui produit la référence n'a rien rendu"
+	return 0
+}
+
 verifier() {
 	local libelle="$1" attendu="$2" obtenu="$3"
+	refuser_une_reference_vide "$libelle" "$attendu" && return 1
 	if [[ "$obtenu" == "$attendu" ]]; then
 		ok "$libelle"
 		return 0
@@ -101,6 +120,10 @@ verifier() {
 # bonne valeur.
 verifier_montant() {
 	local libelle="$1" attendu="$2" obtenu="$3"
+	# Sans cette garde, `Decimal("")` lève InvalidOperation, le python sort en
+	# échec, et le refus s'affiche « attendu «  », obtenu « 23080.10 » » —
+	# illisible.
+	refuser_une_reference_vide "$libelle" "$attendu" && return 1
 	if python3 -c '
 import sys
 from decimal import Decimal, InvalidOperation
@@ -252,6 +275,14 @@ etape_demarrage() {
 	fi
 
 	verifier "le front est servi à la racine" 200 "$(code_de "$BASE/")"
+
+	# Servi par le proxy ne suffit pas : le proxy joint le conteneur par son
+	# adresse, là où la sonde de l'image interroge 127.0.0.1. Les deux peuvent
+	# diverger — c'est arrivé — et seul le second verdict dit si Docker
+	# considère le front comme sain.
+	local web_sain_au_depart
+	web_sain_au_depart=$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q web)" 2>/dev/null || echo "?")
+	verifier "le front est sain aux yeux de Docker" "healthy" "$web_sain_au_depart"
 
 	local environnement
 	environnement=$(curl -s "$API/health" | python3 -c 'import json,sys; print(json.load(sys.stdin)["environment"])' 2>/dev/null || echo "?")
@@ -860,9 +891,12 @@ etape_sondes_pendant_panne() {
 	redemarrages_apres=$(docker inspect -f '{{.RestartCount}}' "$(compose ps -q api)" 2>/dev/null || echo 0)
 	verifier "aucun redémarrage de l'API pendant la panne" "$redemarrages_avant" "$redemarrages_apres"
 
-	local web_debout
-	web_debout=$(docker inspect -f '{{.State.Status}}' "$(compose ps -q web)" 2>/dev/null || echo "?")
-	verifier "le front n'est pas tombé avec la base" "running" "$web_debout"
+	# `healthy`, pas `running` : un conteneur peut être debout et ne servir
+	# personne. C'est précisément ce que la première mise en ligne a trouvé —
+	# et que cette ligne, qui se contentait de `running`, laissait passer.
+	local web_sain
+	web_sain=$(docker inspect -f '{{.State.Health.Status}}' "$(compose ps -q web)" 2>/dev/null || echo "?")
+	verifier "le front reste sain pendant la panne de base" "healthy" "$web_sain"
 
 	compose start db >/dev/null 2>&1
 	if attendre_code "$API/ready" 200 120; then
