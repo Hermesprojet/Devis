@@ -77,7 +77,9 @@ def test_start_returns_the_provider_url(oidc_client) -> None:
     assert "prompt" not in parse_qs(urlsplit(url).query)
 
 
-def test_other_account_asks_provider_to_show_login_without_changing_oidc_security(oidc_client) -> None:
+def test_other_account_asks_provider_to_show_login_without_changing_oidc_security(
+    oidc_client,
+) -> None:
     client, provider = oidc_client
     response = client.get("/api/v1/auth/oidc/start", params={"other_account": "true"})
     assert response.status_code == 200, response.text
