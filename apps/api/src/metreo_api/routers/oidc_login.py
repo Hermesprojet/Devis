@@ -76,13 +76,20 @@ def _erreur(exc: oidc.OidcError) -> HTTPException:
 @router.get("/start", response_model=OidcStartOut, summary="Commencer une connexion")
 def start(
     return_to: str | None = Query(default=None),
+    other_account: bool = Query(default=False),
     settings: Settings = Depends(get_settings),
     session: Session = Depends(session_scope),
 ) -> OidcStartOut:
     _require_oidc(settings)
     try:
         metadata = oidc.discover(settings)
-        url = oidc.start(session, settings, metadata=metadata, return_to=_safe_return_to(return_to))
+        url = oidc.start(
+            session,
+            settings,
+            metadata=metadata,
+            return_to=_safe_return_to(return_to),
+            other_account=other_account,
+        )
     except oidc.OidcError as exc:
         raise _erreur(exc) from exc
 

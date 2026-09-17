@@ -36,10 +36,13 @@ const fr: Dictionary = {
   'login.submit': 'Se connecter',
   'login.demoAccounts': 'Comptes de démonstration',
   'login.organization': 'Organisation',
-  'login.oidcSubmit': "Se connecter avec le compte de l'entreprise",
+  'login.oidcSubmit': 'Continuer vers la connexion',
   'login.oidcNotice':
-    "La connexion passe par le fournisseur d'identité de votre entreprise. Aucun mot de passe n'est conservé par Metreo.",
+    "Si votre compte utilise un mot de passe, vous le saisirez sur la page de connexion qui va s'ouvrir. Metreo ne le conserve pas.",
   'login.oidcPending': 'Connexion en cours…',
+  'login.otherAccount': 'Utiliser un autre compte',
+  'login.otherAccountHelp':
+    "Si Google vous reconnecte automatiquement, essayez ce bouton pour demander un nouvel écran de connexion. Si l'accès par e-mail n'y apparaît pas, contactez votre administrateur.",
   'login.noMethod':
     "Ce déploiement n'offre aucune connexion depuis un navigateur. Il accepte des jetons émis ailleurs.",
   'login.error.provider_refused':
@@ -49,7 +52,7 @@ const fr: Dictionary = {
     "Ce compte n'appartient à aucune organisation active. Demandez à un administrateur de vous ajouter.",
   'login.error.unknown_user':
     "Ce compte n'est pas connu de Metreo. Un administrateur doit le créer avant la première connexion.",
-  'login.error.unverified_email':
+  'login.error.email_not_verified':
     "Le fournisseur d'identité n'a pas confirmé cette adresse e-mail.",
   'login.error.expired_state':
     'La demande de connexion a expiré. Recommencez : le bouton ci-dessus repart de zéro.',

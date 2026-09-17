@@ -74,6 +74,20 @@ def test_start_returns_the_provider_url(oidc_client) -> None:
     url = reponse.json()["authorization_url"]
     assert url.startswith(f"{provider.issuer}/authorize")
     assert "code_challenge_method=S256" in url
+    assert "prompt" not in parse_qs(urlsplit(url).query)
+
+
+def test_other_account_asks_provider_to_show_login_without_changing_oidc_security(oidc_client) -> None:
+    client, provider = oidc_client
+    response = client.get("/api/v1/auth/oidc/start", params={"other_account": "true"})
+    assert response.status_code == 200, response.text
+    params = parse_qs(urlsplit(response.json()["authorization_url"]).query)
+    assert params["prompt"] == ["login"]
+    assert params["code_challenge_method"] == ["S256"]
+    assert params["redirect_uri"] == [REDIRECT]
+    assert params["client_id"] == [provider.client_id]
+    assert params["state"] == [_etat_courant("state")]
+    assert "client_secret" not in params
 
 
 def test_start_refuses_an_external_return_to(oidc_client) -> None:

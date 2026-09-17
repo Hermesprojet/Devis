@@ -125,12 +125,12 @@ function LoginPage() {
     }
   }, [loginCode, arriver])
 
-  async function commencerOidc() {
+  async function commencerOidc(otherAccount = false) {
     setBusy(true)
     setError(null)
     setRetour(null)
     try {
-      const depart = await api.oidcStart(returnTo ?? undefined)
+      const depart = await api.oidcStart(returnTo ?? undefined, otherAccount)
       window.location.assign(depart.authorization_url)
     } catch (caught) {
       setError(caught)
@@ -182,9 +182,15 @@ function LoginPage() {
         {oidc && (
           <>
             <div className="notice info">{t('login.oidcNotice')}</div>
-            <button className="primary" type="button" disabled={busy} onClick={commencerOidc}>
+            <button className="primary" type="button" disabled={busy} onClick={() => commencerOidc()}>
               {busy ? t('login.oidcPending') : t('login.oidcSubmit')}
             </button>
+            <div style={{ marginTop: 12 }}>
+              <button type="button" disabled={busy} onClick={() => commencerOidc(true)}>
+                {t('login.otherAccount')}
+              </button>
+            </div>
+            <p className="muted" style={{ marginBottom: 0 }}>{t('login.otherAccountHelp')}</p>
           </>
         )}
 

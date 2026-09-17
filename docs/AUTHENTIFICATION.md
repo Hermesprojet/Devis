@@ -116,6 +116,30 @@ plutôt que marqué utilisé : rien ne doit pouvoir le retrouver.
 
 ## Comment une identité est reconnue
 
+### Si le compte Google revient tout seul
+
+Le bouton **Continuer vers la connexion** utilise la session déjà ouverte chez
+le fournisseur d'identité. Se déconnecter de Metreo efface la session Metreo,
+mais pas nécessairement la session chez ce fournisseur : celui-ci peut alors
+réutiliser Google au prochain essai.
+
+Le bouton **Utiliser un autre compte** transmet `prompt=login` au fournisseur
+pour demander l'affichage de son écran de connexion, sans modifier le flux
+`state` / nonce / PKCE ni la validation de l'identité. Ce paramètre indique un
+choix d'interface ; un fournisseur social peut encore proposer ou réutiliser
+une session Google. Il ne prouve pas qu'un mot de passe a été ressaisi.
+
+Avec Auth0, si l'on souhaite les comptes e-mail et mot de passe, vérifier dans
+**Authentication → Database → Username-Password-Authentication → Applications**
+que **Metreo Préproduction** est activée. Si l'accès Google n'est pas souhaité,
+désactiver son accès à cette application sous **Authentication → Social → Google
+→ Applications**, après avoir vérifié qu'un compte de base de données actif et
+vérifié permet bien d'entrer. Si seule la fenêtre Google se superpose à la
+connexion, contrôler aussi **Applications → Metreo Préproduction → Settings →
+Allow Google One Tap**.
+Le mot de passe se gère dans Auth0, jamais dans Metreo. Contrôler le fournisseur
+affiché sur la fiche de l'utilisateur si le compte choisi n'est pas celui attendu.
+
 L'identité est le couple **immuable `(issuer, subject)`**, stocké dans
 `external_identities`. C'est lui qui décide, à chaque connexion après la
 première.
