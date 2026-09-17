@@ -81,8 +81,27 @@ detail() { printf '     %s\n' "$1"; }
 
 # Un échec n'arrête pas la répétition : on veut la liste complète de ce qui ne
 # va pas, pas le premier symptôme. Le code de sortie final la résume.
+#: Une référence VIDE n'est pas une attente : c'est une étape amont qui n'a
+#: rien produit. `verifier_empreintes` plus bas le refusait déjà pour les
+#: empreintes ; le reste des contrôles ne le refusait pas.
+#:
+#: Mesuré : quand le parcours navigateur échoue, `etape_devis` rend la main
+#: avant de renseigner TOTAL_HT et EMPREINTE_DEVIS. Les étapes suivantes
+#: tournent quand même — le corps du script les enchaîne avec `|| true`, pour
+#: qu'une panne n'en cache pas une autre — et comparaient donc à du vide. Une
+#: seule panne produisait une dizaine de refus qui nommaient tous le symptôme,
+#: aucun la cause, et le rapport final accusait la sauvegarde et la
+#: restauration d'un défaut qui était dans le navigateur.
+refuser_une_reference_vide() {
+	local libelle="$1" attendu="$2"
+	[[ -n "$attendu" ]] && return 1
+	ko "$libelle — non vérifiable : l'étape qui produit la référence n'a rien rendu"
+	return 0
+}
+
 verifier() {
 	local libelle="$1" attendu="$2" obtenu="$3"
+	refuser_une_reference_vide "$libelle" "$attendu" && return 1
 	if [[ "$obtenu" == "$attendu" ]]; then
 		ok "$libelle"
 		return 0
@@ -101,6 +120,10 @@ verifier() {
 # bonne valeur.
 verifier_montant() {
 	local libelle="$1" attendu="$2" obtenu="$3"
+	# Sans cette garde, `Decimal("")` lève InvalidOperation, le python sort en
+	# échec, et le refus s'affiche « attendu «  », obtenu « 23080.10 » » —
+	# illisible.
+	refuser_une_reference_vide "$libelle" "$attendu" && return 1
 	if python3 -c '
 import sys
 from decimal import Decimal, InvalidOperation
