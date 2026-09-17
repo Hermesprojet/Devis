@@ -12,6 +12,8 @@
 
 import type { Page } from '@playwright/test'
 
+import { t } from '../src/lib/i18n'
+
 /**
  * Passé ce délai, la connexion n'aboutira plus.
  *
@@ -21,10 +23,27 @@ import type { Page } from '@playwright/test'
  */
 const DELAI_CONNEXION = 30_000
 
+/**
+ * Le bouton qui lance la connexion par le fournisseur, nommé par le
+ * DICTIONNAIRE et non par une copie de son libellé.
+ *
+ * Trois fichiers de test recopiaient « compte de l'entreprise ». Renommer ce
+ * bouton dans `src/lib/i18n.ts` a donc cassé deux suites — et, pire, en a
+ * rendu une troisième complaisante : `e2e/connexion.spec.ts` vérifiait
+ * l'ABSENCE du bouton par ce même libellé, et un libellé qui ne désigne plus
+ * rien rend cette absence vraie quoi qu'affiche la page. Un test qui passe
+ * d'autant mieux que le produit a changé ne prouve rien.
+ *
+ * `exact` parce que l'écran porte désormais un second bouton dont le nom
+ * contient « compte » : « Utiliser un autre compte ».
+ */
+export const BOUTON_CONNEXION = { name: t('login.oidcSubmit'), exact: true } as const
+export const BOUTON_AUTRE_COMPTE = { name: t('login.otherAccount'), exact: true } as const
+
 /** La connexion réelle : celle du déploiement, par le fournisseur d'identité. */
 export async function seConnecter(page: Page, adresse: string): Promise<void> {
   await page.goto('/')
-  await page.getByRole('button', { name: /compte de l'entreprise/ }).click()
+  await page.getByRole('button', BOUTON_CONNEXION).click()
   await page.locator('#email').fill(adresse)
   await page.getByRole('button', { name: 'Se connecter' }).click()
 

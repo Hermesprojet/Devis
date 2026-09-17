@@ -116,6 +116,96 @@ plutôt que marqué utilisé : rien ne doit pouvoir le retrouver.
 
 ## Comment une identité est reconnue
 
+### Si le compte Google revient tout seul
+
+Le bouton **Continuer vers la connexion** utilise la session déjà ouverte chez
+le fournisseur d'identité. Se déconnecter de Metreo efface la session Metreo,
+mais pas nécessairement la session chez ce fournisseur : celui-ci peut alors
+réutiliser Google au prochain essai.
+
+Le bouton **Utiliser un autre compte** transmet `prompt=login` au fournisseur
+pour demander l'affichage de son écran de connexion, sans modifier le flux
+`state` / nonce / PKCE ni la validation de l'identité. Ce paramètre indique un
+choix d'interface ; un fournisseur social peut encore proposer ou réutiliser
+une session Google. Il ne prouve pas qu'un mot de passe a été ressaisi.
+
+Avec Auth0, si l'on souhaite les comptes e-mail et mot de passe, vérifier dans
+**Authentication → Database → Username-Password-Authentication → Applications**
+que **Metreo Préproduction** est activée. Si l'accès Google n'est pas souhaité,
+désactiver son accès à cette application sous **Authentication → Social → Google
+→ Applications**, après avoir vérifié qu'un compte de base de données actif et
+vérifié permet bien d'entrer. Si seule la fenêtre Google se superpose à la
+connexion, contrôler aussi **Applications → Metreo Préproduction → Settings →
+Allow Google One Tap**.
+Le mot de passe se gère dans Auth0, jamais dans Metreo. Contrôler le fournisseur
+affiché sur la fiche de l'utilisateur si le compte choisi n'est pas celui attendu.
+
+### Retrouver la connexion par e-mail, sans transmettre quoi que ce soit
+
+Le cas qui bloque une première mise en ligne : le mot de passe est oublié, et
+l'écran de Metreo ne propose aucun lien pour le réinitialiser. C'est normal —
+**Metreo ne voit jamais de mot de passe**, donc il n'a rien à réinitialiser. Le
+lien vit chez le fournisseur, sur l'écran QUI DEMANDE le mot de passe. Avec un
+tenant réglé en « identifiant d'abord », cet écran n'arrive qu'après avoir
+saisi l'adresse et validé : le lien est invisible avant.
+
+Trois causes possibles, dans l'ordre où il faut les écarter.
+
+**1. On n'est jamais arrivé sur l'écran du fournisseur.** Le bouton
+« Continuer vers la connexion » n'a pas ouvert de page, ou une session Google
+a court-circuité la saisie. Reprendre avec **Utiliser un autre compte**, qui
+demande explicitement l'écran de connexion.
+
+**2. On y est, mais sans champ « mot de passe ».** Saisir l'adresse, valider,
+et regarder à nouveau. S'il n'apparaît toujours pas, la connexion base de
+données n'est pas activée pour cette application : c'est le contrôle du
+paragraphe précédent, sous **Authentication → Database →
+Username-Password-Authentication → Applications**. Sans elle, il n'existe
+aucun mot de passe à réinitialiser, et aucun lien à afficher.
+
+**3. Le lien est là, mais le courriel n'arrive pas.** Passer par le tableau de
+bord, qui ne dépend d'aucun envoi : **User Management → Users**, ouvrir la
+fiche de l'utilisateur, **Actions → Change Password**. Le nouveau mot de passe
+se saisit dans cette boîte de dialogue, et nulle part ailleurs.
+
+Sur cette fiche, deux choses se vérifient au passage, et une ne se touche
+jamais :
+
+| à vérifier | pourquoi |
+| --- | --- |
+| l'adresse porte la mention vérifiée | sinon Metreo refuse, avec `email_not_verified` |
+| le compte n'est pas `Blocked` | plusieurs essais ratés déclenchent la protection anti force brute du fournisseur ; **Actions → Unblock** |
+| **ne pas** utiliser **Change Email** *avant la première connexion réussie* | tant qu'aucune liaison n'existe, c'est l'ADRESSE qui rattache le compte du fournisseur au compte Metreo. La changer casse ce rattachement (`unknown_user`) et repasse l'adresse en non vérifiée (`email_not_verified`) |
+
+Après une première connexion réussie, la mise en garde tombe : la liaison
+`(issuer, subject)` est faite, `resolve_user` la trouve avant de regarder quoi
+que ce soit d'autre, et l'adresse ne décide plus. **Ce qui casse alors la
+liaison, c'est de supprimer puis recréer l'utilisateur chez le fournisseur** —
+le `subject` change, et le compte Metreo n'est plus rattaché à personne. Un
+changement d'adresse, lui, est sans effet.
+
+#### Ce qui se transmet, et ce qui ne se transmet jamais
+
+Depuis l'ajout des messages de refus, **l'écran dit lui-même la plupart des
+causes** : un compte désactivé, un fournisseur injoignable, un réglage à
+corriger. Lisez la phrase affichée avant tout.
+
+Quand elle ne suffit pas, **une seule valeur est à transmettre** : le code lu
+dans la barre d'adresse, `?login_error=<code>`. Il correspond au nom de la clé
+`login.error.<code>` de `apps/web/src/lib/i18n.ts`, et il est émis par
+`apps/api/src/metreo_api/services/oidc.py`.
+
+Ne transmettez jamais, à personne :
+
+- un mot de passe, ni le `Client Secret` de l'application ;
+- **l'URL de retour complète.** Elle porte `code` et `state`. Le `code` est un
+  jeton d'autorisation à usage unique : qui le recopie avant vous ouvre la
+  session à votre place. Le recopier dans un message, un ticket ou une
+  capture, c'est le publier. Relevez le seul `login_error`, et rien d'autre.
+
+Une capture d'écran, elle, se transmet à condition de masquer la barre
+d'adresse et l'adresse e-mail.
+
 L'identité est le couple **immuable `(issuer, subject)`**, stocké dans
 `external_identities`. C'est lui qui décide, à chaque connexion après la
 première.

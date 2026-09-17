@@ -231,10 +231,13 @@ export const api = {
       body: { email, organization_id: organizationId ?? null },
     }),
 
-  oidcStart: (returnTo?: string) =>
-    request<{ authorization_url: string }>(
-      `/auth/oidc/start${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ''}`,
-    ),
+  oidcStart: (returnTo?: string, otherAccount = false) => {
+    const params = new URLSearchParams()
+    if (returnTo) params.set('return_to', returnTo)
+    if (otherAccount) params.set('other_account', 'true')
+    const query = params.toString()
+    return request<{ authorization_url: string }>(`/auth/oidc/start${query ? `?${query}` : ''}`)
+  },
 
   // Le jeton arrive ici, dans un corps de réponse, et nulle part ailleurs. Le
   // navigateur ne rapporte du fournisseur qu'un code opaque à usage unique.

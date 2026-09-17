@@ -152,6 +152,7 @@ def start(
     *,
     metadata: ProviderMetadata,
     return_to: str | None = None,
+    other_account: bool = False,
 ) -> str:
     """Ouvre une transaction de connexion et rend l'URL du fournisseur."""
     transaction = LoginTransaction(
@@ -176,6 +177,11 @@ def start(
         "code_challenge": challenge_for(transaction.code_verifier),
         "code_challenge_method": "S256",
     }
+    if other_account:
+        # Indication d'interface à Auth0 : montrer l'écran de connexion même
+        # lorsqu'une session SSO existe déjà. Le fournisseur reste libre de
+        # proposer Google ; ce paramètre ne garantit pas un mot de passe neuf.
+        parametres["prompt"] = "login"
     separateur = "&" if "?" in metadata.authorization_endpoint else "?"
     return f"{metadata.authorization_endpoint}{separateur}{urlencode(parametres)}"
 
