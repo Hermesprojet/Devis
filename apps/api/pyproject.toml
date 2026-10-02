@@ -20,7 +20,11 @@ dependencies = [
   # `cryptography`. Sans lui, la validation de signature ne peut pas avoir
   # lieu — et une validation qu'on ne peut pas faire est une validation
   # qu'on finirait par contourner.
-  "pyjwt[crypto]>=2.8",
+  # Plancher relevé à 2.15.1 le 2026-10-02 : treize avis PYSEC-2026-4140 à
+  # 4152 visent PyJWT jusqu'à 2.13.0 inclus. C'est la bibliothèque qui vérifie
+  # la signature des jetons d'identité — un plancher laxiste ici laisserait une
+  # installation sans verrou poser une version vulnérable.
+  "pyjwt[crypto]>=2.15.1",
   # Client HTTP d'exécution : découverte OIDC et échange du code. Il était
   # déclaré en dépendance de développement seulement, ce qui suffisait aux
   # tests et pas à l'application.
