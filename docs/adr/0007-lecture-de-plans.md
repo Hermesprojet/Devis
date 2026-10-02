@@ -49,11 +49,38 @@ offert au pipeline d'import de prix, sans une erreur.
 
 | Rôle | Bibliothèque | Version vérifiée | Licence |
 | --- | --- | --- | --- |
-| Géométrie vectorielle et texte positionné | **pdfplumber** sur **pdfminer.six** | 0.11.10 · 20260107 | **MIT** · **MIT** |
-| Rendu d'une page en image | **pypdfium2** (PDFium) | 5.13.0 · PDFium 153.0.7999.0 | **Apache-2.0 OU BSD-3-Clause** · PDFium **BSD-3-Clause** |
+| Géométrie vectorielle | **pdfplumber** sur **pdfminer.six** | 0.11.10 · 20260107 | **MIT** · **MIT** |
+| Texte positionné **et** rendu d'une page | **pypdfium2** (PDFium) | 5.13.0 · PDFium 153.0.7999.0 | **Apache-2.0 OU BSD-3-Clause** · PDFium **BSD-3-Clause** |
 | Réparation, déchiffrement, inspection amont | **pikepdf** (QPDF) | 10.16.0 · QPDF 12.4.2 | **MPL-2.0** · QPDF **Apache-2.0** |
 | OCR | **Tesseract** + données `tessdata` via **pytesseract** | 5.5.3 · 0.3.13 | **Apache-2.0** pour le moteur **et pour les poids** |
 | Orchestration de l'OCR sur un PDF | **OCRmyPDF** ≥ 17 | 17.13.0 | **MPL-2.0** |
+
+### Correction du 2026-10-02, mesurée sur des plans réels
+
+Cette répartition a été **mise à l'épreuve sur quatre plans d'exécution réels**
+fournis par le propriétaire, et un point en ressort faux.
+
+Le tableau ci-dessus confie l'extraction du **texte** à pdfplumber, puisqu'il
+la sait faire. Mesuré sur une même page A0 portant 441 000 lignes :
+
+| opération | pdfminer via pdfplumber | PDFium via pypdfium2 |
+| --- | --- | --- |
+| extraire le texte d'un plan d'étage | **161 s** | **0,07 s** |
+| extraire le texte d'une coupe | 23 s | 0,01 s |
+| rendre la page en image à 150 ppp | — | 1,5 à 3 s |
+
+Deux mille trois cents fois plus lent. La répartition devient donc :
+
+- **le texte et le rendu passent par pypdfium2**, toujours ;
+- **pdfplumber ne sert plus qu'à la géométrie vectorielle**, où il reste seul à
+  rendre des coordonnées en espace page. Ce coût-là est irréductible et
+  linéaire : environ 5 000 primitives par seconde, soit 101 s pour les 565 000
+  primitives d'un plan d'étage. Il impose le worker, et un délai généreux.
+
+Une seconde mesure contredit une attente : les quatre plans sont **vectoriels
+avec texte natif**. Aucun n'est numérisé, donc **aucun n'appelle l'OCR**. La
+chaîne Tesseract reste décidée, mais elle n'est pas sur le chemin critique de
+ce corpus.
 
 **Pourquoi pdfplumber et non pypdfium2 pour la géométrie.** Les deux exposent les
 chemins. La différence est l'espace de coordonnées, et elle est décisive pour un métré :
@@ -132,6 +159,30 @@ fausserait une quantité en silence.
    réécrire un tel fichier « peut produire du DXF invalide, ou au moins perdre de
    l'information ». Metreo appelle donc `recover.readfile(chemin, errors='strict')` et
    traite l'`UnicodeDecodeError` comme un fichier irrécupérable.
+
+### La cote stockée est inexploitable, et c'est pire qu'absent
+
+Le piège n° 2 ci-dessus annonçait, d'après la documentation, que
+`actual_measurement` est « souvent absent ». **Mesuré sur deux plans
+d'exécution réels d'un même projet : 1 410 cotations sur 1 410 le portent, et
+il vaut `-1` pour toutes.**
+
+La nuance décide du code. Un contrôle de simple présence — `hasattr`, ce que la
+documentation invite à faire — l'aurait accepté, et Metreo aurait proposé des
+quantités de **-1 mm**. La valeur n'est donc retenue que si elle est présente
+**et strictement positive** ; sinon la mesure est recalculée et l'anomalie est
+nommée.
+
+Deux autres faits de ce corpus, qui cadrent les tolérances :
+
+- sur 740 mesures recalculées, **357 sont exactement entières et les 740 tombent
+  à moins d'un demi-millimètre d'un entier**. L'écart vient de la géométrie, pas
+  du calcul : comparer à une valeur humaine exige une tolérance, et l'arrondi ne
+  se fait jamais en silence ;
+- **onze cotations mesurent entre 0,0 et 0,6 mm**, résidus d'édition. Comptées,
+  elles ajouteraient des lignes de bordereau à zéro. Le seuil qui les écarte est
+  un réglage métier, pas une constante à décider ici : il vaut 0,5 mm par défaut
+  et doit être confirmé.
 
 ### Le cycle de blocs : un refus, pas un avertissement
 
