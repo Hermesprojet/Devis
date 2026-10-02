@@ -57,7 +57,10 @@ jobs:
           # Le paquet déclare ses dépendances : les installer par lui, et non
           # par une liste parallèle qui masquerait un manque dans pyproject.toml.
           #
-          # `plans` porte ezdxf. Il est optionnel dans le manifeste, mais la CI
+          # `plans` porte ezdxf ET Pillow — cette dernière est une dépendance
+          # DURE du module de dessin d'ezdxf, et son absence a fait tomber
+          # seize tests ICI alors que tout passait en local. Il est optionnel
+          # dans le manifeste, mais la CI
           # l'installe : sans lui, les tests de lecture de plans se
           # SAUTERAIENT, et une suite qui saute ne prouve rien.
           pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans]"
@@ -238,7 +241,11 @@ jobs:
       - name: Installer l'API
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain ./apps/api
+          # `plans` est indispensable ICI aussi, et pas seulement aux tests
+          # Python : le banc fabrique une fixture de plan COTÉE avec ezdxf, et
+          # sans l'extra elle manquait — le parcours échouait sur un fichier
+          # absent, après avoir passé dix-sept scénarios.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[plans]"
       - name: Installer le web (verrouillé)
         working-directory: apps/web
         run: npm ci

@@ -21,3 +21,17 @@ Il fabrique `binaire.dxf` — la sentinelle du DXF binaire — et `faux.dwg` —
 en-tête DWG suivi d'octets quelconques. Ce dernier n'est pas un vrai DWG et
 n'a pas à l'être : il sert à vérifier que son **en-tête** suffit à le faire
 refuser, avant toute tentative de lecture.
+
+## `mur_cote.dxf` — fabriqué, pas commité
+
+Un mur de 5 m **avec sa cotation**, en millimètres. C'est la seule fixture de
+ce dossier qui propose quelque chose à mesurer : `mur_simple.dxf` porte deux
+lignes et aucune cotation, donc son plan se lit sans rien proposer.
+
+Elle n'est pas commitée bien qu'elle soit du texte : une cotation a besoin de
+son bloc géométrique — sans lui, l'audit la retire au rechargement et l'espace
+modèle revient vide — et ce bloc fait trois mille lignes qu'aucun relecteur ne
+lira. `scripts/fabriquer_plans_de_test.py` l'écrit en dix lignes lisibles, et
+le banc Playwright l'appelle avant de servir quoi que ce soit.
+
+    python3 scripts/fabriquer_plans_de_test.py

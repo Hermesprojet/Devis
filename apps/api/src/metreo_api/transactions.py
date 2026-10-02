@@ -199,6 +199,10 @@ _classer(
     "PUT /api/v1/organization/logo",
     "DELETE /api/v1/organization/logo",
     "POST /api/v1/documents/{document_id}/revisions",
+    # Lire un plan écrit des deux côtés : l'état des deux étapes, les citations
+    # et les propositions en base, l'image et le constat sur le volume. Les
+    # deux ne partagent aucune transaction, d'où les compensations.
+    "POST /api/v1/documents/{document_id}/revisions/{revision_id}/plan/analyse",
 )
 
 

@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 
 import { ErrorNotice } from '@/components/Feedback'
@@ -8,6 +9,7 @@ import {
   type DocumentRevision,
   type DocumentSummary,
 } from '@/lib/api'
+import { t } from '@/lib/i18n'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
 
@@ -19,9 +21,14 @@ import { usePermissions } from '@/lib/usePermissions'
  * écran pour l'atteindre. Un métreur qui recevait un cahier des charges le
  * laissait dans sa boîte mail.
  *
- * Rien n'est rendu à l'écran : un document se télécharge, il ne s'affiche pas.
+ * Aucun document n'est rendu à l'écran DEPUIS SES OCTETS : il se télécharge.
  * Un PDF ouvert dans l'origine de l'application y exécuterait ses propres
  * scripts, avec la session de qui le consulte.
+ *
+ * Un plan DXF fait exception, et l'exception est précise : ce n'est pas le
+ * fichier déposé qui s'affiche, mais un RENDU produit par le serveur, servi
+ * par sa propre route et chargé comme une image inerte. Voir `LecturePlan`.
+ * Seul le DXF est lu dans cette tranche — un PDF ne s'affiche pas.
  */
 
 /** Les catégories que le premier usage réclame, et rien de plus. */
@@ -31,13 +38,60 @@ const TYPES_LISIBLES: Record<string, string> = {
   'application/pdf': 'PDF',
   'image/png': 'PNG',
   'image/jpeg': 'JPEG',
+  // Le type que le serveur donne à un plan DXF. Sans cette entrée, la colonne
+  // « Type » d'un plan affichait « — » : la seule pièce que Metreo sache LIRE
+  // était la seule que l'écran ne savait pas nommer.
+  'image/vnd.dxf': 'DXF',
   'text/csv': 'CSV',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
 }
 
-/** Les extensions proposées au sélecteur — l'API reste seule à décider. */
-const EXTENSIONS_SUGGEREES = '.pdf,.png,.jpg,.jpeg,.csv,.xlsx,.docx'
+/**
+ * Les extensions proposées au sélecteur — l'API reste seule à décider.
+ *
+ * `.dxf` en faisait partie du côté serveur, pas ici : sur un sélecteur
+ * FILTRÉ, un plan n'apparaissait simplement pas dans la liste des fichiers, et
+ * rien à l'écran ne disait pourquoi. Le seul format que Metreo sache lire
+ * était introuvable au dépôt.
+ */
+const EXTENSIONS_SUGGEREES = '.pdf,.png,.jpg,.jpeg,.dxf,.csv,.xlsx,.docx'
+
+/** Le type que le serveur donne à un plan DXF — le seul plan qu'il sache lire. */
+const TYPE_DXF = 'image/vnd.dxf'
+
+/**
+ * Le passage vers l'écran de lecture d'un plan.
+ *
+ * Un `Link` et non un `button` : c'est une NAVIGATION, et un lien se garde,
+ * se transmet et s'ouvre dans un onglet — ce qu'aucun bouton ne sait faire.
+ * Il n'apparaît que sur une révision dont le serveur a dit qu'elle est un
+ * DXF : proposer « Lire le plan » sur un PDF promettrait un affichage que
+ * cette tranche ne sait pas produire.
+ *
+ * Le nom du fichier voyage en paramètre de requête, pour que l'écran de
+ * lecture dise de quelle pièce il parle. Il n'est qu'un confort : l'écran
+ * fonctionne sans.
+ */
+function LienVersLePlan({
+  projectId,
+  revision,
+}: {
+  projectId: string
+  revision: DocumentRevision
+}) {
+  if (revision.media_type !== TYPE_DXF) return null
+  const requete = `?fichier=${encodeURIComponent(revision.original_filename)}`
+  return (
+    <Link
+      className="button"
+      data-testid="documents-lire-plan"
+      href={`/projets/${projectId}/plans/${revision.document_id}/${revision.id}${requete}`}
+    >
+      {t('documents.readPlan')}
+    </Link>
+  )
+}
 
 function taille(octets: number): string {
   if (octets < 1024) return `${octets} o`
@@ -203,9 +257,15 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
               />
             </div>
           </div>
+          {/*
+            La phrase énumérait « PDF, PNG, JPEG, CSV, XLSX ou DOCX » : elle
+            mentait sur ce que le serveur accepte, en omettant le DXF. Et elle
+            taisait le refus du DWG, qui est la PREMIÈRE chose qu'un
+            utilisateur de plans vient chercher — un .dwg est ce que son
+            logiciel enregistre par défaut.
+          */}
           <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-            PDF, PNG, JPEG, CSV, XLSX ou DOCX. Le contenu est vérifié à la réception :
-            l&apos;extension seule ne suffit pas.
+            {t('documents.formats')}
           </p>
           {progression !== null && (
             <div className="notice info" role="status" style={{ marginTop: 12 }}>
@@ -262,6 +322,9 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
                             Télécharger
                           </button>
                         )}{' '}
+                        {derniere && (
+                          <LienVersLePlan projectId={projectId} revision={derniere} />
+                        )}{' '}
                         <button
                           type="button"
                           aria-expanded={deplie}
@@ -293,13 +356,17 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
                                   >
                                     {revision.sha256.slice(0, 16)}…
                                   </td>
-                                  <td className="num">
+                                  <td className="num" style={{ whiteSpace: 'nowrap' }}>
                                     <button
                                       type="button"
                                       onClick={() => void telecharger(revision)}
                                     >
                                       Télécharger
-                                    </button>
+                                    </button>{' '}
+                                    <LienVersLePlan
+                                      projectId={projectId}
+                                      revision={revision}
+                                    />
                                   </td>
                                 </tr>
                               ))}

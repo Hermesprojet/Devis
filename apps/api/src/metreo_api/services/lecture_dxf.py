@@ -34,7 +34,7 @@ Elles sont écrites ici parce que les suivre de mémoire ne se vérifie pas.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
@@ -101,6 +101,27 @@ class Anomalie:
 
 
 @dataclass(frozen=True)
+class Cadre:
+    """Où se trouve un objet dans l'image du plan, en coordonnées [0,1].
+
+    Mêmes conventions que la boîte englobante d'une citation : origine **en
+    haut à gauche**, bornes dans [0,1]. L'axe vertical d'un DXF monte et celui
+    d'une image descend : `y` est donc INVERSÉ au passage. Sans cette
+    inversion, une cotation du bas du plan serait surlignée en haut.
+
+    Le repère est l'étendue du dessin, la MÊME que celle qui a servi au rendu.
+    C'est ce qui permet de surligner une cotation sur le SVG sans rien
+    recalculer dans le navigateur — et c'est pourquoi les deux étapes doivent
+    s'accorder : un test compare les deux cadres.
+    """
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+
+@dataclass(frozen=True)
 class Cotation:
     """Une cotation lue, avec de quoi la retrouver dans le fichier.
 
@@ -121,6 +142,10 @@ class Cotation:
     texte_impose: str | None
     fiabilite: Fiabilite
     anomalies: tuple[Anomalie, ...] = ()
+    #: Où la retrouver dans l'image, quand `lire(situer=True)` l'a calculé.
+    #: `None` ne veut pas dire « au milieu » : il veut dire « on ne sait pas »,
+    #: et l'écran doit alors désigner la cotation par son calque et son handle.
+    cadre: Cadre | None = None
 
 
 @dataclass
@@ -144,6 +169,11 @@ class LecturePlan:
     anomalies: list[Anomalie] = field(default_factory=list)
     #: Les mises en page du fichier, utiles pour nommer la « feuille ».
     feuilles: list[str] = field(default_factory=list)
+
+    #: L'étendue du dessin en unités du document : xmin, ymin, xmax, ymax.
+    #: Renseignée seulement par `lire(situer=True)`. C'est le repère commun au
+    #: rendu et aux cadres de cotation.
+    etendue: tuple[float, float, float, float] | None = None
 
     @property
     def mesurable(self) -> bool:
@@ -235,6 +265,36 @@ def _texte_impose(brut: str | None) -> str | None:
     if nettoye in ("", "<>"):
         return None
     return brut
+
+
+def _normaliser(
+    boite: tuple[float, float, float, float],
+    etendue: tuple[float, float, float, float],
+) -> Cadre | None:
+    """Rapporte une boîte à l'étendue du dessin, ou rend `None`.
+
+    Rend `None` dans trois cas, et aucun n'est une erreur de fichier :
+    une étendue plate (tout le dessin sur une ligne), une boîte dégénérée
+    (une cotation sans épaisseur), ou une boîte qui sort du cadre. Dans les
+    trois, mieux vaut ne pas situer que situer faux : la contrainte de base
+    exige `x0 < x1` et `y0 < y1` strictement, et un surlignage de largeur
+    nulle ne se verrait pas davantage qu'une absence.
+    """
+    x_min, y_min, x_max, y_max = etendue
+    largeur = x_max - x_min
+    hauteur = y_max - y_min
+    if largeur <= 0 or hauteur <= 0:
+        return None
+
+    bx0, by0, bx1, by1 = boite
+    x0 = (bx0 - x_min) / largeur
+    x1 = (bx1 - x_min) / largeur
+    # L'axe vertical s'inverse : voir la docstring de `Cadre`.
+    y0 = 1.0 - (by1 - y_min) / hauteur
+    y1 = 1.0 - (by0 - y_min) / hauteur
+    if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
+        return None
+    return Cadre(x0=x0, y0=y0, x1=x1, y1=y1)
 
 
 def _lire_une_cotation(entite: object) -> Cotation:
@@ -390,8 +450,15 @@ def _lire_une_cotation(entite: object) -> Cotation:
     )
 
 
-def lire(chemin: str | Path) -> LecturePlan:
+def lire(chemin: str | Path, *, situer: bool = False) -> LecturePlan:
     """Lit un DXF et rend son constat. Ne lève pas sur un fichier abîmé.
+
+    `situer=True` calcule en plus l'étendue du dessin et la position de chaque
+    cotation dans cette étendue. Ce n'est pas le défaut parce que cela COÛTE :
+    mesuré sur un plan réel de 7,4 Mo, l'étendue demande 1,37 s — les 663
+    boîtes de cotation suivantes, elles, ne coûtent que 0,01 s grâce au cache.
+    Un appel qui ne veut que l'unité et le nombre de cotations n'a pas à payer
+    cette seconde et demie.
 
     L'ordre des opérations porte la sécurité, et il n'est pas interchangeable :
 
@@ -404,7 +471,8 @@ def lire(chemin: str | Path) -> LecturePlan:
        visualisation reste possible ;
     4. seulement ensuite, les entités.
     """
-    from ezdxf import recover  # import local : la dépendance reste optionnelle
+    # Imports locaux : la dépendance « plans » reste optionnelle.
+    from ezdxf import bbox, recover
 
     constat = LecturePlan()
     chemin = Path(chemin)
@@ -465,11 +533,48 @@ def lire(chemin: str | Path) -> LecturePlan:
     constat.entites = dict(par_type)
     constat.calques = dict(par_calque)
 
-    for cotation in modelspace.query("DIMENSION"):
+    # Le cadre est calculé AVANT de parcourir les cotations, et le cache est
+    # partagé : c'est lui qui rend les boîtes suivantes quasi gratuites.
+    cache = None
+    if situer:
+        cache = bbox.Cache()
+        etendue = bbox.extents(modelspace, cache=cache)
+        if etendue.has_data:
+            constat.etendue = (
+                float(etendue.extmin.x),
+                float(etendue.extmin.y),
+                float(etendue.extmax.x),
+                float(etendue.extmax.y),
+            )
+        else:
+            constat.anomalies.append(
+                Anomalie(
+                    "dessin_sans_etendue",
+                    "Le dessin ne porte aucune géométrie situable : les "
+                    "cotations ne peuvent pas être montrées sur l'image.",
+                )
+            )
+
+    for entite_cotation in modelspace.query("DIMENSION"):
         # Une contrainte dimensionnelle réutilise l'entité DIMENSION sans en
         # être une : ezdxf ne la prend pas en charge et le dit.
-        if getattr(cotation, "is_dimensional_constraint", False):
+        if getattr(entite_cotation, "is_dimensional_constraint", False):
             continue
-        constat.cotations.append(_lire_une_cotation(cotation))
+        lue = _lire_une_cotation(entite_cotation)
+        if cache is not None and constat.etendue is not None:
+            boite = bbox.extents([entite_cotation], cache=cache)
+            if boite.has_data:
+                cadre = _normaliser(
+                    (
+                        float(boite.extmin.x),
+                        float(boite.extmin.y),
+                        float(boite.extmax.x),
+                        float(boite.extmax.y),
+                    ),
+                    constat.etendue,
+                )
+                if cadre is not None:
+                    lue = replace(lue, cadre=cadre)
+        constat.cotations.append(lue)
 
     return constat

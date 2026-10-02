@@ -261,6 +261,17 @@ export default async function preparer(): Promise<void> {
     .map(([cle, valeur]) => `${cle}=${JSON.stringify(valeur)}`)
     .join(' ')
 
+  // Les fixtures de plans qui ne se relisent pas, donc ne sont pas commitées.
+  // Fabriquées ICI et non dans le scénario : une fixture absente doit faire
+  // échouer le banc, pas rendre un parcours silencieux. Le dépôt a déjà payé
+  // cette leçon — deux tests prouvant le refus du DWG étaient SAUTÉS en
+  // intégration continue, faute de quoi que ce soit qui fabrique leurs
+  // fichiers, et la suite passait au vert sans vérifier la promesse.
+  execFileSync('sh', ['-c', `${python} ${join(RACINE_DEPOT, 'scripts/fabriquer_plans_de_test.py')}`], {
+    cwd: RACINE_DEPOT,
+    stdio: 'inherit',
+  })
+
   // Les migrations, et RIEN d'autre : `metreo_api.seed` n'est jamais appelé.
   execFileSync('sh', ['-c', `${shell} ${python} -m alembic -c ${join(DOSSIER_API, 'alembic.ini')} upgrade head`], {
     cwd: DOSSIER_API,
