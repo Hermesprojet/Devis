@@ -99,30 +99,59 @@ def test_a_drawing_renders_to_an_svg_that_carries_no_executable_construction(
     assert rendu.entites_rendues == 3
 
 
-def test_the_rendered_svg_keeps_its_viewbox_but_not_its_physical_size(
+def test_the_rendered_svg_keeps_its_viewbox_and_carries_a_size_in_pixels(
     tmp_path: Path,
 ) -> None:
-    """**Mesuré sur un plan réel : `width="383696mm"`.**
+    """**Les deux erreurs sont OPPOSÉES, et ce test les ferme toutes les deux.**
 
-    ezdxf dimensionne la page sur l'étendue du dessin. Le navigateur
-    réserverait donc quatre cents mètres de largeur avant la moindre mise en
-    page, et l'image deviendrait inutilisable à l'écran. Le `viewBox` porte
-    déjà toute l'information géométrique : les deux attributs physiques sont
-    retirés pour que la feuille de style décide de la taille affichée.
+    ezdxf dimensionne la page sur l'étendue du dessin, en millimètres. Mesuré
+    sur un plan réel : `width="383696mm"` — le navigateur réserverait quatre
+    cents mètres de largeur avant la moindre mise en page.
 
-    Le contrôle porte sur la BALISE RACINE seule. Le fond du dessin est un
-    `<rect width=… height=…>` parfaitement légitime, et un contrôle sur tout
-    le document le confondrait avec la page.
+    Les RETIRER produit l'autre défaut, celui qu'un parcours de bout en bout a
+    attrapé : un SVG sans dimension intrinsèque, chargé dans une balise `<img>`
+    dont la largeur vaut `auto`, n'a plus de taille du tout. L'image est bien
+    dans la page, avec sa source — et elle est invisible.
+
+    La promesse est donc : le `viewBox` reste INTACT, parce que c'est lui qui
+    fait tomber au bon endroit un surlignage posé en [0,1] ; et les dimensions
+    sont des pixels, sans unité physique, dans le rapport de forme du
+    `viewBox`. Une assertion qui exigerait seulement la présence de `width`
+    laisserait revenir les millimètres ; une qui exigerait son absence
+    rendrait l'image invisible.
+
+    Le contrôle porte sur la BALISE RACINE seule : le fond du dessin est un
+    `<rect width=… height=…>` parfaitement légitime, qu'un contrôle sur tout
+    le document confondrait avec la page.
     """
     rendu = rendu_de_plan.rendre(_mur_simple(tmp_path / "mur.dxf"))
     racine = _balise_racine(rendu.svg)
 
-    assert "viewbox" in racine.lower(), racine
-    assert "width=" not in racine.lower(), racine
-    assert "height=" not in racine.lower(), racine
+    cadre = re.search(r'\sviewBox="([^"]+)"', racine)
+    assert cadre is not None, racine
+    etendue_x, etendue_y = (float(v) for v in cadre.group(1).split()[2:4])
+    # Le repère du dessin, et non une page : 5000 × 3000 unités, à la largeur
+    # de trait près. Le `viewBox` n'a pas été réécrit.
+    assert etendue_x > etendue_y > 0
+
+    dimensions = dict(re.findall(r'\s(width|height)="([^"]*)"', racine))
+    assert set(dimensions) == {"width", "height"}, (
+        f"une image sans dimension intrinsèque est invisible dans un <img> : {racine}"
+    )
+    for nom, valeur in dimensions.items():
+        assert valeur.isdigit(), f'{nom}="{valeur}" porte une unité physique'
+        assert 0 < int(valeur) <= rendu_de_plan.COTE_AFFICHEE, f"{nom}={valeur}"
+    assert "mm" not in racine, racine
+
+    # Le rapport de forme est celui du dessin : une image étirée tromperait
+    # l'œil sur les proportions d'un ouvrage.
+    attendu = etendue_y / etendue_x
+    obtenu = int(dimensions["height"]) / int(dimensions["width"])
+    assert obtenu == pytest.approx(attendu, abs=0.01), (dimensions, cadre.group(1))
+
     # Le reste du document garde ses dimensions : la retouche est chirurgicale
     # et ne doit pas avoir emporté le fond.
-    assert 'width="' in rendu.svg
+    assert "<rect" in rendu.svg
 
 
 # ---------------------------------------------------------------------------

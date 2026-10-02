@@ -167,18 +167,67 @@ def _verifier_innocuite(svg: str) -> None:
         )
 
 
-def _sans_dimensions_physiques(svg: str) -> str:
-    """Retire `width` et `height` de la balise racine, garde `viewBox`.
+#: Le plus grand côté de l'image, en pixels, tel que le SVG l'annonce.
+#:
+#: Ce n'est PAS une résolution de rendu — un SVG n'en a pas : c'est la taille
+#: que le navigateur réserve avant tout zoom, et le rapport de forme reste
+#: celui du dessin. Deux mille pixels remplissent un écran ordinaire sans
+#: réserver une surface absurde.
+COTE_AFFICHEE = 2000
 
-    ezdxf dimensionne la page sur l'étendue du dessin. Sur un plan réel cela
-    donne `width="383696mm"` : le navigateur réserverait quatre cents mètres
-    de largeur avant la moindre mise en page. Le `viewBox` porte déjà toute
-    l'information géométrique ; les deux attributs physiques sont donc retirés
-    pour que la feuille de style décide de la taille affichée.
+
+def _dimensions_affichables(svg: str) -> str:
+    """Remplace les dimensions physiques du SVG par une taille en pixels.
+
+    **Les deux erreurs à éviter sont opposées, et j'ai fait la seconde avant
+    de faire la bonne.**
+
+    ezdxf dimensionne la page sur l'étendue du dessin, en millimètres. Sur un
+    plan réel cela donne `width="383696mm"` : le navigateur réserverait quatre
+    cents mètres de largeur avant la moindre mise en page.
+
+    Les RETIRER, en se disant que le `viewBox` porte déjà toute la géométrie,
+    produit l'autre défaut : un SVG sans dimension intrinsèque, chargé dans
+    une balise `<img>` dont la largeur et la hauteur valent `auto`, n'a plus
+    de taille du tout. Mesuré dans un navigateur : l'image est bien dans la
+    page, avec sa source, et elle est **invisible** — un parcours de bout en
+    bout l'a refusée.
+
+    La bonne réponse est donc de les REMPLACER : une taille en pixels, dans le
+    rapport de forme du `viewBox`, que la feuille de style peut ensuite
+    agrandir ou réduire. Le `viewBox` n'est pas touché : c'est lui qui fait
+    tomber au bon endroit un surlignage posé en coordonnées [0,1].
     """
-    return re.sub(
+    cadre = re.search(r'<svg\b[^>]*\sviewBox="([^"]+)"', svg)
+    largeur, hauteur = COTE_AFFICHEE, COTE_AFFICHEE
+    if cadre is not None:
+        morceaux = cadre.group(1).replace(",", " ").split()
+        if len(morceaux) == 4:
+            try:
+                etendue_x, etendue_y = float(morceaux[2]), float(morceaux[3])
+            except ValueError:
+                etendue_x = etendue_y = 0.0
+            if etendue_x > 0 and etendue_y > 0:
+                if etendue_x >= etendue_y:
+                    largeur = COTE_AFFICHEE
+                    hauteur = max(1, round(COTE_AFFICHEE * etendue_y / etendue_x))
+                else:
+                    hauteur = COTE_AFFICHEE
+                    largeur = max(1, round(COTE_AFFICHEE * etendue_x / etendue_y))
+
+    remplace, nombre = re.subn(
         r'(<svg\b[^>]*?)\s+width="[^"]*"\s+height="[^"]*"',
-        r"\1",
+        f'\\1 width="{largeur}" height="{hauteur}"',
+        svg,
+        count=1,
+    )
+    if nombre:
+        return remplace
+    # Une version d'ezdxf qui n'écrirait plus ces attributs : on les ajoute,
+    # plutôt que de servir une image sans taille.
+    return re.sub(
+        r"(<svg\b)",
+        f'\\1 width="{largeur}" height="{hauteur}"',
         svg,
         count=1,
     )
@@ -298,7 +347,7 @@ def rendre(chemin: str | Path, *, plafond_entites: int = PLAFOND_ENTITES) -> Ren
 
     _verifier_innocuite(svg)
     return Rendu(
-        svg=_sans_dimensions_physiques(svg),
+        svg=_dimensions_affichables(svg),
         cadre=(
             float(etendue.extmin.x),
             float(etendue.extmin.y),

@@ -16,10 +16,24 @@ import { seConnecter } from './parcours'
  * `suite-` est la convention du dossier pour « ce qui vient après », et ce
  * scénario ne crée donc aucun projet : il reprend PREM-001.
  *
- * **La fixture est COMMITÉE** (`fixtures/plans/mur_simple.dxf`, un mur simple,
- * `$INSUNITS` = 4, donc des millimètres). Rien n'est fabriqué ici : un DXF
- * écrit à la volée par le test prouverait que le test sait écrire du DXF, pas
- * que le produit sait le lire.
+ * **La fixture est fabriquée par le BANC**, pas par ce scénario :
+ * `fixtures/plans/mur_cote.dxf` — un mur de 5 m, coté, `$INSUNITS` = 4, donc
+ * des millimètres. Elle n'est pas commitée parce qu'une cotation a besoin de
+ * son bloc géométrique, et que ce bloc fait trois mille lignes qu'aucun
+ * relecteur ne lira ; `scripts/fabriquer_plans_de_test.py` les écrit en dix
+ * lignes lisibles.
+ *
+ * Et c'est le BANC qui l'appelle, pas ce fichier : une fixture absente doit
+ * faire échouer la préparation, jamais rendre un parcours silencieux. Le
+ * dépôt a déjà payé cette leçon — deux tests prouvant le refus du DWG étaient
+ * SAUTÉS en intégration continue, faute de quoi que ce soit qui fabrique
+ * leurs fichiers.
+ *
+ * **Pourquoi pas `mur_simple.dxf`, qui est commitée** : elle porte deux
+ * LIGNES et aucune cotation. Le plan s'y lit — unité, calques, entités — mais
+ * il ne propose RIEN à mesurer, et un parcours qui cherche une valeur à
+ * corriger n'y trouve rien. C'est ce qui a fait échouer le premier essai dans
+ * un navigateur.
  *
  * **Tout passe par l'écran** : aucun appel direct à l'API, aucune écriture
  * dans le volume. Ce qui est vérifié, c'est ce qu'une personne voit.
@@ -34,7 +48,7 @@ import { seConnecter } from './parcours'
  *    qui la suivent portent leur propre délai, plus long que celui du banc.
  */
 
-const PLAN = join(__dirname, '..', '..', '..', 'fixtures', 'plans', 'mur_simple.dxf')
+const PLAN = join(__dirname, '..', '..', '..', 'fixtures', 'plans', 'mur_cote.dxf')
 
 /** Au-delà du délai d'attente ordinaire : l'analyse tient le fil 7 à 9 s. */
 const DELAI_ANALYSE = 60_000
@@ -72,7 +86,7 @@ test('un plan DXF déposé s’affiche, propose ses mesures, et une valeur corri
 
   const ligne = documents
     .locator('tr')
-    .filter({ has: page.getByRole('cell', { name: 'mur_simple.dxf' }) })
+    .filter({ has: page.getByRole('cell', { name: 'mur_cote.dxf' }) })
     .first()
   await expect(ligne).toBeVisible()
   // La colonne « Type » nomme le plan au lieu d'afficher « — ».

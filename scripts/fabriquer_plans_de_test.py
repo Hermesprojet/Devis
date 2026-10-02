@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
-"""Fabrique les fixtures de plans BINAIRES, qui ne sont pas commitées.
+"""Fabrique les fixtures de plans qui ne se RELISENT pas, et ne sont donc pas commitées.
 
-Les DXF ASCII de `fixtures/plans/` sont du texte : commités, ils se relisent.
-Les deux fichiers ci-dessous ne se relisent pas — ce sont des octets — et un
-binaire commité devient un bloc que personne n'ouvre. On les fabrique, et le
-code qui les fabrique dit ce qu'ils contiennent, ce qu'une capture d'écran de
-leur contenu hexadécimal ne dirait pas.
+Les DXF ASCII de `fixtures/plans/` sont du texte : commités, ils se relisent
+en quelques lignes. Trois fichiers échappent à cette règle, pour deux raisons
+différentes.
+
+**Deux sont des octets** — un DXF binaire et un faux DWG — et un binaire
+commité devient un bloc que personne n'ouvre.
+
+**Le troisième est du texte, mais 3 300 lignes de texte.** `mur_cote.dxf`
+porte une vraie cotation, et une cotation a besoin de son bloc géométrique :
+sans lui, l'audit la retire au rechargement et l'espace modèle revient vide.
+Ce bloc fait trois mille lignes qu'aucun relecteur ne lira. Le code qui le
+fabrique, lui, tient en dix lignes et dit exactement ce que le fichier
+contient — ce qu'un diff de trois mille lignes ne dirait pas.
+
+Dans les trois cas, c'est le code qui est la documentation du fichier.
 
     python3 scripts/fabriquer_plans_de_test.py
 
@@ -53,7 +63,52 @@ def fabriquer() -> list[Path]:
     faux_dwg.write_bytes(ENTETE_DWG + REMPLISSAGE)
     ecrits.append(faux_dwg)
 
+    cote = _mur_cote()
+    if cote is not None:
+        ecrits.append(cote)
+
     return ecrits
+
+
+def _mur_cote() -> Path | None:
+    """Un mur de 5 m, coté, dans un fichier qu'un parcours complet peut déposer.
+
+    Pourquoi il ne peut pas être `mur_simple.dxf` : celle-ci porte deux LIGNES
+    et **aucune cotation**. Le plan se lit — unité, calques, entités — mais il
+    ne propose RIEN à mesurer. Un parcours de bout en bout qui cherche une
+    mesure à corriger n'y trouve donc rien, et c'est exactement ce qui a fait
+    échouer le premier essai dans un navigateur.
+
+    `render()` n'est pas décoratif : sans lui, la cotation n'a pas de bloc
+    géométrique, l'audit la retire au rechargement, et l'espace modèle revient
+    VIDE. Dix tests ont déjà échoué sur un dépaquetage de liste vide, pour
+    cette seule ligne manquante.
+
+    Rend `None` si ezdxf n'est pas installé — l'extra « plans » est optionnel,
+    et les deux fixtures binaires, elles, n'en ont pas besoin.
+    """
+    try:
+        import ezdxf
+    except ModuleNotFoundError:
+        return None
+
+    # R2000 et non R12 : R12 n'exporte PAS `$INSUNITS`, et un plan sans unité
+    # n'est pas mesurable. Vérifié — ezdxf le dit à l'enregistrement.
+    document = ezdxf.new("R2000", setup=False)
+    document.header["$INSUNITS"] = 4  # millimètres
+    document.layers.add("MURS")
+    document.layers.add("COTATIONS")
+    espace = document.modelspace()
+    espace.add_line((0, 0), (5000, 0), dxfattribs={"layer": "MURS"})
+    espace.add_line((0, 0), (0, 2500), dxfattribs={"layer": "MURS"})
+    cotation = espace.add_linear_dim(
+        base=(0, -800), p1=(0, 0), p2=(5000, 0), dxfattribs={"layer": "COTATIONS"}
+    )
+    cotation.render()
+
+    chemin = SORTIE / "mur_cote.dxf"
+    document.saveas(chemin)
+    return chemin
 
 
 def main() -> int:
