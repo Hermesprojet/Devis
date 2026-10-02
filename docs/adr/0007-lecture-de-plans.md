@@ -286,16 +286,34 @@ Rien n'est créé par cet ADR. Ce qu'il fixe est la **forme** de ce qui sera cr�
 migration Alembic, dans une tranche ultérieure.
 
 - **Les citations existent déjà** et portent `sheet`, `layer` et `object_id` : la
-  provenance d'une donnée de plan n'a pas besoin d'une nouvelle table.
+  provenance d'une donnée de plan n'a pas besoin d'une nouvelle table. Mais
+  elles imposaient `page`, une plage de caractères et une boîte englobante,
+  toutes obligatoires — ce dont un plan ne dispose pas. **Fait** par la
+  révision `d8e9fa010203` : les sept colonnes deviennent nullables, et trois
+  contraintes les encadrent — `ck_source_citation_ancrage` (une citation est
+  ancrée par une page AVEC sa plage, ou par un handle d'objet, jamais par
+  rien), `ck_source_citation_bbox_complete` (une boîte à moitié écrite rendait
+  NULL, donc passait) et `ck_source_citation_reperes_cao_nonempty` (un handle
+  lu comme chaîne vide ne désigne rien).
+
+  La même révision corrige un défaut trouvé en analysant un plan réel, qui
+  était refusé par la base : `Amount` stocke un décimal en TEXTE sur SQLite, et
+  `confidence <= 1` était donc une comparaison de CHAÎNES — « 1.0000000000 »
+  refusé, « 0.9000000000 » accepté, et PostgreSQL acceptant les deux. Les trois
+  seules conditions du schéma qui comparent un `Amount` à un littéral entier
+  portent désormais un `CAST(... AS NUMERIC)`.
 - **Une mesure est une nouvelle table**, portant `organization_id`, lue par `owned_query`,
   et les onze champs imposés par `cad-bim-takeoff` §4 : fichier, révision et empreinte,
   feuille, calque et objet, unité **du document** avant conversion, échelle avec son
   origine — déclarée, lue ou calibrée —, formule lisible, géométrie de mesure en
   coordonnées du document, auteur ou moteur, confiance, statut.
-- **Les étapes de pipeline manquent.** Les onze déclarées décrivent un pipeline de texte.
-  Un plan en demande quatre de plus : rendu d'une page, géométrie vectorielle, lecture
-  CAO, mesure. La contrainte de vérification porte la liste en dur : une migration la
-  réécrit, elle ne s'étend pas à la main.
+- **Les étapes de pipeline manquaient.** Les onze déclarées décrivent un pipeline de
+  texte. **Fait** par la même révision : quinze étapes, dont `page_render`,
+  `vector_geometry`, `cad_read` et `measurement`. Deux seulement ont du code
+  derrière elles — `cad_read` lit le DXF et propose les mesures, `page_render`
+  produit l'image. `vector_geometry` et `measurement` sont déclarées et vides :
+  ne pas les annoncer comme disponibles. La liste vit à trois endroits — le
+  service, le modèle, la migration — et un test les compare.
 - **La géométrie est stockée en GeoJSON dans une colonne JSON, pas en PostGIS.** PostGIS
   est disponible mais ne sert à rien ici : les coordonnées sont celles du document, sans
   système de référence spatial, et aucune requête spatiale n'est au programme. L'employer

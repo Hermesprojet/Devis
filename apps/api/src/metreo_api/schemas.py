@@ -880,6 +880,86 @@ class DocumentRevisionOut(ApiModel):
     created_at: datetime
 
 
+# -- lecture d'un plan -----------------------------------------------------
+
+
+class AnomalieDePlan(ApiModel):
+    """Un fait qui empêche ou fragilise une reprise, déjà rédigé en français.
+
+    Le message vient du serveur et part tel quel à l'écran : une interface qui
+    le recomposerait depuis le code finirait par dire autre chose que ce que
+    le lecteur a constaté.
+    """
+
+    code: str
+    message: str
+
+
+class CadreDePlan(ApiModel):
+    """Où se trouve un objet dans l'image, en [0,1], origine en haut à gauche.
+
+    Les quatre bornes sont des CHAÎNES décimales, comme toutes les valeurs
+    décimales de cette API : un flottant perdrait des chiffres au transport,
+    et une position sert à poser un surlignage au pixel près.
+    """
+
+    x0: str
+    y0: str
+    x1: str
+    y1: str
+
+
+class MesureDePlan(ApiModel):
+    """Une mesure proposée, sa provenance, sa réserve et la décision humaine.
+
+    `valeur_document` est la mesure DANS L'UNITÉ DU DOCUMENT, sans aucune
+    conversion. `valeur_corrigee` est ce qu'un humain a retenu, s'il a
+    corrigé : les deux sont rendues, parce que la proposition machine n'est
+    jamais réécrite et que l'écran doit pouvoir montrer l'écart.
+    """
+
+    proposal_id: str
+    citation_id: str
+    valeur_document: str
+    unite_document: str | None
+    famille: str
+    fiabilite: str
+    origine_de_la_mesure: str
+    texte_impose: str | None
+    reserves: list[AnomalieDePlan]
+    confiance: str
+    calque: str | None
+    feuille: str | None
+    object_ref: str | None
+    cadre: CadreDePlan | None
+    decision: str | None
+    valeur_corrigee: str | None
+
+
+class PlanLu(ApiModel):
+    """Le constat d'un plan, et les mesures qu'on en a tirées.
+
+    `mesurable` faux n'est pas une erreur : un plan sans unité déclarée reste
+    consultable et archivable — ni la visualisation ni l'archivage ne
+    demandent d'unité. Il n'est simplement pas mesurable, et l'écran doit le
+    dire au lieu de laisser une liste vide se faire interpréter.
+    """
+
+    revision_id: str
+    mesurable: bool
+    unite_source: str | None
+    insunits: int | None
+    version_dxf: str | None
+    feuilles: list[str]
+    calques: dict[str, int]
+    entites: dict[str, int]
+    refuse: bool
+    motif_du_refus: AnomalieDePlan | None
+    anomalies: list[AnomalieDePlan]
+    image_disponible: bool
+    mesures: list[MesureDePlan]
+
+
 class ValidationDecisionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

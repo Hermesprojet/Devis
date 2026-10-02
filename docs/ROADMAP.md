@@ -81,7 +81,7 @@ puisse tenir.
 
 ---
 
-## Phase 2 — Intelligence documentaire · **Socle livré, traitement non commencé**
+## Phase 2 — Intelligence documentaire · **Socle livré, premier parcours de plan livré**
 
 Périmètre : dépôt sécurisé PDF/image/XLSX, extraction texte native, OCR par
 adaptateur, classification, extraction structurée de quelques champs et clauses,
@@ -96,11 +96,23 @@ citation structurée — page, plage de caractères, boîte englobante, feuille,
 calque, objet ; la proposition d'extraction versionnée et son statut ; l'état
 idempotent par étape de pipeline ; les sept ports de traitement en `Protocol`.
 
-**Ce qui n'est pas commencé** : aucun fichier n'est encore LU. Aucune
-bibliothèque de lecture PDF ni CAO, aucun OCR, aucune exécution asynchrone —
-`apps/worker/` ne contient qu'un `README.md`. Les onze étapes de pipeline sont
-déclarées, aucune ne s'exécute. Les quatre scénarios d'acceptation ci-dessous
-ne sont pas automatisés.
+**Ce qui est livré ensuite, et c'est un parcours entier mais étroit** : un plan
+**DXF** se dépose, s'affiche dans Metreo sans logiciel externe, et rend ses
+mesures avec leur provenance exacte — feuille, calque, handle de l'objet — et
+leur réserve ; chacune se confirme, se corrige ou se refuse, et la décision
+humaine est consignée sans jamais réécrire la proposition machine. Deux des
+quinze étapes de pipeline s'exécutent pour de bon : `cad_read` et
+`page_render`. Mesuré de bout en bout sur un plan d'exécution réel de 7,4 Mo :
+663 mesures proposées dont 8 à vérifier, 663 situées sur l'image, en 14,1 s.
+
+**Ce qui n'est toujours pas commencé** : la lecture d'un **PDF** — ni son
+affichage, ni sa géométrie vectorielle, ni son OCR ; `vector_geometry` et
+`measurement` sont déclarées et vides. Aucune exécution asynchrone :
+`apps/worker/` n'a pas d'exécuteur, parce qu'il n'y a pas de file — le
+traitement hors requête est `scripts/lire_un_plan.py`, un processus par
+fichier. Aucune classification, aucune recherche, aucune comparaison de
+révisions. Les quatre scénarios d'acceptation ci-dessous ne sont pas
+automatisés — le scénario 12 l'est pour un PLAN, pas pour une clause de texte.
 
 Critères de fin :
 
@@ -203,4 +215,6 @@ calcul** — seulement un pack versionné et des traductions.
 | Sujet | Impact | Quand |
 | --- | --- | --- |
 | Pas de RLS PostgreSQL | L'isolation repose sur la couche service (testée) sans filet de sécurité base | Phase 5 |
-| `apps/worker` vide | Les opérations longues n'existent pas encore ; le répertoire est réservé | Phase 2 |
+| `apps/worker` sans exécuteur | Le premier traitement hors requête existe (`scripts/lire_un_plan.py`), mais il traite UNE révision nommée et s'arrête : il n'y a pas de file à dépiler | Phase 2 |
+| Lecture de plan SYNCHRONE | L'analyse part dans la requête HTTP. Mesuré de bout en bout sur un plan réel de 7,4 Mo : **14,1 s**. D'où le plafond `METREO_PLAN_SYNC_MAX_BYTES` (12 Mio) et le script hors requête pour le reste | Phase 2 |
+| Seul le DXF est lu | Un PDF se dépose et se télécharge, mais ne s'affiche ni ne se mesure. Rien dans l'écran ne prétend le contraire | Phase 2 |

@@ -208,6 +208,135 @@ const fr: Dictionary = {
   'import.committed': 'Import confirmé.',
   'import.line': 'Ligne',
 
+  'documents.formats':
+    'PDF, PNG, JPEG, DXF, CSV, XLSX ou DOCX. Le contenu est vérifié à la réception : '
+    + 'l’extension seule ne suffit pas. Un plan AutoCAD .dwg est REFUSÉ — '
+    + 'exportez-le en DXF (le format lu par Metreo) ou en PDF.',
+  'documents.readPlan': 'Lire le plan',
+
+  // --- lecture d'un plan DXF ---------------------------------------------
+  // Tout ce que l'écran de lecture d'un plan montre. Les RÉSERVES et les
+  // ANOMALIES n'ont pas de clé : le serveur les rédige déjà en français, et
+  // les recomposer ici reviendrait à tenir deux textes d'accord.
+  'plan.title': 'Lecture du plan',
+  'plan.backToProject': 'Retour au chantier',
+  'plan.intro':
+    'Ce que Metreo a LU dans le fichier, et les mesures qu’il en propose. '
+    + 'Rien n’est repris dans un bordereau tant qu’une personne n’a pas '
+    + 'tranché, mesure par mesure. Aucune valeur n’est convertie : elles sont '
+    + 'affichées dans l’unité du document.',
+  'plan.notAnalysed':
+    'Ce plan n’a pas encore été lu. Lancer la lecture ne modifie pas le fichier '
+    + 'déposé : elle produit un rendu consultable et une liste de mesures proposées, '
+    + 'que vous confirmerez ou corrigerez ensuite.',
+  'plan.analyse': 'Analyser le plan',
+  'plan.analyseWarning':
+    'La lecture se fait d’un seul tenant et prend une dizaine de secondes — mesuré : '
+    + '7 à 9 secondes sur des plans de 7 et 11 Mo. Laissez cet onglet ouvert : '
+    + 'l’analyse se termine dans la réponse à ce bouton.',
+  'plan.analysing':
+    'Lecture du plan en cours. Comptez une dizaine de secondes ; ne rechargez pas la page.',
+  'plan.alreadyAnalysed':
+    'Ce plan avait déjà été lu. Le constat ci-dessous est celui de cette lecture ; '
+    + 'rien n’a été relu.',
+  'plan.analyseNotAllowed':
+    'Lancer la lecture d’un plan demande le droit de déposer un document.',
+  'plan.refused': 'Ce fichier a été refusé',
+  'plan.notMeasurable':
+    'Aucune mesure n’est exploitable : le plan ne déclare pas son unité de dessin, '
+    + 'et une longueur sans unité ne veut rien dire. Le plan reste consultable, et les '
+    + 'cotes écrites par le dessinateur restent lisibles sur le rendu.',
+  'plan.findings': 'Constat de lecture',
+  'plan.sourceUnit': 'Unité du document',
+  'plan.insunits': '$INSUNITS',
+  'plan.dxfVersion': 'Version DXF',
+  'plan.sheets': 'Feuilles',
+  'plan.entities': 'Entités par type',
+  'plan.layers': 'Calques',
+  'plan.layer': 'Calque',
+  'plan.count': 'Entités',
+  'plan.anomalies': 'Anomalies du fichier',
+  'plan.noAnomaly': 'Aucune anomalie relevée sur le fichier.',
+
+  'plan.view': 'Rendu du plan',
+  'plan.imageAlt':
+    'Rendu du plan déposé. Les mesures proposées sont détaillées en texte sous cette image.',
+  'plan.withoutUnit': 'sans unité déclarée',
+  'plan.imageUnavailable':
+    'Aucun rendu n’est disponible pour ce plan. Les mesures ci-dessous restent '
+    + 'lisibles, mais elles ne peuvent pas être situées à l’écran.',
+  'plan.imageHint':
+    'Rendu produit par le serveur à partir du fichier. Faites glisser pour déplacer ; '
+    + 'les boutons de zoom fonctionnent au clavier.',
+  'plan.zoomIn': 'Agrandir',
+  'plan.zoomOut': 'Réduire',
+  'plan.zoomFit': 'Ajuster',
+  'plan.zoomLevel': 'Échelle d’affichage',
+
+  'plan.measures': 'Mesures proposées',
+  'plan.measuresToCheck': 'Mesures à vérifier',
+  'plan.measuresClean': 'Mesures sans réserve',
+  'plan.measuresEmpty':
+    'La lecture n’a proposé aucune mesure. Le fichier a bien été lu — il ne porte '
+    + 'simplement aucune cote ni aucun objet mesurable que Metreo sache reprendre.',
+  'plan.proposedValue': 'Valeur proposée',
+  'plan.retainedValue': 'Valeur retenue',
+  'plan.family': 'Famille',
+  'plan.handle': 'Handle DXF',
+  'plan.origin': 'Origine',
+  'plan.confidence': 'Confiance',
+  'plan.reserves': 'Réserves',
+  'plan.toCheck': 'à vérifier',
+  'plan.noReserve': 'sans réserve',
+  'plan.noReserveHint':
+    'Lue sans réserve par le programme. Cela ne la rend pas juste : elle reste à '
+    + 'confirmer par une personne.',
+  'plan.imposedText':
+    'Le plan affiche « {texte} » à la place de la mesure. Le dessinateur a écrit ce '
+    + 'texte lui-même : il ne correspond pas forcément à la géométrie.',
+  'plan.unknownPosition': 'Position inconnue dans l’image',
+  'plan.locate': 'Situer sur le plan',
+  'plan.located': 'Situé sur le plan',
+
+  'plan.origin.cote_42': 'cote du logiciel',
+  'plan.origin.recalcul': 'recalculée',
+  'plan.family.lineaire': 'linéaire',
+  'plan.family.alignee': 'alignée',
+  'plan.family.diametre': 'diamètre',
+  'plan.family.rayon': 'rayon',
+  'plan.family.angulaire': 'angulaire',
+  'plan.family.angulaire_3_points': 'angulaire (3 points)',
+  'plan.family.ordonnee': 'ordonnée',
+  'plan.family.inconnue': 'inconnue',
+
+  'plan.decide.accept': 'Confirmer',
+  'plan.decide.correct': 'Corriger',
+  'plan.decide.reject': 'Refuser',
+  'plan.decided.accepted': 'confirmée',
+  'plan.decided.corrected': 'corrigée',
+  'plan.decided.rejected': 'refusée',
+  'plan.decide.reason': 'Motif (obligatoire)',
+  'plan.decide.reasonHint':
+    'Ce motif est conservé avec la décision. Il explique à qui relira le dossier '
+    + 'pourquoi cette valeur a été retenue, corrigée ou écartée.',
+  'plan.decide.reasonRequired': 'Un motif est obligatoire : le serveur refuse une décision sans explication.',
+  'plan.decide.newValue': 'Valeur corrigée',
+  'plan.decide.newValueHint':
+    'Saisissez-la dans l’unité du document, rappelée à droite du champ. Rien '
+    + 'n’est converti : la valeur part telle quelle.',
+  'plan.decide.notANumber':
+    'Ce n’est pas un nombre. Exemples : 5000 ; 2,75 ; 0.5 — la virgule est acceptée.',
+  'plan.decide.noUnit':
+    'Le document ne déclare aucune unité : la valeur corrigée partira sans unité, '
+    + 'comme la proposition.',
+  'plan.decide.submit': 'Enregistrer la décision',
+  'plan.decide.notAllowed':
+    'Confirmer, corriger ou refuser une mesure demande le droit de valider un document. '
+    + 'Les mesures restent consultables.',
+  'plan.decide.machineKept':
+    'La proposition du programme n’est jamais réécrite : après une décision, elle '
+    + 'reste affichée à côté de la valeur retenue.',
+
   'estimate.title': 'Étude de prix',
   'estimate.version': 'Version',
   'estimate.draft': 'Brouillon',

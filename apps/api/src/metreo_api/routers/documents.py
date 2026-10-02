@@ -10,16 +10,20 @@ from ..config import Settings, get_settings
 from ..db import session_scope
 from ..models import Document, DocumentRevision, ValidationDecision
 from ..schemas import (
+    AnomalieDePlan,
+    CadreDePlan,
     DocumentCreate,
     DocumentOut,
     DocumentRevisionOut,
     DocumentStatusUpdate,
+    MesureDePlan,
+    PlanLu,
     ValidationDecisionCreate,
     ValidationDecisionOut,
 )
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
-from ..services import documents, exports
+from ..services import documents, exports, lecture_de_plan, mesures_de_plan, rendu_de_plan
 from ..services.document_storage import (
     TAILLE_MORCEAU,
     ContenuRefuse,
@@ -27,6 +31,7 @@ from ..services.document_storage import (
     TropVolumineux,
     nom_original_sur,
 )
+from ..services.travail_documentaire import TravailRefuse, executer_etape_dans
 from ..transactions import RouteTransactionnelle
 
 router = APIRouter(tags=["documents"], route_class=RouteTransactionnelle)
@@ -304,4 +309,303 @@ def create_validation_decision(
         context=context,
         proposal_id=proposal_id,
         payload=payload,
+    )
+
+
+# ---------------------------------------------------------------------------
+# La lecture d'un plan
+# ---------------------------------------------------------------------------
+#
+# Trois routes, et une seule qui travaille. L'analyse est SYNCHRONE, ce qui
+# n'est pas un choix d'architecture mais l'état des lieux : aucune file
+# d'attente n'existe dans le dépôt, et en inventer une est une autre tranche.
+# Mesuré sur deux plans d'exécution réels, l'analyse complète prend 7,3 s et
+# 8,8 s. C'est long pour une requête, c'est pourquoi la taille du fichier est
+# plafonnée ici et pas dans le worker : `scripts/lire_un_plan.py` lit le même
+# plan sans cette limite, parce que personne n'attend sa réponse.
+
+
+def _plan_lu(
+    session: Session,
+    *,
+    organization_id: str,
+    revision_id: str,
+    stockage: StockageLocal,
+) -> PlanLu:
+    """Assemble la réponse depuis l'artefact de constat et les propositions."""
+    constat = lecture_de_plan.lire_le_constat(
+        stockage, organization_id=organization_id, revision_id=revision_id
+    )
+    if constat is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "plan_non_analyse",
+                "message": "Ce plan n'a pas encore été analysé.",
+            },
+        )
+    contenu = constat.contenu
+    motif = contenu.get("motif_du_refus")
+    mesures = mesures_de_plan.lister(
+        session, organization_id=organization_id, revision_id=revision_id
+    )
+    return PlanLu(
+        revision_id=revision_id,
+        mesurable=bool(contenu.get("mesurable")),
+        unite_source=contenu.get("unite_source"),
+        insunits=contenu.get("insunits"),
+        version_dxf=contenu.get("version_dxf"),
+        feuilles=list(contenu.get("feuilles") or []),
+        calques=dict(contenu.get("calques") or {}),
+        entites=dict(contenu.get("entites") or {}),
+        refuse=bool(contenu.get("refuse")),
+        motif_du_refus=(
+            AnomalieDePlan(code=str(motif.get("code")), message=str(motif.get("message")))
+            if isinstance(motif, dict)
+            else None
+        ),
+        anomalies=[
+            AnomalieDePlan(code=str(a.get("code", "")), message=str(a.get("message", "")))
+            for a in (contenu.get("anomalies") or [])
+            if isinstance(a, dict)
+        ],
+        image_disponible=lecture_de_plan.image_disponible(
+            stockage, organization_id=organization_id, revision_id=revision_id
+        ),
+        mesures=[
+            MesureDePlan(
+                proposal_id=m.proposal_id,
+                citation_id=m.citation_id,
+                valeur_document=m.valeur_document,
+                unite_document=m.unite_document,
+                famille=m.famille,
+                fiabilite=m.fiabilite,
+                origine_de_la_mesure=m.origine_de_la_mesure,
+                texte_impose=m.texte_impose,
+                reserves=[AnomalieDePlan(code=r["code"], message=r["message"]) for r in m.reserves],
+                confiance=m.confiance,
+                calque=m.calque,
+                feuille=m.feuille,
+                object_ref=m.object_ref,
+                cadre=(
+                    CadreDePlan(x0=m.cadre[0], y0=m.cadre[1], x1=m.cadre[2], y1=m.cadre[3])
+                    if m.cadre
+                    else None
+                ),
+                decision=m.decision,
+                valeur_corrigee=m.valeur_corrigee,
+            )
+            for m in mesures
+        ],
+    )
+
+
+@router.post(
+    "/documents/{document_id}/revisions/{revision_id}/plan/analyse",
+    response_model=PlanLu,
+    summary="Lire un plan : son constat, son image et ses mesures proposées",
+)
+def analyse_plan_revision(
+    document_id: str,
+    revision_id: str,
+    relancer: bool = Query(
+        default=False,
+        description="Reprendre une analyse en échec, sans changer sa clé d'idempotence",
+    ),
+    context: TenantContext = Depends(require(Permission.DOCUMENT_WRITE)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> PlanLu:
+    """Lance la lecture déterministe, et rend le constat qu'elle produit.
+
+    Deux étapes sont jouées, dans cet ordre et pour cette raison : `cad_read`
+    lit le fichier et propose les mesures, `page_render` produit l'image. Si
+    la seconde échoue, la PREMIÈRE reste acquise — des mesures justes ne
+    doivent pas disparaître parce qu'un dessin n'a pas pu être tracé. L'état
+    de chacune est consigné séparément dans `document_step_runs`.
+
+    Aucun modèle de langage n'intervient : tout est déterministe, et la
+    réponse ne contient que ce que le fichier porte.
+    """
+    try:
+        revision = documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    try:
+        lecture_de_plan.verifier_que_cest_un_plan(revision)
+    except lecture_de_plan.PlanNonLisible as refus:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": refus.code, "message": refus.message},
+        ) from refus
+
+    if revision.byte_size > settings.plan_sync_max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "code": "plan_trop_lourd",
+                "message": (
+                    "Ce plan dépasse "
+                    f"{settings.plan_sync_max_bytes // (1024 * 1024)} Mio, la limite de "
+                    "l'analyse immédiate. Il reste lisible hors ligne, par le "
+                    "traitement déporté."
+                ),
+            },
+        )
+
+    stockage = StockageLocal(settings.storage_root)
+    for etape, travail in (
+        (lecture_de_plan.ETAPE_LECTURE, lecture_de_plan.travail_de_lecture(stockage)),
+        (lecture_de_plan.ETAPE_RENDU, lecture_de_plan.travail_de_rendu(stockage)),
+    ):
+        try:
+            executer_etape_dans(
+                session,
+                organization_id=context.organization_id,
+                revision_id=revision_id,
+                step=etape,
+                pipeline_version=mesures_de_plan.PIPELINE_VERSION,
+                prompt_version=mesures_de_plan.PROMPT_VERSION,
+                model_version=mesures_de_plan.MODEL_VERSION,
+                stockage=stockage,
+                travail=travail,
+                relancer=relancer,
+            )
+        except TravailRefuse as refus:
+            if refus.code == "etape_deja_reussie":
+                # Rejouer une étape acquise n'est pas une erreur de l'appelant
+                # qu'il faudrait corriger : c'est un double clic. On passe à
+                # la suivante, et la réponse rendra l'état réel.
+                continue
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": refus.code, "message": refus.message},
+            ) from refus
+
+    return _plan_lu(
+        session,
+        organization_id=context.organization_id,
+        revision_id=revision_id,
+        stockage=stockage,
+    )
+
+
+@router.get(
+    "/documents/{document_id}/revisions/{revision_id}/plan",
+    response_model=PlanLu,
+    summary="Relire le constat d'un plan et ses mesures proposées",
+)
+def get_plan_revision(
+    document_id: str,
+    revision_id: str,
+    context: TenantContext = Depends(require(Permission.DOCUMENT_READ)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> PlanLu:
+    """Ne relit PAS le fichier : relit l'artefact que l'analyse a posé.
+
+    Rouvrir le DXF coûterait plusieurs secondes à chaque affichage d'écran, et
+    rendrait un constat qui pourrait différer de celui sur lequel les mesures
+    ont été proposées. L'artefact est la réponse, et l'original immuable est
+    ce qui permet de le refaire.
+    """
+    try:
+        documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    return _plan_lu(
+        session,
+        organization_id=context.organization_id,
+        revision_id=revision_id,
+        stockage=StockageLocal(settings.storage_root),
+    )
+
+
+@router.get(
+    "/documents/{document_id}/revisions/{revision_id}/plan/image",
+    summary="Servir l'image d'un plan, en SVG",
+    response_class=StreamingResponse,
+)
+def get_plan_image(
+    document_id: str,
+    revision_id: str,
+    context: TenantContext = Depends(require(Permission.DOCUMENT_READ)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Rend le SVG du plan, sous une politique de refus total.
+
+    **Un SVG est un document, pas une image.** Chargé par une balise `<img>`
+    il est inerte : aucun script, aucun gestionnaire d'événement, aucune
+    requête sortante. Atteint directement par son URL, dans l'origine de
+    l'application, il exécuterait ce qu'il porte — et le jeton de session vit
+    dans cette origine. D'où les en-têtes ci-dessous, qui ne servent QUE ce
+    second cas.
+
+    Trois protections, et aucune n'est redondante :
+
+    1. le contenu lui-même est vérifié avant d'être posé sur le volume
+       (`rendu_de_plan` refuse un rendu portant script, gestionnaire, image
+       externe ou lien) — c'est la seule qui vaille aussi pour une URL
+       `blob:`, qui ne porte aucun en-tête ;
+    2. ces en-têtes, pour un accès direct à l'URL ;
+    3. le client l'affiche par `<img>`, jamais en ligne dans la page.
+
+    `style-src 'unsafe-inline'` est nécessaire et suffisant : le rendu ne
+    produit qu'une feuille de style en ligne — vérifié à l'exécution sur deux
+    plans réels, qui ne contiennent ni `<script`, ni `<image`, ni `xlink:href`,
+    ni même une balise `<text>`.
+    """
+    try:
+        documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    stockage = StockageLocal(settings.storage_root)
+    cle = rendu_de_plan.cle_du_rendu(context.organization_id, revision_id)
+    taille = stockage.taille(cle)
+    if taille is None:
+        # 409 et non 404 : la révision existe, elle est bien à cette
+        # organisation, et c'est l'IMAGE qui manque. Un 404 se confondrait
+        # avec le refus d'une révision d'un autre tenant, qui doit rester
+        # indiscernable d'une révision inexistante.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "image_de_plan_absente",
+                "message": "L'image de ce plan n'a pas encore été produite.",
+            },
+        )
+
+    return StreamingResponse(
+        stockage.lire(cle),
+        media_type="image/svg+xml",
+        headers={
+            "Content-Length": str(taille),
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": (
+                "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+                "form-action 'none'; frame-ancestors 'none'"
+            ),
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "private, no-store",
+        },
     )
