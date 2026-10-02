@@ -38,13 +38,37 @@ PLANS = RACINE / "fixtures" / "plans"
 BINAIRES = ("binaire.dxf", "faux.dwg")
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _fixtures_binaires_fabriquees() -> None:
+    """Fabrique les deux fixtures binaires, au lieu de sauter sans elles.
+
+    Une première version de ce fichier appelait `pytest.skip` quand elles
+    manquaient. Mesuré en intégration continue : **les deux tests les plus
+    importants de cette suite étaient sautés** — la reconnaissance du DXF
+    binaire et le refus du DWG — parce que rien n'y lance le script de
+    fabrication. Le travail passait au vert en ne vérifiant ni l'un ni
+    l'autre, c'est-à-dire en ne vérifiant pas la promesse « Metreo ne lit pas
+    le DWG ».
+
+    Les fabriquer ici coûte deux écritures de 300 octets et supprime le
+    problème : il n'existe plus d'environnement où ces tests se taisent.
+    """
+    import sys
+
+    sys.path.insert(0, str(RACINE / "scripts"))
+    try:
+        from fabriquer_plans_de_test import fabriquer
+    finally:
+        sys.path.pop(0)
+    fabriquer()
+
+
 def _fixture(nom: str) -> Path:
     chemin = PLANS / nom
-    if not chemin.exists() and nom in BINAIRES:
-        pytest.skip(
-            f"{nom} absent : lancez « python3 scripts/fabriquer_plans_de_test.py »",
-        )
-    assert chemin.exists(), f"fixture manquante : {chemin}"
+    assert chemin.exists(), (
+        f"fixture manquante : {chemin}. Les binaires sont fabriqués par la "
+        "fixture de ce module ; les autres sont commités."
+    )
     return chemin
 
 
