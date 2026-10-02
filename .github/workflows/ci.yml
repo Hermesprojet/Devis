@@ -241,7 +241,11 @@ jobs:
       - name: Installer l'API
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain ./apps/api
+          # `plans` est indispensable ICI aussi, et pas seulement aux tests
+          # Python : le banc fabrique une fixture de plan COTÉE avec ezdxf, et
+          # sans l'extra elle manquait — le parcours échouait sur un fichier
+          # absent, après avoir passé dix-sept scénarios.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[plans]"
       - name: Installer le web (verrouillé)
         working-directory: apps/web
         run: npm ci

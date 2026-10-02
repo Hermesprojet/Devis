@@ -683,6 +683,32 @@ function MesuresDuPlan({
 }
 
 /** Une mesure : ce qu'elle vaut, d'où elle vient, et ce qu'on en a décidé. */
+/**
+ * Rend une mesure LISIBLE sans jamais perdre la valeur exacte.
+ *
+ * Une mesure recalculée depuis la géométrie n'est pas ronde. Mesuré sur deux
+ * plans d'exécution réels, l'écran affichait `22902.791451627338 mm` et
+ * `629.9999999999999 mm` : l'écart vient du dessin, pas du calcul, et le
+ * lecteur n'arrondit RIEN à l'enregistrement — une quantité silencieusement
+ * arrondie ne se recoupe plus avec le fichier.
+ *
+ * Mais un métreur ne lit pas seize décimales. L'abrégé en garde trois au
+ * plus, sans zéro inutile, et il ne REMPLACE pas l'exacte : celle-ci reste en
+ * clair à côté dès que les deux diffèrent, et en infobulle.
+ *
+ * Ce n'est donc pas un arrondi métier mais une convention d'affichage : rien
+ * de ce qui part au serveur n'en dépend, et le champ de correction reste
+ * VIDE — un nombre pré-rempli se lirait comme une valeur usuelle.
+ */
+function abreger(valeur: string): { texte: string; exacte: boolean } {
+  const nombre = Number(valeur)
+  if (!Number.isFinite(nombre)) return { texte: valeur, exacte: true }
+  // `toFixed` puis retrait des zéros de queue : « 630.000 » devient « 630 »,
+  // « 0.068 » reste « 0.068 ».
+  const court = nombre.toFixed(3).replace(/\.?0+$/, '')
+  return { texte: court === '' ? '0' : court, exacte: court === valeur }
+}
+
 function LigneDeMesure({
   mesure,
   visee,
@@ -702,6 +728,7 @@ function LigneDeMesure({
 }) {
   const unite = mesure.unite_document
   const lue = mesure.decision ? (DECISIONS_LUES[mesure.decision] ?? null) : null
+  const abregee = abreger(mesure.valeur_document)
 
   return (
     <li
@@ -724,10 +751,23 @@ function LigneDeMesure({
         {mesure.valeur_corrigee !== null && (
           <span className="muted">{t('plan.proposedValue')} </span>
         )}
-        <span className="plan-valeur mono" data-testid="plan-valeur-proposee">
-          {mesure.valeur_document}
+        <span
+          className="plan-valeur mono"
+          data-testid="plan-valeur-proposee"
+          title={abregee.exacte ? undefined : `${t('plan.exactValue')} ${mesure.valeur_document}`}
+        >
+          {abregee.texte}
           {unite ? ` ${unite}` : ''}
         </span>{' '}
+        {/* La valeur EXACTE ne disparaît jamais : elle reste en clair à côté
+            de l'abrégé dès que les deux diffèrent. C'est elle qu'on recoupe
+            avec le fichier, et c'est pour cela qu'elle n'est pas reléguée à
+            une infobulle seule. */}
+        {!abregee.exacte && (
+          <span className="muted mono" data-testid="plan-valeur-exacte">
+            ({mesure.valeur_document})
+          </span>
+        )}{' '}
         {!unite && <span className="badge warning">{t('plan.withoutUnit')}</span>}{' '}
         {/*
           La valeur RETENUE à côté de la valeur proposée, et non à sa place :

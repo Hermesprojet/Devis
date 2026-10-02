@@ -279,6 +279,7 @@ const fr: Dictionary = {
   'plan.measuresEmpty':
     'La lecture n’a proposé aucune mesure. Le fichier a bien été lu — il ne porte '
     + 'simplement aucune cote ni aucun objet mesurable que Metreo sache reprendre.',
+  'plan.exactValue': 'Valeur exacte lue dans le fichier :',
   'plan.proposedValue': 'Valeur proposée',
   'plan.retainedValue': 'Valeur retenue',
   'plan.family': 'Famille',

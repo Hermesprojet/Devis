@@ -49,6 +49,10 @@ ENTETE_DWG = b"AC1032"
 REMPLISSAGE = bytes((i * 7 + 13) % 256 for i in range(256))
 
 
+#: Ce que la ligne de commande doit AVOIR produit pour rendre 0.
+ATTENDUS: tuple[str, ...] = ("binaire.dxf", "faux.dwg", "mur_cote.dxf")
+
+
 def fabriquer() -> list[Path]:
     SORTIE.mkdir(parents=True, exist_ok=True)
     ecrits: list[Path] = []
@@ -112,8 +116,33 @@ def _mur_cote() -> Path | None:
 
 
 def main() -> int:
-    for chemin in fabriquer():
+    """Fabrique tout, et ÉCHOUE si quelque chose manque.
+
+    La différence avec `fabriquer()` est voulue. Appelée depuis une suite de
+    tests, la fonction rend ce qu'elle a pu écrire : les neuf tests de
+    détection n'ont pas besoin d'ezdxf, et les faire échouer faute d'un extra
+    optionnel serait punir le mauvais appelant.
+
+    Appelée en ligne de commande — ce que fait le banc Playwright — elle doit
+    au contraire crier. Mesuré : sans ce refus, le banc écrivait deux fichiers
+    sur trois, et le parcours de plan échouait DIX-SEPT scénarios plus tard
+    sur « no such file or directory », loin de la cause. Un fabricant
+    silencieux déplace l'erreur au lieu de la dire.
+    """
+    ecrits = fabriquer()
+    for chemin in ecrits:
         print(f"{chemin.relative_to(RACINE)} — {chemin.stat().st_size} octets")
+
+    manquants = [nom for nom in ATTENDUS if not (SORTIE / nom).exists()]
+    if manquants:
+        print(
+            "NON FABRIQUÉ : "
+            + ", ".join(manquants)
+            + "\n  L'extra « plans » est probablement absent : une cotation se "
+            "fabrique avec ezdxf.\n  pip install './apps/api[plans]'",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
