@@ -52,8 +52,11 @@ livrée. État global des phases : **btp-product-rules**.
 - Avant d'ajouter une dépendance de lecture ou de conversion (lecteur DXF, lecteur IFC,
   convertisseur DWG) : relever nom, version, licence exacte, restrictions d'usage commercial et
   coût **à la date d'implémentation**, puis consigner la décision dans un ADR daté de `docs/adr/`
-  (0001 à 0004 existent ; le prochain numéro est 0005). Une licence copyleft forte ou
-  « non commercial » sur un composant serveur est un refus, pas un détail.
+  — vérifier le dernier numéro employé par un `ls docs/adr/`, plutôt que de se fier à un
+  numéro écrit ici, qui se périme. **Les décisions PDF, DXF et DWG sont déjà prises** :
+  `docs/adr/0007-lecture-de-plans.md`. Une licence copyleft forte ou « non commercial »
+  sur un composant serveur est un refus, pas un détail — l'AGPL de PyMuPDF et de
+  Ghostscript, et la GPL de Poppler et de LibreDWG, sont les quatre refus déjà instruits.
 - Un convertisseur en ligne = envoi d'un document client vers un tiers : soumis au consentement,
   désactivable, journalisé. `ai_enabled=False` par défaut couvre aussi ces conversions
   (**multitenant-security** pour l'envoi de fichiers hors du tenant).
