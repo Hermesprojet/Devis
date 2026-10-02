@@ -182,15 +182,117 @@ def test_an_empty_label_means_the_measurement_is_shown_as_is(tmp_path: Path, mar
     assert cotation.fiabilite == "mesurable"
 
 
-def test_a_degenerate_measurement_is_refused_rather_than_counted(tmp_path: Path) -> None:
+def test_a_very_small_measurement_is_kept_to_be_verified_not_discarded(tmp_path: Path) -> None:
     """**Cas relevé sur des plans réels** : onze cotations mesurant entre
-    0,0 et 0,6 mm, résidus d'édition. Comptées, elles ajouteraient des lignes
-    de bordereau à zéro."""
-    chemin = _avec_cotation(tmp_path / "degenere.dxf", longueur=0.1, cote_stockee=-1.0)
+    0,0 et 0,6 mm, résidus d'édition probables.
+
+    Une première version les rendait `inexploitable`, c'est-à-dire les
+    retirait du constat. C'est le mauvais sens de l'erreur : une cote de
+    0,2 mm proposée à tort se refuse d'un clic, une cote réelle retirée en
+    silence ne se retrouve pas. Elles sont donc CONSERVÉES, avec leur valeur,
+    en « à vérifier ».
+
+    Le seuil lui-même n'est pas arrêté : ce test fixe le comportement, pas la
+    valeur, et c'est pourquoi il lit `SEUIL_PETITE_MESURE` au lieu de 0,5.
+    """
+    petite = lecture_dxf.SEUIL_PETITE_MESURE / 5
+    chemin = _avec_cotation(tmp_path / "minuscule.dxf", longueur=petite, cote_stockee=-1.0)
     (cotation,) = lecture_dxf.lire(chemin).cotations
 
+    assert cotation.fiabilite == "a_confirmer"
+    assert "mesure_tres_petite" in [a.code for a in cotation.anomalies]
+    assert cotation.valeur is not None, "la mesure doit rester lisible pour être vérifiée"
+    assert cotation.valeur == pytest.approx(Decimal(str(petite)), abs=Decimal("0.01"))
+
+
+def test_a_very_small_measurement_is_offered_for_review_and_never_as_a_quantity(
+    tmp_path: Path,
+) -> None:
+    """Conservée n'est pas reprise.
+
+    Elle sort par `cotations_a_verifier()`, jamais par `cotations_mesurables()`
+    : sans cette séparation, « conserver » voudrait dire « proposer comme
+    exacte », ce qui est exactement ce que la consigne interdit.
+    """
+    chemin = _avec_cotation(
+        tmp_path / "minuscule-non-reprise.dxf",
+        longueur=lecture_dxf.SEUIL_PETITE_MESURE / 5,
+        cote_stockee=-1.0,
+    )
+    constat = lecture_dxf.lire(chemin)
+
+    assert constat.cotations_mesurables() == []
+    assert [c.object_ref for c in constat.cotations_a_verifier()] == [
+        constat.cotations[0].object_ref
+    ]
+
+
+def test_a_measurement_just_above_the_threshold_carries_no_reserve(tmp_path: Path) -> None:
+    """La borne, par l'autre côté : au-dessus du seuil, rien n'est signalé.
+
+    Sans ce test, remplacer le seuil par l'infini passerait au vert.
+    """
+    chemin = _avec_cotation(
+        tmp_path / "juste-au-dessus.dxf",
+        longueur=lecture_dxf.SEUIL_PETITE_MESURE * 4,
+        cote_stockee=-1.0,
+    )
+    (cotation,) = lecture_dxf.lire(chemin).cotations
+
+    assert cotation.fiabilite == "mesurable"
+    assert "mesure_tres_petite" not in [a.code for a in cotation.anomalies]
+
+
+def test_two_reserves_on_one_dimension_are_both_reported(tmp_path: Path) -> None:
+    """Une cote minuscule ET surchargée d'un texte signale les deux.
+
+    Mesuré sur le code précédent : la première réserve rencontrée fixait la
+    fiabilité et court-circuitait les contrôles suivants. Une cote de 0,1 mm
+    affichant « 2500 » ne mentionnait donc pas le texte imposé — l'écran
+    aurait montré une réserve au lieu de deux.
+    """
+    chemin = _avec_cotation(
+        tmp_path / "deux-reserves.dxf",
+        longueur=lecture_dxf.SEUIL_PETITE_MESURE / 5,
+        cote_stockee=-1.0,
+        texte="2500",
+    )
+    (cotation,) = lecture_dxf.lire(chemin).cotations
+
+    codes = [a.code for a in cotation.anomalies]
+    assert "mesure_tres_petite" in codes
+    assert "texte_impose" in codes
+    assert cotation.fiabilite == "a_confirmer"
+
+
+def test_a_negative_measurement_is_refused_and_not_merely_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Une longueur négative n'est pas une petite longueur.
+
+    Assouplir le seuil a créé un risque : si « sous le seuil » devient « à
+    vérifier », une mesure de -3000 mm le devient aussi, et l'écran propose
+    une quantité de signe faux. Les deux cas sont donc séparés.
+
+    Aucun DXF ne produit cette valeur : vérifié dans ezdxf 1.4.4, les sept
+    outils de mesure rendent tous une valeur non signée. Le test remplace
+    donc l'outil de mesure lui-même — c'est la seule façon honnête
+    d'éprouver une garde contre un changement en amont.
+    """
+    from ezdxf.entities import dimension as module_cotation
+    from ezdxf.lldxf import const
+
+    outils = dict(module_cotation.MEASUREMENT_TOOLS)
+    outils[const.DIM_LINEAR] = lambda _cotation: -3000.0
+    monkeypatch.setattr(module_cotation, "MEASUREMENT_TOOLS", outils)
+
+    chemin = _avec_cotation(tmp_path / "negative.dxf", longueur=3000.0, cote_stockee=-1.0)
+    (cotation,) = lecture_dxf.lire(chemin).cotations
+
+    assert cotation.valeur == Decimal("-3000.0"), "le garde-fou n'a pas été atteint"
     assert cotation.fiabilite == "inexploitable"
-    assert "mesure_degeneree" in [a.code for a in cotation.anomalies]
+    assert "mesure_negative" in [a.code for a in cotation.anomalies]
+    assert "mesure_tres_petite" not in [a.code for a in cotation.anomalies]
 
 
 def test_a_measurement_beyond_the_plausible_envelope_is_refused(tmp_path: Path) -> None:

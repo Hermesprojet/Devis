@@ -179,10 +179,23 @@ Deux autres faits de ce corpus, qui cadrent les tolérances :
   à moins d'un demi-millimètre d'un entier**. L'écart vient de la géométrie, pas
   du calcul : comparer à une valeur humaine exige une tolérance, et l'arrondi ne
   se fait jamais en silence ;
-- **onze cotations mesurent entre 0,0 et 0,6 mm**, résidus d'édition. Comptées,
-  elles ajouteraient des lignes de bordereau à zéro. Le seuil qui les écarte est
-  un réglage métier, pas une constante à décider ici : il vaut 0,5 mm par défaut
-  et doit être confirmé.
+- **onze cotations mesurent entre 0,0 et 0,6 mm**, résidus d'édition probables.
+  Comptées, elles ajouteraient des lignes de bordereau à zéro ; écartées, une
+  cote réelle pourrait disparaître du métré sans que personne le voie.
+
+  **Décision : elles sont conservées avec le statut « à vérifier ».** Le seuil
+  (`SEUIL_PETITE_MESURE`, 0,5 unité de dessin aujourd'hui) ne décide donc plus
+  d'un retrait : il déclenche une relecture humaine. Sa valeur reste à arrêter
+  après confrontation à de vrais exemples, et c'est un réglage métier.
+
+  Le sens de l'erreur justifie l'asymétrie : une cote de 0,2 mm proposée à tort
+  se refuse d'un clic, une cote réelle retirée en silence ne se retrouve pas.
+  « Conservée » ne veut pas dire « proposée » : elle sort par
+  `cotations_a_verifier()`, jamais par `cotations_mesurables()`.
+
+  Conséquence imprévue, corrigée : si « sous le seuil » vaut « à vérifier »,
+  une mesure négative le devient aussi. Une longueur n'a pas de signe — le cas
+  est séparé et reste refusé.
 
 ### Le cycle de blocs : un refus, pas un avertissement
 

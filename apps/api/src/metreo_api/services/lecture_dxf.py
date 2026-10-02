@@ -71,9 +71,20 @@ CODE_CYCLE_DE_BLOCS = 104
 #: centimètres. Aucun plan d'exécution ne les dépasse.
 ENVELOPPE_PLAUSIBLE = 1e7
 
-#: En deçà, une cotation ne mesure rien d'utilisable. Observé sur un plan réel :
-#: une cotation à 0,0 mm et une autre à 0,1 mm, résidus d'édition.
-MESURE_MINIMALE = 0.5
+#: En deçà, une cotation est CONSERVÉE avec le statut « à vérifier ». Observé
+#: sur un plan réel : une cotation à 0,0 mm et une autre à 0,1 mm, résidus
+#: d'édition probables — mais seulement probables.
+#:
+#: **Ce seuil ne décide rien et n'écarte rien.** Il n'est pas arrêté : la
+#: valeur sera fixée après confrontation à de vrais exemples, par celui qui
+#: connaît les ouvrages. D'ici là une cotation sous le seuil part en relecture
+#: humaine au lieu de disparaître, parce que les deux erreurs ne coûtent pas la
+#: même chose : une cote de 0,2 mm proposée à tort se refuse d'un clic, une
+#: cote réelle silencieusement retirée du métré ne se retrouve pas.
+#:
+#: Une mesure NÉGATIVE n'est pas une petite mesure : voir plus bas, elle reste
+#: inexploitable. Une longueur n'a pas de signe.
+SEUIL_PETITE_MESURE = 0.5
 
 Fiabilite = Literal["mesurable", "a_confirmer", "inexploitable"]
 
@@ -145,7 +156,17 @@ class LecturePlan:
         return not self.refuse and self.unite_source is not None
 
     def cotations_mesurables(self) -> list[Cotation]:
+        """Celles qui ne portent aucune réserve. Rien n'est proposé d'office."""
         return [c for c in self.cotations if c.fiabilite == "mesurable"]
+
+    def cotations_a_verifier(self) -> list[Cotation]:
+        """Celles qui portent une réserve nommée, et attendent un humain.
+
+        Elles ne sont NI écartées ni reprises : l'écran doit les montrer avec
+        leur anomalie, et l'utilisateur confirme ou corrige. Une cotation très
+        petite arrive ici depuis que le seuil ne décide plus seul.
+        """
+        return [c for c in self.cotations if c.fiabilite == "a_confirmer"]
 
 
 #: Les familles de cotation, par les trois bits de poids faible de `dimtype`.
@@ -158,6 +179,20 @@ _FAMILLES: dict[int, str] = {
     5: "angulaire_3_points",
     6: "ordonnee",
 }
+
+#: Du plus sûr au moins sûr. Une cotation qui porte DEUX réserves garde la
+#: plus basse des deux, et ses deux anomalies : avant ce classement, la
+#: première réserve rencontrée court-circuitait les contrôles suivants, et une
+#: cote à la fois minuscule et surchargée d'un texte ne signalait que l'une.
+_RANG_FIABILITE: dict[str, int] = {"inexploitable": 0, "a_confirmer": 1, "mesurable": 2}
+
+
+def _degrader(actuelle: Fiabilite, proposee: Fiabilite) -> Fiabilite:
+    """Rend la moins sûre des deux. Ne remonte jamais une fiabilité."""
+    if _RANG_FIABILITE[proposee] < _RANG_FIABILITE[actuelle]:
+        return proposee
+    return actuelle
+
 
 #: Une famille dont la mesure n'est PAS une longueur. Un angle en degrés et un
 #: vecteur d'ordonnée ne se reprennent pas comme une longueur : les retenir
@@ -272,7 +307,7 @@ def _lire_une_cotation(entite: object) -> Cotation:
                     calque=calque or None,
                 )
             )
-            fiabilite = "inexploitable"
+            fiabilite = _degrader(fiabilite, "inexploitable")
         elif abs(valeur) > Decimal(str(ENVELOPPE_PLAUSIBLE)):
             anomalies.append(
                 Anomalie(
@@ -283,20 +318,43 @@ def _lire_une_cotation(entite: object) -> Cotation:
                     calque=calque or None,
                 )
             )
-            fiabilite = "inexploitable"
-        elif valeur < Decimal(str(MESURE_MINIMALE)):
+            fiabilite = _degrader(fiabilite, "inexploitable")
+        elif valeur < 0:
+            # Une longueur négative n'est pas une petite longueur : c'est une
+            # géométrie que le lecteur n'a pas comprise. La conserver « à
+            # vérifier » proposerait une quantité de signe faux à l'écran.
+            #
+            # Vérifié dans ezdxf 1.4.4 : aucun des sept outils de mesure ne
+            # rend de valeur signée — les longueurs passent par `.magnitude`
+            # et `angle_between` ramène l'angle dans [0, 360). Cette branche
+            # garde donc contre un changement en amont, et non contre un
+            # fichier. Elle est éprouvée en remplaçant l'outil de mesure
+            # d'ezdxf, parce qu'aucun DXF ne la déclenche aujourd'hui.
             anomalies.append(
                 Anomalie(
-                    "mesure_degeneree",
-                    f"La mesure {valeur} est trop petite pour être un ouvrage : "
-                    "résidu d'édition probable.",
+                    "mesure_negative",
+                    f"La mesure {valeur} est négative, ce qu'aucune longueur "
+                    "ne peut être. La géométrie n'a pas été interprétée.",
                     object_ref=object_ref or None,
                     calque=calque or None,
                 )
             )
-            fiabilite = "inexploitable"
+            fiabilite = _degrader(fiabilite, "inexploitable")
+        elif valeur < Decimal(str(SEUIL_PETITE_MESURE)):
+            anomalies.append(
+                Anomalie(
+                    "mesure_tres_petite",
+                    f"La mesure {valeur} est très petite pour un ouvrage "
+                    f"(seuil provisoire : {SEUIL_PETITE_MESURE} unité de "
+                    "dessin). Elle est conservée et demande une vérification "
+                    "humaine ; le seuil reste à confirmer sur de vrais plans.",
+                    object_ref=object_ref or None,
+                    calque=calque or None,
+                )
+            )
+            fiabilite = _degrader(fiabilite, "a_confirmer")
 
-    if fiabilite == "mesurable" and famille in _FAMILLES_NON_LINEAIRES:
+    if valeur is not None and fiabilite != "inexploitable" and famille in _FAMILLES_NON_LINEAIRES:
         anomalies.append(
             Anomalie(
                 "famille_non_lineaire",
@@ -306,9 +364,9 @@ def _lire_une_cotation(entite: object) -> Cotation:
                 calque=calque or None,
             )
         )
-        fiabilite = "a_confirmer"
+        fiabilite = _degrader(fiabilite, "a_confirmer")
 
-    if fiabilite == "mesurable" and texte is not None:
+    if valeur is not None and fiabilite != "inexploitable" and texte is not None:
         anomalies.append(
             Anomalie(
                 "texte_impose",
@@ -318,7 +376,7 @@ def _lire_une_cotation(entite: object) -> Cotation:
                 calque=calque or None,
             )
         )
-        fiabilite = "a_confirmer"
+        fiabilite = _degrader(fiabilite, "a_confirmer")
 
     return Cotation(
         object_ref=object_ref,
