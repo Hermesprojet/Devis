@@ -37,6 +37,14 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
+# Lecture des plans DXF. OPTIONNEL à dessein : `ezdxf` tire numpy et
+# fonttools, soit plusieurs dizaines de mégaoctets dont une API qui n'ouvre
+# aucun plan n'a pas l'usage. `services/lecture_dxf.py` l'importe au moment de
+# lire, et le module se charge sans lui.
+#
+# Licence MIT, version vérifiée le 2026-10-02 : voir
+# docs/adr/0007-lecture-de-plans.md.
+plans = ["ezdxf>=1.4.4,<2"]
 # `pyyaml` : les contrôles d'infrastructure (ops/tests/) lisent les
 # compositions Docker. Il arrivait jusqu'ici par les extras optionnels
 # d'uvicorn ou de fastapi, que personne n'active — donc par hasard, et absent
