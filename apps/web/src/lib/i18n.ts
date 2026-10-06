@@ -36,10 +36,13 @@ const fr: Dictionary = {
   'login.submit': 'Se connecter',
   'login.demoAccounts': 'Comptes de démonstration',
   'login.organization': 'Organisation',
-  'login.oidcSubmit': "Se connecter avec le compte de l'entreprise",
+  'login.oidcSubmit': 'Continuer vers la connexion',
   'login.oidcNotice':
-    "La connexion passe par le fournisseur d'identité de votre entreprise. Aucun mot de passe n'est conservé par Metreo.",
+    "Si votre compte utilise un mot de passe, vous le saisirez sur la page de connexion qui va s'ouvrir. Metreo ne le conserve pas.",
   'login.oidcPending': 'Connexion en cours…',
+  'login.otherAccount': 'Utiliser un autre compte',
+  'login.otherAccountHelp':
+    "Si Google vous reconnecte automatiquement, essayez ce bouton pour demander un nouvel écran de connexion. Si l'accès par e-mail n'y apparaît pas, contactez votre administrateur.",
   'login.noMethod':
     "Ce déploiement n'offre aucune connexion depuis un navigateur. Il accepte des jetons émis ailleurs.",
   'login.error.provider_refused':
@@ -49,17 +52,47 @@ const fr: Dictionary = {
     "Ce compte n'appartient à aucune organisation active. Demandez à un administrateur de vous ajouter.",
   'login.error.unknown_user':
     "Ce compte n'est pas connu de Metreo. Un administrateur doit le créer avant la première connexion.",
-  'login.error.unverified_email':
+  'login.error.email_not_verified':
     "Le fournisseur d'identité n'a pas confirmé cette adresse e-mail.",
   'login.error.expired_state':
-    'La demande de connexion a expiré. Recommencez : le bouton ci-dessus repart de zéro.',
+    'La demande de connexion a expiré. Recommencez : le bouton de connexion repart de zéro.',
   'login.error.invalid_state':
-    'Cette demande de connexion a déjà servi. Recommencez depuis le bouton ci-dessus.',
+    'Cette demande de connexion a déjà servi. Recommencez depuis le bouton de connexion.',
   'login.error.token_expired':
     "Le fournisseur d'identité a rendu une réponse déjà périmée. Recommencez.",
   'login.error.token_not_yet_valid':
     "L'horloge du fournisseur d'identité et celle du serveur divergent trop. " +
     'Recommencez ; si le refus persiste, prévenez votre administrateur.',
+  // Refus qui viennent du fournisseur d'identité ou du réseau. L'utilisateur
+  // peut agir sur certains, sur aucun autre — la phrase le dit, plutôt que de
+  // le laisser recommencer indéfiniment.
+  'login.error.account_disabled':
+    'Ce compte est désactivé. Un administrateur de votre organisation doit le réactiver.',
+  'login.error.code_rejected':
+    "Le fournisseur d'identité a refusé cette demande de connexion. Recommencez ; si le refus persiste, prévenez votre administrateur.",
+  'login.error.provider_unavailable':
+    "Le fournisseur d'identité est injoignable. Réessayez dans un instant ; si cela dure, prévenez votre administrateur.",
+  'login.error.invalid_nonce':
+    "Cette réponse n'a pas pu être rattachée à votre demande de connexion. Recommencez depuis le bouton de connexion.",
+  'login.error.invalid_token':
+    "L'identité renvoyée par le fournisseur n'a pas pu être vérifiée. Recommencez ; si cela persiste, prévenez votre administrateur.",
+
+  // Défauts de configuration du déploiement. Rien de ce que l'utilisateur fera
+  // ne les corrigera, et le lui laisser croire est le pire des deux. La phrase
+  // ne nomme aucun réglage : cet écran est public.
+  //
+  // `provider_incomplete` n'est PAS de ce groupe, bien qu'il en ait l'air : il
+  // est aussi émis quand le point d'entrée jeton répond de travers, ce qui
+  // passe. Voir `services/oidc.py`, ses trois sites d'émission.
+  'login.error.issuer_mismatch':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+  'login.error.provider_incomplete':
+    "Le fournisseur d'identité a répondu de façon incomplète. Réessayez ; si cela se répète, c'est un réglage du déploiement, et un administrateur doit le corriger.",
+  'login.error.invalid_audience':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+  'login.error.invalid_issuer':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+
   'login.error.generic': 'La connexion a échoué.',
 
   'common.loading': 'Chargement…',
