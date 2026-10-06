@@ -87,7 +87,7 @@ def _codes_de_l_api() -> set[str]:
         for noeud in ast.walk(arbre):
             if not isinstance(noeud, ast.Dict):
                 continue
-            for cle, valeur in zip(noeud.keys, noeud.values):
+            for cle, valeur in zip(noeud.keys, noeud.values, strict=False):
                 if (
                     isinstance(cle, ast.Constant)
                     and cle.value == "code"
