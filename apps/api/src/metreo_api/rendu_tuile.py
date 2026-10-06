@@ -17,7 +17,7 @@ réutilise ce qui est déjà réservé.
 
 Ce n'est donc pas une fuite — la consommation ne croît pas sans fin — mais un
 **plancher définitif** : tout processus qui a rendu une page dense en garde la
-trace jusqu'à sa mort. Un travailleur d'API qui analyse un A0 pèse ensuite un
+trace jusqu'à sa mort. Un travailleur d'API qui analyse un grand format pèse ensuite un
 demi-gigaoctet, et il le pèse pour toujours. Multiplié par le nombre de
 travailleurs, c'est la mémoire du conteneur.
 
