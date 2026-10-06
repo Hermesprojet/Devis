@@ -250,8 +250,10 @@ const fr: Dictionary = {
 
   'documents.formats':
     'PDF, PNG, JPEG, DXF, CSV, XLSX ou DOCX. Le contenu est vérifié à la réception : '
-    + 'l’extension seule ne suffit pas. Un plan AutoCAD .dwg est REFUSÉ — '
-    + 'exportez-le en DXF (le format lu par Metreo) ou en PDF.',
+    + 'l’extension seule ne suffit pas. Metreo LIT les plans DXF et PDF, et pas de '
+    + 'la même façon : un DXF porte ses cotes et son unité, un PDF demande que vous '
+    + 'désigniez deux points et déclariez leur distance réelle. Un plan AutoCAD '
+    + '.dwg est REFUSÉ — exportez-le en DXF ou en PDF.',
   'documents.readPlan': 'Lire le plan',
 
   // --- lecture d'un plan DXF ---------------------------------------------

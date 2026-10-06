@@ -28,13 +28,15 @@ import { usePermissions } from '@/lib/usePermissions'
  * Un plan DXF fait exception, et l'exception est précise : ce n'est pas le
  * fichier déposé qui s'affiche, mais un RENDU produit par le serveur, servi
  * par sa propre route et chargé comme une image inerte. Voir `LecturePlan`.
- * Seul le DXF est lu dans cette tranche — un PDF ne s'affiche pas.
+ * Le DXF et le PDF sont lus tous les deux, et pas de la même façon : un DXF
+ * porte ses cotes et son unité, un PDF demande une échelle déclarée par un
+ * humain.
  */
 
 /** Les catégories que le premier usage réclame, et rien de plus. */
 const CATEGORIES = ['CCTP', 'Métré', 'Plan', 'Bordereau', 'Autre'] as const
 
-const TYPES_LISIBLES: Record<string, string> = {
+const ETIQUETTES_DE_TYPE: Record<string, string> = {
   'application/pdf': 'PDF',
   'image/png': 'PNG',
   'image/jpeg': 'JPEG',
@@ -57,17 +59,28 @@ const TYPES_LISIBLES: Record<string, string> = {
  */
 const EXTENSIONS_SUGGEREES = '.pdf,.png,.jpg,.jpeg,.dxf,.csv,.xlsx,.docx'
 
-/** Le type que le serveur donne à un plan DXF — le seul plan qu'il sache lire. */
-const TYPE_DXF = 'image/vnd.dxf'
+/**
+ * Les types que le serveur sait LIRE comme un plan.
+ *
+ * Le PDF s'y est ajouté quand l'écran a su l'afficher — et pas avant : le lien
+ * ne doit promettre que ce qui existe. La liste est volontairement une
+ * constante locale et non une déduction : un `startsWith('image/')` ferait
+ * apparaître « Lire le plan » sur une photo de chantier.
+ *
+ * Tenue d'accord avec `TYPES_LISIBLES` de `services/lecture_de_plan.py`, qui
+ * est l'autorité : le serveur refuse ce qu'il ne sait pas lire, et un lien de
+ * trop mène à un refus au lieu d'un plan.
+ */
+const TYPES_DE_PLAN_LISIBLES = ['image/vnd.dxf', 'application/pdf']
 
 /**
  * Le passage vers l'écran de lecture d'un plan.
  *
  * Un `Link` et non un `button` : c'est une NAVIGATION, et un lien se garde,
  * se transmet et s'ouvre dans un onglet — ce qu'aucun bouton ne sait faire.
- * Il n'apparaît que sur une révision dont le serveur a dit qu'elle est un
- * DXF : proposer « Lire le plan » sur un PDF promettrait un affichage que
- * cette tranche ne sait pas produire.
+ * Il n'apparaît que sur une révision dont le serveur a dit qu'il sait la lire :
+ * proposer « Lire le plan » sur un classeur promettrait un affichage qui
+ * n'existe pas.
  *
  * Le nom du fichier voyage en paramètre de requête, pour que l'écran de
  * lecture dise de quelle pièce il parle. Il n'est qu'un confort : l'écran
@@ -80,7 +93,7 @@ function LienVersLePlan({
   projectId: string
   revision: DocumentRevision
 }) {
-  if (revision.media_type !== TYPE_DXF) return null
+  if (!TYPES_DE_PLAN_LISIBLES.includes(revision.media_type)) return null
   const requete = `?fichier=${encodeURIComponent(revision.original_filename)}`
   return (
     <Link
@@ -310,7 +323,7 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
                         {doc.status === 'archived' && <span className="badge">archivé</span>}
                       </td>
                       <td className="mono">{derniere?.original_filename ?? '—'}</td>
-                      <td>{derniere ? (TYPES_LISIBLES[derniere.media_type] ?? '—') : '—'}</td>
+                      <td>{derniere ? (ETIQUETTES_DE_TYPE[derniere.media_type] ?? '—') : '—'}</td>
                       <td className="num">{derniere ? taille(derniere.byte_size) : '—'}</td>
                       <td>{derniere ? date(derniere.created_at) : '—'}</td>
                       <td className="muted" style={{ fontSize: 12 }}>

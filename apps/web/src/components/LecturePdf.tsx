@@ -240,16 +240,17 @@ export function LecturePdf({
   }
 
   return (
-    <section className="card">
+    <section className="card" data-testid="pdf-lecture">
       <h2>{t('plan.pdf.titre')}</h2>
       <ErrorNotice error={erreur} />
 
       <EnTetePdf plan={plan} calibration={calibrationDeLaPage} />
 
       {plan.pages > 1 && (
-        <nav className="pdf-pages" aria-label={t('plan.pdf.pages')}>
+        <nav className="pdf-pages" aria-label={t('plan.pdf.pages')} data-testid="pdf-pages">
           <button
             type="button"
+            data-testid="pdf-page-precedente"
             disabled={page <= 1}
             onClick={() => {
               setPage((n) => n - 1)
@@ -258,13 +259,14 @@ export function LecturePdf({
           >
             ‹
           </button>
-          <span>
+          <span data-testid="pdf-page-courante">
             {t('plan.pdf.pageSur')
               .replace('{page}', String(page))
               .replace('{total}', String(plan.pages))}
           </span>
           <button
             type="button"
+            data-testid="pdf-page-suivante"
             disabled={page >= plan.pages}
             onClick={() => {
               setPage((n) => n + 1)
@@ -281,6 +283,7 @@ export function LecturePdf({
           <button
             key={choix.cle}
             type="button"
+            data-testid={`pdf-outil-${choix.cle}`}
             className={outil === choix.cle ? 'primary' : undefined}
             aria-pressed={outil === choix.cle}
             onClick={() => setOutil(choix.cle)}
@@ -299,11 +302,15 @@ export function LecturePdf({
 
       {apercu.enCours && <p className="muted">{t('common.loading')}</p>}
       {apercu.url && (
-        <div className="pdf-apercu" onClick={cliquerSurLApercu}>
+        <div className="pdf-apercu" data-testid="pdf-apercu" onClick={cliquerSurLApercu}>
           {/* Chargé comme IMAGE, jamais en ligne : un PNG est inerte, et le
               rester explicitement vaut mieux que le rester par hasard. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={apercu.url} alt={t('plan.pdf.apercuAlt')} />
+          <img
+            src={apercu.url}
+            alt={t('plan.pdf.apercuAlt')}
+            data-testid="pdf-apercu-image"
+          />
           <Surlignages
             fragments={textes?.fragments ?? []}
             mesures={mesuresDeLaPage}
@@ -413,7 +420,7 @@ export function LecturePdf({
       />
 
       {textes && (
-        <p className="muted">
+        <p className="muted" data-testid="pdf-textes-lus">
           {t('plan.pdf.textesLus')
             .replace('{rendus}', String(textes.fragments.length))
             .replace('{total}', String(textes.total))}
@@ -431,7 +438,7 @@ function EnTetePdf({
   calibration: CalibrationDePlan | null
 }) {
   return (
-    <dl className="pdf-entete">
+    <dl className="pdf-entete" data-testid="pdf-entete">
       <div>
         <dt>{t('plan.pdf.pagesLabel')}</dt>
         <dd>{plan.pages}</dd>
@@ -445,10 +452,10 @@ function EnTetePdf({
         {/* Le point le plus important de cet en-tête : sans échelle confirmée,
             aucune mesure n'est possible, et le dire d'emblée évite de laisser
             quelqu'un chercher pourquoi le bouton « mesurer » ne donne rien. */}
-        <dd>
+        <dd data-testid="pdf-echelle">
           {calibration ? (
             <>
-              <strong>{calibration.facteur_lisible}</strong>
+              <strong data-testid="pdf-facteur">{calibration.facteur_lisible}</strong>
               <br />
               <span className="muted">{calibration.motif}</span>
             </>
@@ -481,11 +488,22 @@ function Surlignages({
             <rect
               key={`t${rang}`}
               className="pdf-texte"
+              data-testid="pdf-texte"
+              data-texte={fragment.texte}
               x={Number(c.x0)}
               y={Number(c.y0)}
               width={Number(c.x1) - Number(c.x0)}
               height={Number(c.y1) - Number(c.y0)}
-            />
+            >
+              {/*
+                Le texte lu, porté par le surlignage lui-même. À 2,4 pixels de
+                haut, le propriétaire voit QU'IL Y A une information sans
+                pouvoir la lire : ce `<title>` la lui donne au survol, et la
+                donne aussi aux lecteurs d'écran, pour qui un rectangle sans
+                nom n'existe pas.
+              */}
+              <title>{fragment.texte}</title>
+            </rect>
           )
         })}
       {mesures.map((mesure) => (
@@ -532,10 +550,10 @@ function Loupe({
   onFermer: () => void
 }) {
   return (
-    <div className="pdf-loupe-panneau">
+    <div className="pdf-loupe-panneau" data-testid="pdf-loupe-panneau">
       <div className="pdf-loupe-entete">
         <strong>{t('plan.pdf.loupe')}</strong>
-        <button type="button" onClick={onFermer}>
+        <button type="button" data-testid="pdf-loupe-fermer" onClick={onFermer}>
           {t('common.close')}
         </button>
       </div>
@@ -545,9 +563,9 @@ function Loupe({
       {enCours && <p className="muted">{t('plan.pdf.loupeEnCours')}</p>}
       <ErrorNotice error={erreur} />
       {url && (
-        <div className="pdf-loupe-image" onClick={onCliquer}>
+        <div className="pdf-loupe-image" data-testid="pdf-loupe-image" onClick={onCliquer}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={url} alt={t('plan.pdf.loupeAlt')} />
+          <img src={url} alt={t('plan.pdf.loupeAlt')} data-testid="pdf-loupe-rendu" />
           <svg className="pdf-surlignages" viewBox="0 0 1 1" preserveAspectRatio="none">
             {points.map((point, rang) => (
               <circle
@@ -596,6 +614,7 @@ function FormulaireDeCalibration({
   return (
     <form
       className="pdf-formulaire"
+      data-testid="pdf-formulaire-calibration"
       onSubmit={(evenement) => {
         evenement.preventDefault()
         onValider(distance.trim(), unite, motif.trim())
@@ -630,7 +649,12 @@ function FormulaireDeCalibration({
         placeholder={t('plan.pdf.motifExemple')}
         required
       />
-      <button className="primary" type="submit" disabled={occupe}>
+      <button
+        className="primary"
+        type="submit"
+        data-testid="pdf-calibrer"
+        disabled={occupe}
+      >
         {occupe ? t('common.saving') : t('plan.pdf.confirmer')}
       </button>
     </form>
@@ -654,6 +678,7 @@ function FormulaireDeMesure({
   return (
     <form
       className="pdf-formulaire"
+      data-testid="pdf-formulaire-mesure"
       onSubmit={(evenement) => {
         evenement.preventDefault()
         onValider(libelle.trim())
@@ -678,7 +703,12 @@ function FormulaireDeMesure({
         placeholder={t('plan.pdf.libelleExemple')}
         required
       />
-      <button className="primary" type="submit" disabled={occupe || sansCalibration}>
+      <button
+        className="primary"
+        type="submit"
+        data-testid="pdf-mesurer"
+        disabled={occupe || sansCalibration}
+      >
         {occupe ? t('common.saving') : t('plan.pdf.mesurer')}
       </button>
     </form>
@@ -698,7 +728,7 @@ function ListeDesMesures({
     return <p className="muted">{t('plan.pdf.aucuneMesure')}</p>
   }
   return (
-    <table className="pdf-mesures">
+    <table className="pdf-mesures" data-testid="pdf-mesures">
       <caption>{t('plan.pdf.mesuresPrises')}</caption>
       <thead>
         <tr>
@@ -761,8 +791,8 @@ function LigneDeMesurePdf({
   }
 
   return (
-    <tr>
-      <td>
+    <tr data-testid="pdf-mesure">
+      <td data-testid="pdf-libelle">
         {mesure.libelle}
         <br />
         <span className="muted">
@@ -771,7 +801,7 @@ function LigneDeMesurePdf({
         </span>
       </td>
       <td>
-        <strong>
+        <strong data-testid="pdf-valeur">
           {mesure.valeur} {mesure.unite}
         </strong>
         {/* L'incertitude, dans la MÊME unité que la valeur. En pourcentage,
@@ -783,7 +813,7 @@ function LigneDeMesurePdf({
         {mesure.valeur_corrigee && (
           <>
             <br />
-            <span className="badge">
+            <span className="badge" data-testid="pdf-valeur-retenue">
               {t('plan.pdf.corrigeeEn')} {mesure.valeur_corrigee}
             </span>
           </>
@@ -791,6 +821,7 @@ function LigneDeMesurePdf({
       </td>
       <td>
         <span
+          data-testid="pdf-fiabilite"
           className={mesure.fiabilite === 'mesurable' ? 'badge' : 'badge warning'}
         >
           {mesure.fiabilite === 'mesurable'
@@ -809,23 +840,32 @@ function LigneDeMesurePdf({
           )}
         </div>
       </td>
-      <td>{mesure.decision ? t(`plan.decision.${mesure.decision}`) : '—'}</td>
+      <td data-testid="pdf-decision">
+        {mesure.decision ? t(`plan.decision.${mesure.decision}`) : '—'}
+      </td>
       <td>
         <ErrorNotice error={erreur} />
-        <button type="button" onClick={onMontrer}>
+        <button type="button" data-testid="pdf-montrer" onClick={onMontrer}>
           {t('plan.pdf.montrer')}
         </button>
         <input
           aria-label={t('plan.pdf.motifDecision')}
+          data-testid="pdf-motif-decision"
           value={motif}
           onChange={(e) => setMotif(e.target.value)}
           placeholder={t('plan.pdf.motifDecision')}
         />
-        <button type="button" disabled={occupe || !motif.trim()} onClick={() => decider('accepted')}>
+        <button
+          type="button"
+          data-testid="pdf-confirmer-mesure"
+          disabled={occupe || !motif.trim()}
+          onClick={() => decider('accepted')}
+        >
           {t('plan.pdf.confirmerMesure')}
         </button>
         <input
           aria-label={t('plan.pdf.valeurCorrigee')}
+          data-testid="pdf-correction"
           value={correction}
           onChange={(e) => setCorrection(e.target.value)}
           placeholder={t('plan.pdf.valeurCorrigee')}
@@ -833,6 +873,7 @@ function LigneDeMesurePdf({
         />
         <button
           type="button"
+          data-testid="pdf-corriger"
           disabled={occupe || !motif.trim() || !correction.trim()}
           onClick={() => decider('corrected')}
         >

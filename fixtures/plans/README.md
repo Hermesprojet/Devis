@@ -34,4 +34,20 @@ modèle revient vide — et ce bloc fait trois mille lignes qu'aucun relecteur n
 lira. `scripts/fabriquer_plans_de_test.py` l'écrit en dix lignes lisibles, et
 le banc Playwright l'appelle avant de servir quoi que ce soit.
 
+## `plan_cote.pdf` — fabriqué, pas commité
+
+Un plan PDF de **deux pages** de 300 × 220 points, neuf textes sur la première
+et cinq sur la seconde, chacun à une position connue en points PostScript.
+
+**Deux pages, et aux textes distincts**, parce que la navigation entre pages
+est une des choses qu'un écran peut faire semblant de faire : changer le numéro
+affiché et resservir la même image. « DETAIL B » n'existe que sur la seconde,
+et c'est ce mot que le parcours cherche après avoir cliqué sur « page
+suivante ».
+
+Les octets sont écrits à la main par `scripts/fabriquer_pdf_de_test.py`, table
+d'offsets comprise — la **même** fabrique que les tests du dépôt et que
+l'épreuve qui tourne dans l'image, pour qu'il n'y ait pas deux vérités sur ce
+que contient la fixture.
+
     python3 scripts/fabriquer_plans_de_test.py

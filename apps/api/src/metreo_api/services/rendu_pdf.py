@@ -275,40 +275,34 @@ def cle_de_l_apercu(organization_id: str, revision_id: str, page: int = 1) -> st
     return f"{DOSSIER_RENDUS}/{organization_id}/{revision_id}-p{page}.png"
 
 
-#: La marge autour d'une zone, en multiples de la hauteur de cette zone.
+#: La marge autour d'une zone demandée : AUCUNE, et c'est une décision.
 #:
-#: **Pour une boîte de texte, c'est huit fois la hauteur du texte**, et c'est
-#: le cas pour lequel ce nombre a été choisi : une marge d'une demie autour
-#: d'un « 1040 » de 11 points donne une tuile qui montre « - 1040 E » et pas un
-#: trait du dessin. Le propriétaire y lit la cote sans pouvoir juger CE QU'ELLE
-#: cote, ce qui est précisément la question qu'on lui pose. Huit fois fait
-#: apparaître les lignes d'attache et l'ouvrage mesuré, et la hauteur du texte
-#: est un bon étalon parce qu'elle suit l'échelle du dessin : un plan tracé
-#: plus petit a des textes plus petits ET des ouvrages plus petits.
+#: **Ce qui a été essayé, et pourquoi c'était faux.** Une tuile élargissait la
+#: zone de huit fois sa hauteur, pour que le propriétaire voie l'ouvrage coté
+#: et pas seulement le nombre — sans marge, la tuile d'un « 1040 » de 11 points
+#: montre « - 1040 E » et pas un trait du dessin.
 #:
-#: **Mais la zone n'est pas toujours une boîte de texte**, et c'est ce que la
-#: première version oubliait. La loupe de l'écran demande 5 % de la page ;
-#: huit fois 5 % font 40 % de marge de chaque côté, et la tuile rendait alors
-#: 51 à 67 % × 85 % de la page — mesuré — soit **1,47 à 1,54 mm par pixel,
-#: moins fin que l'aperçu lui-même** (0,594 à 0,845). Cliquer pour agrandir
-#: rendait l'image plus grossière. D'où le plafond ci-dessous.
-MARGE_DE_TUILE = 8.0
-
-#: Le gain minimal, en finesse, qu'une tuile doit apporter sur l'aperçu.
+#: L'étalon était bon pour la boîte d'un texte, et faux pour tout le reste. La
+#: loupe de l'écran demande 5 % de la page : huit fois 5 % font 40 % de marge
+#: de chaque côté, et la tuile rendait 51 à 67 % × 85 % de la page sur 512
+#: pixels — **1,47 à 1,54 mm par pixel, moins fin que l'aperçu lui-même**.
+#: Plafonner la marge corrigeait la finesse et laissait le vrai défaut intact :
+#: **l'écran, lui, croyait que l'image couvrait la zone demandée.** Il y plaçait
+#: les clics, y dessinait les points, et en déduisait `resolution_du_pointage`,
+#: c'est-à-dire l'incertitude de TOUTES les mesures. Les trois étaient faux du
+#: même facteur, et c'est le parcours navigateur qui l'a montré : deux clics
+#: aux cinquièmes de la loupe donnaient 9 points d'écart là où ils en désignent
+#: 101 sur un A0.
 #:
-#: Sur un A0, une tuile de `COTE_TUILE` pixels est aussi fine que l'aperçu
-#: quand elle montre `COTE_TUILE / COTE_AFFICHEE` de la page, soit 25,6 %.
-#: Au-delà, elle est plus GROSSIÈRE, et l'agrandissement travaille contre
-#: lui-même. Exiger un facteur quatre ramène la fraction visible à 6,4 %, ce
-#: qui donne 0,15 à 0,21 mm par pixel sur les plans réels — l'ordre de
-#: grandeur où une cote se relit.
+#: **La marge appartient donc à l'appelant**, et l'écran la prenait déjà : il ne
+#: demande jamais la boîte nue d'une mesure, il demande une fenêtre de 5 % de
+#: page CENTRÉE sur elle. Rendre exactement la zone demandée est la seule règle
+#: qui garantisse que ce que l'écran croit afficher est ce qui est affiché.
 #:
-#: Le plafond qui en découle est calculé PAR PAGE, et non écrit en fraction :
-#: `facteur_de_rendu` ne réduit pas une page plus petite que `COTE_AFFICHEE`,
-#: donc 6,4 % d'une page de 300 points serait dix-neuf points — un plafond
-#: absurde, qui supprimerait toute marge là où elle ne coûte rien. La
-#: référence est la finesse de l'aperçu de CETTE page.
-GAIN_MINIMAL_SUR_L_APERCU = 4.0
+#: Conservée comme constante nulle, et non supprimée : c'est elle qui porte la
+#: raison, et le prochain qui voudra « juste un peu de contexte » doit lire
+#: pourquoi ce contexte se prend à l'autre bout.
+MARGE_DE_TUILE = 0.0
 
 
 def rendre_une_zone(
@@ -390,35 +384,13 @@ def rendre_une_zone(
             "La page ne déclare aucune dimension exploitable : il n'y a rien à rendre.",
         )
 
-    # La zone, élargie de sa marge et ramenée dans la page. La marge est la
-    # MÊME dans les deux directions — en fraction de la page, donc corrigée du
-    # rapport de forme — sans quoi une cote large et plate recevrait un
-    # bandeau horizontal et aucun contexte vertical.
-    #
-    # Et elle est PLAFONNÉE, par ce que la tuile doit encore apporter : une
-    # marge de huit fois la hauteur convient à la boîte d'un texte, qui fait
-    # deux millièmes de page ; appliquée aux 5 % que demande la loupe, elle
-    # faisait rendre 85 % de la page sur 512 pixels, c'est-à-dire plus
-    # grossier que l'aperçu. Le plafond porte sur l'étendue FINALE, demande
-    # comprise : une zone déjà plus large que le plafond n'est pas rétrécie —
-    # elle ne reçoit simplement aucune marge, et `hauteur_de_la_zone_px` dira à
-    # l'écran que le texte y reste illisible.
-    #
-    # Le calcul se fait EN POINTS, et non en fractions de page : la marge est
-    # la même distance physique dans les deux directions, et c'est le grand
-    # côté en points qui fixe le facteur. Raisonner en fractions mélangerait
-    # une fraction de largeur et une fraction de hauteur dans le même `max`.
-    grand_cote_demande_pt = max((x1 - x0) * largeur_pt, (y1 - y0) * hauteur_pt)
-    plafond_pt = max(
-        grand_cote_demande_pt,
-        cote / (GAIN_MINIMAL_SUR_L_APERCU * facteur_de_rendu(largeur_pt, hauteur_pt)),
-    )
-    marge_pt = min(
-        (y1 - y0) * hauteur_pt * MARGE_DE_TUILE,
-        max(0.0, (plafond_pt - grand_cote_demande_pt) / 2.0),
-    )
-    marge_x = marge_pt / largeur_pt
-    marge_y = marge_pt / hauteur_pt
+    # La zone rendue EST la zone demandée, ramenée dans la page. Rien de plus,
+    # et c'est la seule propriété dont l'écran a besoin : il place les clics,
+    # dessine les points et calcule `resolution_du_pointage` en supposant que
+    # l'image couvre `zone`. Toute marge ajoutée ici rendrait ces trois calculs
+    # faux du même facteur, en silence. Voir `MARGE_DE_TUILE`.
+    marge_x = MARGE_DE_TUILE
+    marge_y = MARGE_DE_TUILE
     zx0 = max(0.0, x0 - marge_x)
     zy0 = max(0.0, y0 - marge_y)
     zx1 = min(1.0, x1 + marge_x)
