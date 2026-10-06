@@ -1,0 +1,316 @@
+"""Éprouve, DANS l'image construite, que la lecture d'un plan fonctionne.
+
+    python3 scripts/verifier_image_de_lecture.py
+
+Ce contrôle existe à cause d'un défaut précis : `infra/api.Dockerfile`
+installait `apps/api[postgres]` SANS l'extra `plans`. L'image démarrait,
+répondait à tous ses points de santé, servait l'écran « Lire le plan » — et
+tombait sur un `ModuleNotFoundError` au premier plan déposé. Aucun des
+contrôles existants ne pouvait le voir : ils éprouvent le code, pas l'image.
+
+Vérifier que `ezdxf` s'importe ne suffirait pas davantage. On lit donc un
+VRAI fichier, on compare la cote à une valeur connue d'avance, on rend le
+dessin, et on vérifie qu'un PDF est refusé par un code nommé plutôt que par
+une exception quelconque.
+
+Ce script ne touche ni base, ni réseau, ni volume de stockage : il écrit ses
+fixtures dans un répertoire temporaire, les relit, et les jette. Il tourne
+donc à l'identique dans l'image, dans la CI et sur un poste.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+from decimal import Decimal
+from pathlib import Path
+from types import SimpleNamespace
+
+#: La cote posée dans le plan d'essai, en millimètres. Connue d'avance : c'est
+#: toute la différence entre « la lecture a rendu quelque chose » et « la
+#: lecture a rendu la bonne valeur ».
+COTE_ATTENDUE = Decimal("5000")
+
+#: Tolérance de comparaison. La cote est recalculée par ezdxf à partir des
+#: points de définition : un flottant peut rendre 4999.999999999999.
+TOLERANCE = Decimal("0.001")
+
+_echecs: list[str] = []
+_controles = 0
+
+
+def exiger(condition: bool, intitule: str, constat: str) -> None:
+    """Enregistre un contrôle, et ne s'arrête pas au premier échec.
+
+    Rendre la main sur le premier défaut cacherait les suivants ; un
+    diagnostic complet vaut mieux qu'un diagnostic rapide.
+    """
+    global _controles
+    _controles += 1
+    if condition:
+        print(f"  ok   {intitule} — {constat}")
+    else:
+        print(f"  NON  {intitule} — {constat}")
+        _echecs.append(f"{intitule} : {constat}")
+
+
+def fabriquer_le_plan(dossier: Path) -> Path:
+    """Un mur coté de 5 000 mm, en R2000 pour que `$INSUNITS` soit exporté.
+
+    R12 n'écrit pas `$INSUNITS`, et un plan sans unité n'est pas mesurable :
+    le plan d'essai doit donc être au moins R2000, sans quoi ce contrôle
+    prouverait le contraire de ce qu'il veut prouver.
+    """
+    import ezdxf
+
+    document = ezdxf.new("R2000", setup=False)
+    document.header["$INSUNITS"] = 4  # millimètres
+    document.layers.add("MURS")
+    document.layers.add("COTATIONS")
+    espace = document.modelspace()
+    espace.add_line((0, 0), (5000, 0), dxfattribs={"layer": "MURS"})
+    espace.add_line((0, 0), (0, 2500), dxfattribs={"layer": "MURS"})
+    cotation = espace.add_linear_dim(
+        base=(0, -800), p1=(0, 0), p2=(5000, 0), dxfattribs={"layer": "COTATIONS"}
+    )
+    cotation.render()
+
+    chemin = dossier / "mur_cote.dxf"
+    document.saveas(chemin)
+    return chemin
+
+
+def fabriquer_le_pdf(dossier: Path) -> Path:
+    """Le plus petit PDF valide qui soit : il n'a qu'à porter sa signature."""
+    chemin = dossier / "plan.pdf"
+    chemin.write_bytes(
+        b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\n"
+        b"trailer<</Root 1 0 R>>\n%%EOF\n"
+    )
+    return chemin
+
+
+def controler_les_bibliotheques() -> bool:
+    """Le minimum : sans elles, rien d'autre n'a de sens."""
+    print("1. Les bibliothèques de lecture sont dans l'image")
+    try:
+        import ezdxf
+    except ModuleNotFoundError as erreur:
+        exiger(False, "ezdxf importable", f"absent de l'image — {erreur}")
+        return False
+    exiger(True, "ezdxf importable", f"version {ezdxf.__version__}")
+
+    try:
+        import PIL
+    except ModuleNotFoundError as erreur:
+        # Pillow est une dépendance DURE du module de dessin d'ezdxf :
+        # `ezdxf/addons/drawing/frontend.py` fait `import PIL.Image` sans
+        # garde. Son absence ne se voit qu'au rendu.
+        exiger(False, "Pillow importable", f"absent de l'image — {erreur}")
+        return False
+    exiger(True, "Pillow importable", f"version {PIL.__version__}")
+    return True
+
+
+def controler_la_lecture(plan: Path) -> None:
+    """La cote lue est-elle la cote posée ?"""
+    from metreo_api.services.lecture_dxf import lire
+
+    print("2. La lecture d'un DXF rend la cote attendue")
+    constat = lire(plan, situer=True)
+
+    exiger(not constat.refuse, "le plan n'est pas refusé", f"refuse={constat.refuse}")
+    exiger(
+        constat.unite_source == "mm",
+        "l'unité du document est lue",
+        f"unite_source={constat.unite_source!r}, $INSUNITS={constat.insunits}",
+    )
+    exiger(
+        len(constat.cotations) == 1,
+        "une cotation et une seule est récoltée",
+        f"{len(constat.cotations)} cotation(s)",
+    )
+    if not constat.cotations:
+        return
+
+    cotation = constat.cotations[0]
+    valeur = cotation.valeur
+    exiger(
+        valeur is not None and abs(valeur - COTE_ATTENDUE) < TOLERANCE,
+        "la valeur lue est celle qui a été posée",
+        f"{valeur} mm, attendu {COTE_ATTENDUE} mm",
+    )
+    exiger(
+        cotation.fiabilite == "mesurable",
+        "la cotation est exploitable",
+        f"fiabilite={cotation.fiabilite!r}, anomalies={[a.code for a in cotation.anomalies]}",
+    )
+    exiger(
+        cotation.famille == "lineaire",
+        "la famille est conservée",
+        f"famille={cotation.famille!r}",
+    )
+    exiger(
+        bool(cotation.object_ref),
+        "la cotation porte son handle, donc sa citation est ancrable",
+        f"object_ref={cotation.object_ref!r}, calque={cotation.calque!r}",
+    )
+    cadre = cotation.cadre
+    exiger(
+        cadre is not None
+        and all(0.0 <= c <= 1.0 for c in (cadre.x0, cadre.y0, cadre.x1, cadre.y1)),
+        "la cotation est située dans l'image, en coordonnées normalisées",
+        f"cadre={cadre}",
+    )
+
+
+def controler_le_rendu(plan: Path) -> None:
+    """Le dessin arrive-t-il jusqu'à une image affichable ?"""
+    from metreo_api.services.rendu_de_plan import rendre
+
+    print("3. Le rendu produit un SVG affichable")
+    rendu = rendre(plan)
+
+    exiger(
+        rendu.svg.lstrip().startswith("<svg") or "<svg" in rendu.svg[:512],
+        "le rendu est bien un SVG",
+        f"{len(rendu.svg)} octets, {rendu.entites_rendues} entités",
+    )
+    exiger("viewBox" in rendu.svg, "le SVG garde son viewBox", "viewBox présent")
+    exiger(
+        'width="' in rendu.svg and 'height="' in rendu.svg,
+        "le SVG porte une taille en pixels",
+        # Sans elle, une image sans taille intrinsèque dans une balise `img`
+        # à `auto` n'a AUCUNE taille : le plan est dans la page, et invisible.
+        "width et height présents",
+    )
+    exiger(
+        rendu.entites_rendues > 0,
+        "des entités ont réellement été dessinées",
+        f"{rendu.entites_rendues} entités",
+    )
+
+
+def controler_le_refus_du_pdf(pdf: Path) -> None:
+    """Un PDF doit être refusé en le disant, pas en tombant."""
+    from metreo_api.services.document_storage import detecter_type
+    from metreo_api.services.lecture_de_plan import PlanNonLisible, verifier_que_cest_un_plan
+
+    print("4. Un PDF est refusé par un code nommé")
+    type_reel = detecter_type(pdf, pdf.stat().st_size)
+    exiger(
+        type_reel == "application/pdf",
+        "le type est lu dans les octets, pas dans l'extension",
+        f"type réel={type_reel!r}",
+    )
+
+    revision = SimpleNamespace(media_type=type_reel)
+    try:
+        verifier_que_cest_un_plan(revision)  # type: ignore[arg-type]
+    except PlanNonLisible as refus:
+        exiger(
+            refus.code == "type_non_lisible",
+            "le refus porte un code stable",
+            f"code={refus.code!r}",
+        )
+    else:
+        exiger(False, "le PDF est refusé", "la lecture l'a ACCEPTÉ — défaut grave")
+
+
+def controler_les_fixtures(dossier: Path) -> None:
+    """Les trois fichiers commités, relus par l'image elle-même.
+
+    Ils couvrent ce que le plan fabriqué ne couvre pas : un plan sans unité,
+    et un fichier cassé. Un lecteur qui tombe sur un fichier tronqué au lieu
+    de le refuser en le nommant est un lecteur qu'on ne peut pas exposer à
+    des fichiers venus de l'extérieur.
+    """
+    from metreo_api.services.lecture_dxf import lire
+
+    print(f"5. Les fixtures commitées se relisent dans l'image ({dossier})")
+
+    nominal = dossier / "mur_simple.dxf"
+    if nominal.exists():
+        constat = lire(nominal)
+        exiger(
+            not constat.refuse and constat.unite_source == "mm",
+            "mur_simple.dxf : lecture nominale",
+            f"refuse={constat.refuse}, unite={constat.unite_source!r}, "
+            f"{len(constat.cotations)} cotation(s)",
+        )
+    else:
+        exiger(False, "mur_simple.dxf présent", f"introuvable dans {dossier}")
+
+    sans_unites = dossier / "sans_unites.dxf"
+    if sans_unites.exists():
+        constat = lire(sans_unites)
+        codes = [a.code for a in constat.anomalies]
+        exiger(
+            constat.unite_source is None and bool(codes),
+            "sans_unites.dxf : l'unité absente est signalée, pas supposée",
+            f"unite={constat.unite_source!r}, anomalies={codes}",
+        )
+    else:
+        exiger(False, "sans_unites.dxf présent", f"introuvable dans {dossier}")
+
+    tronque = dossier / "tronque.dxf"
+    if tronque.exists():
+        constat = lire(tronque)
+        motif = constat.motif_du_refus
+        exiger(
+            constat.refuse and motif is not None,
+            "tronque.dxf : le fichier incomplet est refusé en nommant la cause",
+            f"refuse={constat.refuse}, motif={motif.code if motif else None!r}",
+        )
+    else:
+        exiger(False, "tronque.dxf présent", f"introuvable dans {dossier}")
+
+
+def main() -> int:
+    fixtures: Path | None = None
+    arguments = sys.argv[1:]
+    if arguments:
+        if arguments[0] != "--fixtures" or len(arguments) != 2:
+            print(__doc__)
+            print("usage : verifier_image_de_lecture.py [--fixtures RÉPERTOIRE]")
+            return 2
+        fixtures = Path(arguments[1])
+
+    print("Épreuve de l'image : lire un plan, refuser ce qui ne se lit pas")
+    print(f"python {sys.version.split()[0]} — {sys.executable}")
+    print()
+
+    if not controler_les_bibliotheques():
+        print()
+        print("ÉCHEC : les bibliothèques de lecture ne sont pas dans cet environnement.")
+        print("Cause la plus probable : l'extra `plans` n'a pas été installé.")
+        return 1
+
+    with tempfile.TemporaryDirectory(prefix="metreo-epreuve-") as brouillon:
+        dossier = Path(brouillon)
+        plan = fabriquer_le_plan(dossier)
+        print(f"  plan d'essai : {plan.stat().st_size} octets")
+        print()
+        controler_la_lecture(plan)
+        print()
+        controler_le_rendu(plan)
+        print()
+        controler_le_refus_du_pdf(fabriquer_le_pdf(dossier))
+
+    if fixtures is not None:
+        print()
+        controler_les_fixtures(fixtures)
+
+    print()
+    if _echecs:
+        print(f"ÉCHEC : {len(_echecs)} contrôle(s) sur {_controles} n'ont pas passé.")
+        for echec in _echecs:
+            print(f"  - {echec}")
+        return 1
+    print(f"Les {_controles} contrôles passent : cette image sait lire un plan.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
