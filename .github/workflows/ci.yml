@@ -382,6 +382,48 @@ jobs:
             || { echo "Le port de diagnostic n'est pas sur la boucle locale" >&2; exit 1; }
           echo "surcouche derrière proxy : aucun port public, diagnostic en 127.0.0.1"
 
+      - name: Composition jetable de restauration valide
+        # La seconde pile d'un exercice de restauration ne doit être joignable
+        # de nulle part : aucun port publié, aucune étiquette de proxy. Les
+        # deux marques `!override` sont ce qui le garantit, et seule une
+        # résolution réelle les éprouve.
+        env:
+          PUBLIC_HOST: http://app.example.invalid
+          PUBLIC_DOMAIN: app.example.invalid
+          PUBLIC_ORIGIN: https://app.example.invalid
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: valeur-factice-de-ci
+          POSTGRES_DB: ci
+          METREO_JWT_SECRET: valeur-factice-de-ci-0123456789abcdef
+          METREO_OIDC_ISSUER: https://issuer.example.invalid
+          METREO_OIDC_CLIENT_ID: ci
+          METREO_OIDC_CLIENT_SECRET: valeur-factice-de-ci
+          METREO_OIDC_REDIRECT_URI: https://app.example.invalid/
+          API_IMAGE: metreo-api:ci
+          WEB_IMAGE: metreo-web:ci
+        run: |
+          # Les deux montages documentés : sans et avec la surcouche derrière
+          # proxy. La jetable doit neutraliser chacun, pas seulement le second.
+          for base in "" "-f infra/docker-compose.derriere-proxy.yml"; do
+            # `$base` est volontairement scindé en deux mots.
+            # shellcheck disable=SC2086
+            rendu=$(docker compose --project-name ci-jetable \
+              -f infra/docker-compose.staging.yml $base \
+              -f infra/docker-compose.jetable.yml config)
+            if echo "$rendu" | grep -qE '^\s+published:'; then
+              echo "La pile jetable (${base:-sans proxy}) publie encore un port :" >&2
+              echo "$rendu" | grep -B3 -E '^\s+published:' >&2; exit 1
+            fi
+            # Toute étiquette `traefik.*`, pas seulement `traefik.enable` : un
+            # routeur sans `enable` reste inerte, mais une règle `Host()` qui
+            # traîne dans le rendu est un montage qu'on ne comprend plus.
+            if echo "$rendu" | grep -q 'traefik\.'; then
+              echo "La pile jetable (${base:-sans proxy}) porte encore des étiquettes Traefik :" >&2
+              echo "$rendu" | grep 'traefik\.' >&2; exit 1
+            fi
+            echo "pile jetable (${base:-sans proxy}) : aucun port publié, aucune étiquette de proxy"
+          done
+
       - name: Configuration du proxy valide
         # Un Caddyfile invalide ne se voit qu'au démarrage, c'est-à-dire au
         # moment du déploiement, c'est-à-dire trop tard. `caddy validate`
@@ -412,6 +454,34 @@ jobs:
             test "$(docker inspect -f '{{if .Config.Healthcheck}}oui{{else}}non{{end}}' "$image")" = "oui"
             echo "$image : point de santé déclaré"
           done
+      - name: Le front devient réellement sain
+        # Déclarer une sonde ne prouve pas qu'elle passe. La première mise en
+        # ligne l'a montré : `HOSTNAME` absent de l'image, Next lié à
+        # l'adresse du conteneur, sonde sur 127.0.0.1 en échec, conteneur
+        # jamais `healthy` — et la répétition verte, parce qu'elle ne
+        # demandait au front que d'être `running`. On le lance donc pour de
+        # bon, seul, et on attend le verdict de sa propre sonde.
+        run: |
+          # Pas de `--rm` : un conteneur qui meurt au démarrage serait retiré
+          # avec lui, et `inspect` comme `logs` n'auraient plus rien à lire —
+          # trente tours pour une erreur muette. Le `trap` le retire à la fin.
+          id=$(docker run -d --name web-sain metreo-web:ci)
+          trap 'docker rm -f web-sain >/dev/null 2>&1 || true' EXIT
+          etat=inconnu
+          for i in $(seq 1 30); do
+            etat=$(docker inspect -f '{{.State.Status}}/{{.State.Health.Status}}' "$id" 2>/dev/null || echo disparu)
+            case "$etat" in
+              running/healthy) echo "front sain après ${i}×3 s"; exit 0 ;;
+              running/unhealthy|exited/*|dead/*|disparu) break ;;
+            esac
+            sleep 3
+          done
+          echo "::error::le front n'est jamais devenu sain (état : $etat)"
+          echo "── journal de la sonde ──"
+          docker inspect -f '{{range .State.Health.Log}}{{.End}} code={{.ExitCode}} {{.Output}}{{end}}' "$id" 2>/dev/null || true
+          echo "── journal du conteneur ──"
+          docker logs "$id" 2>&1 | tail -30 || true
+          exit 1
 
   audit:
     name: Vulnérabilités des dépendances

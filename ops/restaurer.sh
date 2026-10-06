@@ -48,12 +48,58 @@ STOCKAGE="$(find "$TRAVAIL" -name '*-storage.tar' | head -1)"
 # base, délibérément. La procédure documentée ne fonctionnait donc pas contre
 # la pile pour laquelle elle était écrite.
 if [[ -n "${RESTORE_COMPOSE_PROJECT:-}" ]]; then
+  # La garde de jetabilité ci-dessus porte sur le nom de la BASE. Elle ne
+  # protégeait pas de ceci : la base est bien recréée à part, mais le stockage
+  # des fichiers est détaré dans le conteneur `api` du projet nommé — donc
+  # dans SON volume, celui de la pile en service si c'est elle qu'on nomme.
+  # Une archive d'il y a un mois fusionnée par-dessus les pièces vivantes,
+  # sans un message. Le nom du projet doit donc porter le même marqueur.
+  case "$RESTORE_COMPOSE_PROJECT" in
+    *restore*|*scratch*|*jetable*|*tmp*|*repetition*) : ;;
+    *)
+      echo "refus : le projet « $RESTORE_COMPOSE_PROJECT » ne porte aucun marqueur de jetabilité." >&2
+      echo "  Le stockage de l'archive serait détaré dans le volume de CETTE pile." >&2
+      echo "  Montez une pile à part (autre --project-name, ports non publiés) et restaurez dedans." >&2
+      exit 1 ;;
+  esac
   read -r -a FICHIERS_COMPOSE <<< "${RESTORE_COMPOSE_FILES:--f $RACINE/infra/docker-compose.staging.yml}"
   CIBLE_COMPOSE=(docker compose --project-name "$RESTORE_COMPOSE_PROJECT" "${FICHIERS_COMPOSE[@]}")
   [[ -n "${RESTORE_ENV_FILE:-}" ]] && CIBLE_COMPOSE+=(--env-file "$RESTORE_ENV_FILE")
 
-  UTILISATEUR="${POSTGRES_USER:?POSTGRES_USER est requis pour la voie compose}"
-  BASE_CIBLE="${POSTGRES_DB:?POSTGRES_DB est requis pour la voie compose}"
+  # L'utilisateur et le mot de passe de la base viennent de l'environnement,
+  # ou à défaut de RESTORE_ENV_FILE — le même fichier que Compose lit. Il est
+  # lu par `sed`, jamais sourcé : ce n'est pas un fichier shell, et une
+  # valeur non protégée y exécuterait une commande. Comme Compose, on retire
+  # les guillemets et le commentaire de fin de ligne (` # …`).
+  valeur_env() {
+    [[ -n "${RESTORE_ENV_FILE:-}" && -f "$RESTORE_ENV_FILE" ]] || return 0
+    sed -n "s/^$1=//p" "$RESTORE_ENV_FILE" | tail -1 \
+      | sed -E "s/[[:space:]]+#.*$//; s/^[\"']//; s/[\"']$//; s/[[:space:]]+$//"
+  }
+  POSTGRES_USER="${POSTGRES_USER:-$(valeur_env POSTGRES_USER)}"
+  POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(valeur_env POSTGRES_PASSWORD)}"
+  UTILISATEUR="${POSTGRES_USER:?POSTGRES_USER est requis pour la voie compose : dans le shell, ou dans RESTORE_ENV_FILE}"
+  : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est requis pour la voie compose : dans le shell, ou dans RESTORE_ENV_FILE}"
+
+  # Sans accès au démon, `compose ps` rend vide en silence, et le contrôle
+  # suivant accuserait la pile d'être absente alors que c'est Docker qui l'est.
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker injoignable — démon arrêté, ou droits manquants sur /var/run/docker.sock (groupe docker, ou sudo)." >&2
+    exit 1
+  fi
+
+  # Ce script ne monte pas la pile : il `exec` dans ses conteneurs. Sans ce
+  # contrôle, un `db` absent donnait « service "db" is not running » au
+  # milieu de la restauration, sans dire quoi faire.
+  for service in db api; do
+    if [[ -z "$("${CIBLE_COMPOSE[@]}" ps -q --status running "$service" 2>/dev/null)" ]]; then
+      echo "refus : le service « $service » du projet « $RESTORE_COMPOSE_PROJECT » ne tourne pas." >&2
+      echo "  Montez d'abord la pile jetable, avec les mêmes fichiers :" >&2
+      echo "    docker compose --project-name $RESTORE_COMPOSE_PROJECT ${FICHIERS_COMPOSE[*]}${RESTORE_ENV_FILE:+ --env-file $RESTORE_ENV_FILE} up -d --wait --wait-timeout 240 db" >&2
+      echo "    docker compose --project-name $RESTORE_COMPOSE_PROJECT ${FICHIERS_COMPOSE[*]}${RESTORE_ENV_FILE:+ --env-file $RESTORE_ENV_FILE} up -d --no-deps api" >&2
+      exit 1
+    fi
+  done
 
   echo "→ restauration dans la pile « $RESTORE_COMPOSE_PROJECT »"
 
@@ -74,7 +120,7 @@ if [[ -n "${RESTORE_COMPOSE_PROJECT:-}" ]]; then
   fi
 
   echo "→ migrations et contrôles, dans le conteneur applicatif"
-  URL_CIBLE="postgresql+psycopg://$UTILISATEUR:${POSTGRES_PASSWORD:-}@db:5432/$CIBLE"
+  URL_CIBLE="postgresql+psycopg://$UTILISATEUR:$POSTGRES_PASSWORD@db:5432/$CIBLE"
   "${CIBLE_COMPOSE[@]}" exec -T -e METREO_DATABASE_URL="$URL_CIBLE" api \
     alembic -c apps/api/alembic.ini upgrade head
   # Le contrôle est passé sur l'entrée standard : l'image applicative ne

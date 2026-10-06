@@ -30,7 +30,15 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    PORT=3000
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+# `HOSTNAME` n'est pas décoratif. Le serveur autonome de Next lit cette
+# variable pour choisir l'interface d'écoute — et Docker, lui, la renseigne
+# par défaut avec l'IDENTIFIANT DU CONTENEUR. Next se liait donc à l'adresse
+# du conteneur seulement, jamais à 127.0.0.1 : la sonde ci-dessous échouait,
+# le conteneur ne devenait jamais `healthy`, et le proxy, qui joint le
+# conteneur par son adresse, ne voyait rien d'anormal. Mesuré sur la première
+# mise en ligne. La valeur est celle de l'exemple Docker officiel de Next.
 
 RUN apk add --no-cache wget
 
