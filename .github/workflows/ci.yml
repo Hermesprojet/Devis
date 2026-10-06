@@ -415,12 +415,22 @@ jobs:
         # Et vérifier que `ezdxf` s'importe ne suffirait pas davantage. Le
         # script fabrique un mur coté de 5 000 mm DANS le conteneur, le relit,
         # compare la valeur à celle qui a été posée, rend le SVG, et vérifie
-        # qu'un PDF est refusé par un code nommé.
+        # qu'un type non lu est refusé par un code nommé.
+        #
+        # Le PDF a le même problème, avec un second extra — `pdf`, donc
+        # `pypdfium2` — et il est éprouvé de la même façon : un PDF fabriqué
+        # sur place, la position d'un texte comparée à une valeur connue (c'est
+        # l'inversion du repère vertical qui est en jeu), et un aperçu PNG.
+        #
+        # C'est le DOSSIER `scripts/` qui est monté, et non le seul fichier
+        # d'épreuve : la fabrique de fixtures PDF est partagée avec les tests
+        # du dépôt, et en recopier les octets ici en aurait fait deux vérités.
         run: |
           docker run --rm \
-            -v "$PWD/scripts/verifier_image_de_lecture.py:/epreuve.py:ro" \
+            -v "$PWD/scripts:/epreuve:ro" \
             -v "$PWD/fixtures/plans:/fixtures:ro" \
-            --entrypoint python metreo-api:ci /epreuve.py --fixtures /fixtures
+            --entrypoint python metreo-api:ci \
+            /epreuve/verifier_image_de_lecture.py --fixtures /fixtures
       - name: L'API ne tourne pas en root
         # Le point du contrôle : une image qui traitera en phase 2 des fichiers
         # venant de tiers ne doit pas exécuter son processus en uid 0.

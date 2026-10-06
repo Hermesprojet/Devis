@@ -33,6 +33,15 @@ ezdxf = pytest.importorskip(
     "ezdxf",
     reason="l'extra « plans » n'est pas installé : pip install './apps/api[plans]'",
 )
+pytest.importorskip(
+    "pypdfium2",
+    reason="l'extra « pdf » n'est pas installé : pip install './apps/api[pdf]'",
+)
+
+# `scripts/` est sur le `sys.path` par le conftest du dépôt. La fabrique de
+# fixtures PDF est partagée avec les tests unitaires et avec l'épreuve qui
+# tourne dans l'image : trois copies auraient divergé.
+import fabriquer_pdf_de_test as pdf_fixtures  # noqa: E402
 
 
 @pytest.fixture()
@@ -173,6 +182,12 @@ def _relire(client: TestClient, entetes: dict[str, str], document: str, revision
 def _image(client: TestClient, entetes: dict[str, str], document: str, revision: str):
     return client.get(
         f"/api/v1/documents/{document}/revisions/{revision}/plan/image", headers=entetes
+    )
+
+
+def _textes(client: TestClient, entetes: dict[str, str], document: str, revision: str):
+    return client.get(
+        f"/api/v1/documents/{document}/revisions/{revision}/plan/textes", headers=entetes
     )
 
 
@@ -336,24 +351,24 @@ def test_the_proposed_measurement_keeps_the_document_unit_and_no_converted_value
 # ---------------------------------------------------------------------------
 
 
-def test_a_pdf_revision_is_refused_by_name_and_not_silently_ignored(
+def test_a_file_that_is_neither_dxf_nor_pdf_is_refused_by_name(
     seeded_client: TestClient,
 ) -> None:
-    """Le PDF est accepté au DÉPÔT et reste téléchargeable : la lecture, non.
+    """Un CSV déposé reste téléchargeable : la lecture de plan, non.
 
-    Dire « plan » en acceptant un PDF ici laisserait croire qu'il va être
-    mesuré, et l'utilisateur attendrait des mesures qui ne viendraient jamais.
-    Le refus nomme le code ET rappelle ce qui reste possible — sans quoi il
-    ressemblerait à la perte du fichier.
+    Ce test a longtemps porté sur le PDF, qui était alors refusé. Il porte
+    désormais sur un type que la lecture ne traite pas, parce que c'est la
+    frontière qui compte : un refus doit nommer son code ET rappeler ce qui
+    reste possible, sans quoi il ressemble à la perte du fichier.
     """
     admin = login(seeded_client, "admin@dubois.demo")
     document, revision = _plan_depose(
         seeded_client,
         admin,
-        "PLAN-PDF",
-        contenu=PDF,
-        nom="cctp.pdf",
-        type_annonce="application/pdf",
+        "PLAN-CSV",
+        contenu=b"code;designation;unite;pu\nA1;Beton;m3;120.00\n",
+        nom="bordereau.csv",
+        type_annonce="text/csv",
     )
 
     refus = _analyser(seeded_client, admin, document, revision)
@@ -361,6 +376,230 @@ def test_a_pdf_revision_is_refused_by_name_and_not_silently_ignored(
     detail = refus.json()["detail"]
     assert detail["code"] == "type_non_lisible"
     assert "téléchargeable" in detail["message"]
+
+
+# ---------------------------------------------------------------------------
+# Le PDF : importer, apercevoir, extraire — et ne mesurer rien
+# ---------------------------------------------------------------------------
+
+
+def test_a_pdf_is_imported_previewed_and_its_texts_extracted(
+    seeded_client: TestClient,
+) -> None:
+    """Le parcours PDF de bout en bout, par l'API, sans rien simuler.
+
+    Import → aperçu → textes situés. C'est la démonstration que le
+    propriétaire a demandée, écrite comme un test pour qu'elle ne puisse pas
+    cesser d'être vraie sans que la CI le dise.
+
+    **Ce que ce test affirme ET ce qu'il refuse d'affirmer** : les textes
+    sortent avec leur page et leur position, l'aperçu est un PNG servi par
+    l'API — et `mesurable` reste FAUX, avec zéro mesure. Un PDF ne porte
+    aucune unité de dessin ; la mesure attend une échelle confirmée par un
+    humain.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client,
+        admin,
+        "PLAN-PDF",
+        contenu=pdf_fixtures.page_avec_plusieurs_textes(),
+        nom="facade-sud.pdf",
+        type_annonce="application/pdf",
+    )
+
+    analyse = _analyser(seeded_client, admin, document, revision)
+    assert analyse.status_code == 200, analyse.text
+    corps = analyse.json()
+
+    # 1. L'import a reconnu un PDF, et le dit.
+    assert corps["format"] == "pdf"
+    assert corps["refuse"] is False
+    assert corps["pages"] == 1
+    assert corps["dimensions_des_pages"] == [[300.0, 220.0]]
+
+    # 2. Les textes ont été extraits, et le document n'est pas pris pour un scan.
+    assert corps["porte_du_texte"] is True
+    assert corps["fragments_lus"] == len(pdf_fixtures.PLACEMENTS_DU_PLAN)
+    assert corps["anomalies"] == []
+
+    # 3. Aucune mesure, et c'est la bonne réponse.
+    assert corps["mesurable"] is False
+    assert corps["unite_source"] is None
+    assert corps["mesures"] == []
+
+    # 4. L'aperçu existe et se sert comme un PNG.
+    assert corps["apercus"] == [1]
+    assert corps["image_disponible"] is True
+    image = _image(seeded_client, admin, document, revision)
+    assert image.status_code == 200, image.text
+    assert image.headers["content-type"] == "image/png"
+    assert image.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+    # 5. Les textes se demandent, avec leur position dans l'aperçu.
+    textes = _textes(seeded_client, admin, document, revision)
+    assert textes.status_code == 200, textes.text
+    lus = textes.json()
+    assert lus["total"] == len(pdf_fixtures.PLACEMENTS_DU_PLAN)
+    assert lus["extracteur"].startswith("lecture_pdf@pypdfium2-")
+
+    par_texte = {f["texte"]: f for f in lus["fragments"]}
+    assert "5000" in par_texte
+    assert "Ech. 1:50" in par_texte, "le texte est rendu tel qu'écrit, sans normalisation"
+
+    # Et la position est celle de l'ÉCRAN : « 5000 » est posé à 180 points du
+    # bord bas d'une page de 220, donc dans le quart haut de l'image.
+    cote = par_texte["5000"]["cadre"]
+    assert float(cote["y1"]) < 0.25, (
+        "une cote du haut du plan rendue dans la moitié basse signifie que "
+        "l'axe vertical du PDF n'a pas été inversé"
+    )
+    assert par_texte["5000"]["page"] == 1
+
+
+def test_a_scanned_pdf_stays_previewable_and_says_why_it_has_no_text(
+    seeded_client: TestClient,
+) -> None:
+    """Un scan n'est pas refusé : l'aperçu sert, l'extraction non.
+
+    Refuser serait le mauvais geste — le propriétaire a le droit de VOIR son
+    plan scanné et de le mesurer à la main. L'anomalie nomme la reconnaissance
+    optique comme l'étape qui manque, sans promettre qu'elle existe.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client,
+        admin,
+        "PLAN-SCAN",
+        contenu=pdf_fixtures.page_sans_texte(),
+        nom="scan.pdf",
+        type_annonce="application/pdf",
+    )
+
+    corps = _analyser(seeded_client, admin, document, revision).json()
+    assert corps["refuse"] is False
+    assert corps["porte_du_texte"] is False
+    assert corps["fragments_lus"] == 0
+    assert [a["code"] for a in corps["anomalies"]] == ["texte_absent"]
+    # L'aperçu, lui, est bien là : c'est tout l'intérêt de ne pas refuser.
+    assert corps["apercus"] == [1]
+    assert _image(seeded_client, admin, document, revision).status_code == 200
+
+
+def test_an_encrypted_pdf_is_refused_with_a_readable_reason_kept_on_the_volume(
+    seeded_client: TestClient,
+) -> None:
+    """Le refus est consigné, pas seulement renvoyé.
+
+    L'utilisateur doit pouvoir rouvrir l'écran et relire POURQUOI son fichier
+    a été refusé. Un code d'échec d'étape ne porte que six valeurs ; le motif
+    détaillé vit dans le constat, qui est écrit même en cas de refus.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client,
+        admin,
+        "PLAN-CHIFFRE",
+        contenu=pdf_fixtures.chiffre(),
+        nom="protege.pdf",
+        type_annonce="application/pdf",
+    )
+
+    _analyser(seeded_client, admin, document, revision)
+
+    relecture = _relire(seeded_client, admin, document, revision)
+    assert relecture.status_code == 200, relecture.text
+    corps = relecture.json()
+    assert corps["refuse"] is True
+    assert corps["motif_du_refus"]["code"] == "pdf_chiffre"
+    assert "mot de passe" in corps["motif_du_refus"]["message"]
+    assert corps["mesures"] == []
+
+
+def test_the_texts_of_a_dxf_are_not_invented_and_the_state_is_named(
+    seeded_client: TestClient, tmp_path: Path
+) -> None:
+    """Un DXF n'a pas de textes extraits, et la route le dit au lieu de 500.
+
+    Ses cotations SONT des mesures, et elles arrivent par la route du plan.
+    Rendre une liste vide ici laisserait croire que le document ne porte rien.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client, admin, "PLAN-DXF-TEXTES", contenu=_dxf(tmp_path / "m.dxf")
+    )
+    _analyser(seeded_client, admin, document, revision)
+
+    textes = _textes(seeded_client, admin, document, revision)
+    assert textes.status_code == 404, textes.text
+    assert textes.json()["detail"]["code"] == "textes_non_extraits"
+
+
+def test_a_pdf_journal_entry_carries_counters_and_no_document_text(
+    seeded_client: TestClient, journal: _Capture
+) -> None:
+    """Le journal compte, il ne cite pas.
+
+    Le même invariant que pour le DXF, et il doit être vérifié séparément :
+    l'extraction PDF voit passer tout le texte du document, ce qui en fait
+    l'endroit le plus facile où en laisser fuir une ligne.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client,
+        admin,
+        "PLAN-PDF-JOURNAL",
+        contenu=pdf_fixtures.page_avec_plusieurs_textes(),
+        nom="facade.pdf",
+        type_annonce="application/pdf",
+    )
+    # Le dépôt et la connexion ont déjà journalisé : on ne garde que ce que
+    # l'ANALYSE écrit, sans quoi le test porterait sur des lignes qui ne sont
+    # pas son sujet.
+    journal.lignes.clear()
+    _analyser(seeded_client, admin, document, revision)
+
+    assert journal.lignes, "l'analyse n'a rien journalisé : ce test ne prouverait rien"
+    lues = [ligne for ligne in journal.lignes if ligne["message"] == "pdf_lu"]
+    assert lues, f"aucune ligne `pdf_lu` dans {[vue['message'] for vue in journal.lignes]}"
+    assert lues[0]["fragments_lus"] == len(pdf_fixtures.PLACEMENTS_DU_PLAN)
+    assert lues[0]["pages"] == 1
+
+    # La liste EXACTE des clés, et pas une recherche de sous-chaîne.
+    #
+    # Cette distinction a une histoire : la première version de ce test
+    # cherchait chaque texte de la fixture dans la sortie, en écartant les
+    # cotes purement numériques pour éviter qu'un « 1200 » tombe sur une durée.
+    # Ajouter `constat.fragments[0].texte` au journal — soit la fuite exacte
+    # que le test prétendait interdire — le laissait passer, parce que ce
+    # premier texte est « 5000 », donc écarté. Vérifié en injectant la fuite.
+    #
+    # Une liste de clés n'a pas ce défaut : tout champ ajouté la fait échouer,
+    # qu'il porte un nombre, un texte ou un chemin. Le prix est qu'elle doit
+    # être tenue à jour, et c'est précisément ce qu'on veut — ajouter un champ
+    # au journal d'un document doit demander une décision.
+    assert set(lues[0]) == {
+        # Ce que le formateur pose sur toute ligne.
+        "timestamp",
+        "level",
+        "logger",
+        "message",
+        "request_id",
+        # Ce que cette ligne-ci ajoute : des identifiants et des COMPTEURS.
+        "organization_id",
+        "revision_id",
+        "pages",
+        "fragments_lus",
+        "porte_du_texte",
+    }, (
+        "le journal d'une lecture de PDF porte un champ de plus : s'il vient "
+        "du document — un texte, un nom de calque, un nom de fichier — c'est "
+        "une fuite de contenu documentaire"
+    )
+
+    sortie = "\n".join(json.dumps(ligne, ensure_ascii=False) for ligne in journal.lignes)
+    assert "facade.pdf" not in sortie, "le journal porte le nom de fichier déposé"
+    assert "Facade sud" not in sortie, "le journal porte un libellé du document"
 
 
 def test_a_plan_never_analysed_answers_that_it_was_never_analysed(
