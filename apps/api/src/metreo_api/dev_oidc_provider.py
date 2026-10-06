@@ -92,7 +92,22 @@ def create_provider_app(issuer: str, *, client_id: str, decalage_secondes: int =
         nonce: str = Form(""),
     ) -> RedirectResponse:
         code = secrets.token_urlsafe(24)
-        _CODES[code] = {"email": email.strip().lower(), "nonce": nonce}
+        # L'instant de l'authentification, et il est VRAI : ce fournisseur
+        # affiche un formulaire et attend qu'on le remplisse à chaque passage.
+        # Il n'a pas de session à reprendre, donc chaque arrivée ici EST une
+        # authentification.
+        #
+        # L'émettre permet au banc d'éprouver le chemin positif de
+        # `reauthentification_constatee` : « le fournisseur a bien
+        # réauthentifié ». Le chemin négatif — un fournisseur qui tait
+        # `auth_time`, ou qui rend une authentification ancienne — est éprouvé
+        # par les tests unitaires, parce qu'aucun fournisseur honnête ne le
+        # produit et qu'il ne faut pas en fabriquer un malhonnête ici.
+        _CODES[code] = {
+            "email": email.strip().lower(),
+            "nonce": nonce,
+            "auth_time": int(time.time()),
+        }
         separateur = "&" if "?" in redirect_uri else "?"
         return RedirectResponse(
             f"{redirect_uri}{separateur}{urlencode({'code': code, 'state': state})}",
@@ -120,6 +135,10 @@ def create_provider_app(issuer: str, *, client_id: str, decalage_secondes: int =
                 "email": donnees["email"],
                 "email_verified": True,
                 "name": donnees["email"].split("@")[0],
+                # OpenID Connect l'EXIGE dès que `max_age` est demandé. Un
+                # fournisseur qui l'omettrait alors ne respecterait pas la
+                # spécification — et celui-ci sert de référence au banc.
+                "auth_time": donnees["auth_time"],
             },
             _KEY,
             algorithm="RS256",

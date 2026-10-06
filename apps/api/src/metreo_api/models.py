@@ -30,6 +30,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -295,6 +296,16 @@ class LoginTransaction(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     #: Horodatage de la consommation du `state`, au retour du fournisseur.
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    #: Vrai quand le départ a DEMANDÉ une réauthentification (`max_age=0`).
+    #:
+    #: Sans ce drapeau, la revendication `auth_time` du jeton d'identité est
+    #: ininterprétable au retour : une authentification antérieure à la demande
+    #: est parfaitement normale quand on n'a rien demandé — c'est le
+    #: fonctionnement même d'une session SSO — et serait signalée à tort sur
+    #: toutes les connexions ordinaires.
+    reauthentication_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
+    )
     #: Rempli une fois l'identité vérifiée, puis effacé à l'échange.
     login_code: Mapped[str | None] = mapped_column(String(64))
     login_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -103,6 +103,41 @@ def _cles_du_dictionnaire() -> set[str]:
     return set(re.findall(r"'login\.error\.([a-z_]+)'", texte))
 
 
+def _avis_de_l_api() -> set[str]:
+    """Les codes d'AVIS que l'API peut poser dans l'URL de retour.
+
+    Un avis accompagne une connexion RÉUSSIE — il n'y en a qu'un aujourd'hui.
+    Il souffre pourtant exactement de la même dérive que les refus : la clé
+    manque, la phrase ne s'affiche pas, et personne ne le voit. Pire, en fait :
+    un refus muet se remarque parce que l'utilisateur est bloqué, un avis muet
+    ne se remarque pas du tout.
+    """
+    codes: set[str] = set()
+    for source in SOURCES_API:
+        arbre = ast.parse(source.read_text(encoding="utf-8"))
+        # Un avis est posé par AFFECTATION dans le dictionnaire de paramètres
+        # du retour — `parametres["login_notice"] = "…"` — et non par un
+        # argument nommé comme les refus. On cherche donc la valeur affectée.
+        for noeud in ast.walk(arbre):
+            if not isinstance(noeud, ast.Assign) or len(noeud.targets) != 1:
+                continue
+            cible = noeud.targets[0]
+            if (
+                isinstance(cible, ast.Subscript)
+                and isinstance(cible.slice, ast.Constant)
+                and cible.slice.value == "login_notice"
+                and isinstance(noeud.value, ast.Constant)
+                and isinstance(noeud.value.value, str)
+            ):
+                codes.add(noeud.value.value)
+    return codes
+
+
+def _cles_d_avis_du_dictionnaire() -> set[str]:
+    texte = DICTIONNAIRE.read_text(encoding="utf-8")
+    return set(re.findall(r"'login\.notice\.([a-z_]+)'", texte))
+
+
 def test_every_refusal_code_that_reaches_the_screen_has_a_sentence() -> None:
     codes = _codes_de_l_api()
     cles = _cles_du_dictionnaire()
@@ -161,3 +196,41 @@ def test_the_two_declared_exemption_lists_stay_honest() -> None:
     assert not replis_perimes, (
         f"ces replis déclarés n'existent plus dans le dictionnaire : {replis_perimes}"
     )
+
+
+def test_every_notice_the_api_can_post_has_a_sentence() -> None:
+    """Un avis sans phrase ne s'affiche pas, et personne ne s'en aperçoit.
+
+    La page se TAIT sur un avis qu'elle ne sait pas traduire, et c'est le bon
+    repli : la personne est entrée, et une phrase générique sur un écran qui
+    fonctionne n'apprendrait rien tout en inquiétant.
+
+    Mais ce silence est exactement ce qui rend la dérive invisible. Un refus
+    muet se remarque — l'utilisateur est bloqué et le dit. Un avis muet ne se
+    remarque jamais. Il doit donc être attrapé ici, et nulle part ailleurs.
+    """
+    codes = _avis_de_l_api()
+    cles = _cles_d_avis_du_dictionnaire()
+
+    assert codes, "aucun code d'avis trouvé : l'extraction est cassée, pas le produit"
+
+    manquants = sorted(codes - cles)
+    assert not manquants, (
+        f"ces avis n'ont aucune phrase à afficher, donc ne s'afficheront pas : "
+        f"{manquants}. Ajouter la clé `login.notice.<code>` dans "
+        "apps/web/src/lib/i18n.ts."
+    )
+
+    orphelines = sorted(cles - codes)
+    assert not orphelines, f"ces phrases d'avis n'ont aucun code qui les déclenche : {orphelines}"
+
+
+def test_a_notice_is_never_also_a_refusal() -> None:
+    """Les deux vocabulaires ne se recouvrent pas, et c'est voulu.
+
+    Un même code qui serait à la fois un refus et un avis s'afficherait tantôt
+    en rouge avec « role=alert », tantôt en bleu avec « role=status », selon le
+    paramètre qui l'a porté. L'utilisateur ne saurait pas s'il est entré.
+    """
+    communs = _avis_de_l_api() & _codes_de_l_api()
+    assert not communs, f"ces codes sont à la fois un refus et un avis : {sorted(communs)}"

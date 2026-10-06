@@ -83,6 +83,12 @@ class ExternalClaims:
     email: str | None
     email_verified: bool
     full_name: str | None
+    #: Quand le fournisseur dit avoir authentifié la personne, en UTC naïf.
+    #:
+    #: `None` quand la revendication est absente. OpenID Connect l'exige dès
+    #: que `max_age` est envoyé — un fournisseur qui l'omet alors ne respecte
+    #: pas la spécification, et l'absence est elle-même un constat.
+    auth_time: datetime | None = None
 
 
 def _b64url(raw: bytes) -> str:
@@ -178,10 +184,22 @@ def start(
         "code_challenge_method": "S256",
     }
     if other_account:
-        # Indication d'interface à Auth0 : montrer l'écran de connexion même
-        # lorsqu'une session SSO existe déjà. Le fournisseur reste libre de
-        # proposer Google ; ce paramètre ne garantit pas un mot de passe neuf.
+        # `prompt=login` est une indication d'INTERFACE : montrer l'écran de
+        # connexion même lorsqu'une session SSO existe déjà. La documentation
+        # d'Auth0 avertit qu'il ne garantit pas une nouvelle authentification
+        # quand l'identité vient d'un fournisseur amont comme Google.
         parametres["prompt"] = "login"
+        # `max_age=0` est l'EXIGENCE correspondante : la personne doit avoir
+        # été authentifiée à l'instant. Les deux sont envoyés parce qu'ils ne
+        # font pas la même chose — l'un demande un écran, l'autre une
+        # authentification — et qu'aucun ne remplace l'autre.
+        #
+        # Envoyer `max_age` a une seconde conséquence, qui est celle qui
+        # compte : OpenID Connect EXIGE alors la revendication `auth_time`
+        # dans le jeton d'identité. Metreo peut donc enfin CONSTATER ce qui
+        # s'est passé, au lieu de l'espérer.
+        parametres["max_age"] = "0"
+        transaction.reauthentication_requested = True
     separateur = "&" if "?" in metadata.authorization_endpoint else "?"
     return f"{metadata.authorization_endpoint}{separateur}{urlencode(parametres)}"
 
@@ -319,7 +337,53 @@ def verify_id_token(
         email=str(courriel).lower() if courriel else None,
         email_verified=bool(revendications.get("email_verified")),
         full_name=revendications.get("name") or revendications.get("preferred_username"),
+        auth_time=_instant(revendications.get("auth_time")),
     )
+
+
+def _instant(valeur: object) -> datetime | None:
+    """Une date d'époque en datetime UTC naïf, ou `None` si ce n'en est pas une.
+
+    Tolérant par choix : `auth_time` ne décide d'aucun accès. Une valeur
+    illisible vaut donc « on ne sait pas », et ce qui en découle est un
+    avertissement, pas un refus. Refuser sur une revendication mal formée
+    fermerait la porte à cause d'un fournisseur bavard.
+    """
+    if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(float(valeur), UTC).replace(tzinfo=None)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def reauthentification_constatee(
+    transaction: LoginTransaction, claims: ExternalClaims, *, tolerance_secondes: int
+) -> bool | None:
+    """La réauthentification demandée a-t-elle eu lieu ?
+
+    Rend `None` quand la question ne se pose pas — aucune réauthentification
+    n'avait été exigée — et c'est le cas de presque toutes les connexions.
+    Répondre « non » dans ce cas signalerait une anomalie sur chaque connexion
+    ordinaire, et l'avertissement cesserait d'être lu.
+
+    Rend `False` quand `auth_time` manque ou précède la demande : le
+    fournisseur a repris une session existante. **Ce n'est pas un refus.** Le
+    bouton « utiliser un autre compte » est un confort, pas une frontière de
+    sécurité ; bloquer ici fermerait Metreo à quiconque passe par un
+    fournisseur amont qui n'honore pas `max_age` — c'est-à-dire exactement le
+    cas que ce contrôle sert à détecter. On constate, on le dit, on laisse
+    entrer.
+
+    La tolérance est celle des horloges, déjà configurée pour `exp` et `iat` :
+    un fournisseur qui retarde de deux secondes daterait sinon son
+    authentification d'avant une demande qu'elle suit pourtant.
+    """
+    if not transaction.reauthentication_requested:
+        return None
+    if claims.auth_time is None:
+        return False
+    return claims.auth_time >= transaction.created_at - timedelta(seconds=tolerance_secondes)
 
 
 def resolve_user(session: Session, claims: ExternalClaims) -> User:

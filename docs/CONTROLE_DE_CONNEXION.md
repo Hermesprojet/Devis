@@ -19,6 +19,7 @@ qui dit à l'avance ce qu'il faut observer.
 | Les quatorze scénarios du « Banc de connexion » | **simulé** | idem |
 | Les parcours navigateur de bout en bout | **simulé** : le banc remplit un champ e-mail sur une page qu'il héberge | idem |
 | Chaque code de refus porte une phrase affichable | sans fournisseur : lecture croisée du code et du dictionnaire | que la phrase soit juste, seulement qu'elle existe |
+| `max_age=0` part avec le bouton « autre compte », et seulement avec lui ; `auth_time` est lu et comparé à la demande | **simulé** | si Google honore `max_age` — c'est le scénario C qui le dit, et rien d'autre |
 
 **Le fournisseur simulé est un bon outil** : il prouve que notre moitié du
 protocole est correcte, et il la prouve à chaque commit. Il ne peut rien dire
@@ -76,25 +77,39 @@ fournisseur qui a déjà une session répond immédiatement.
 2. Utiliser le bouton **« Utiliser un autre compte »** (il n'existe qu'une
    fois la PR #73 fusionnée et déployée).
 
-*Attendu* : Auth0 présente à nouveau son écran. **Observez précisément ce qui
-se passe ensuite** — c'est le point à vérifier, et la réponse n'est pas acquise
-d'avance :
+*Attendu* : Auth0 présente à nouveau son écran. Ensuite, **deux fins sont
+possibles, et les deux sont des résultats valables** :
 
-- l'écran propose-t-il de choisir un autre compte Google, ou
-- reprend-il silencieusement le compte déjà connecté ?
+- soit Google redemande une authentification, et vous pouvez choisir un autre
+  compte ;
+- soit Google reprend le compte déjà connecté. Metreo affiche alors un **avis
+  bleu** sous le titre : « Vous avez été reconnecté avec le compte déjà
+  ouvert : votre fournisseur d'identité n'a pas redemandé d'authentification.
+  Pour changer de compte, déconnectez-vous d'abord chez lui. »
 
-**Pourquoi ce doute est légitime.** Le bouton transmet `prompt=login`. Ce
-paramètre demande au fournisseur d'afficher à nouveau son écran — mais la
-documentation d'Auth0 est explicite : il **ne garantit pas** une nouvelle
-authentification lorsque l'identité vient d'un fournisseur **amont** comme
-Google. Le mécanisme qui l'impose est `max_age`, dont le résultat se vérifie
-ensuite dans la revendication `auth_time` du jeton d'identité
+**Notez laquelle des deux vous obtenez.** C'est l'information utile, et elle ne
+se devine pas : elle dépend de la configuration de la connexion Google dans
+votre tenant Auth0, pas de Metreo.
+
+**Ce que Metreo fait maintenant, et ce qu'il ne peut pas faire.** Le bouton
+transmet `prompt=login` ET `max_age=0`. Le premier demande au fournisseur
+d'afficher son écran ; le second exige que la personne vienne d'être
+authentifiée. La documentation d'Auth0 est explicite : `prompt=login` **ne
+garantit pas** une nouvelle authentification lorsque l'identité vient d'un
+fournisseur **amont** comme Google
 (`https://auth0.com/docs/authenticate/login/max-age-reauthentication`).
 
-Metreo n'envoie aujourd'hui **ni `max_age`**, et ne lit **pas `auth_time`** :
-il ne peut donc ni forcer la réauthentification, ni constater qu'elle a eu
-lieu. C'est une décision à prendre, pas un défaut à corriger en silence — voir
-§ 5.
+Forcer un fournisseur amont n'est au pouvoir de personne ici. Mais `max_age`
+oblige le jeton d'identité à porter la revendication `auth_time`, et Metreo la
+lit désormais : il **constate** si la réauthentification a eu lieu, et le dit.
+C'est la différence entre « le bouton ne marche pas » et « Google a repris
+votre session, voici comment en sortir ».
+
+**La connexion n'est jamais refusée pour autant** : vous entrez dans les deux
+cas. Le bouton est un confort, pas une frontière de sécurité, et bloquer
+fermerait Metreo à quiconque passe par un fournisseur qui n'honore pas
+`max_age` — c'est-à-dire exactement la situation que ce contrôle sert à
+détecter.
 
 ### D — Une adresse sans compte Metreo
 
@@ -123,27 +138,62 @@ Ce qui peut être transmis sans risque, et qui suffit au diagnostic :
 - le message affiché à l'écran ;
 - le fait que l'écran de Google soit apparu ou non.
 
-## 5. La décision qui reste à prendre
+## 5. La décision prise, et pourquoi
 
-Si le scénario C montre que Google est repris sans rien demander, deux voies :
+La réserve de ce document disait : « Metreo n'envoie ni `max_age`, ni ne lit
+`auth_time` : il ne peut donc ni forcer la réauthentification, ni constater
+qu'elle a eu lieu. C'est une décision à prendre. » Elle est prise.
 
-| Voie | Ce qu'elle donne | Ce qu'elle coûte |
+**La seconde voie a été retenue** : `max_age=0` est envoyé avec le bouton
+« utiliser un autre compte », et `auth_time` est lu au retour.
+
+Restait la question que la réserve laissait ouverte — *un `auth_time` absent ou
+trop ancien doit-il bloquer ou informer ?* **Il informe.**
+
+| | Bloquer | Informer |
 | --- | --- | --- |
-| **Laisser `prompt=login` seul** | le bouton existe, Auth0 réaffiche son écran | aucune garantie sur le compte amont ; « changer de compte » peut rester sans effet |
-| **Ajouter `max_age` et vérifier `auth_time`** | la réauthentification est demandée, et Metreo peut **constater** si elle a eu lieu au lieu de l'espérer | une modification du chemin d'authentification, à écrire et à éprouver ; un `auth_time` absent ou trop ancien doit alors être traité, et il faut décider s'il bloque ou s'il informe |
+| Ce que ça donne | la garantie qu'on n'entre qu'après une authentification fraîche | la personne entre, et sait pourquoi elle retombe sur le même compte |
+| Ce que ça coûte | **Metreo devient inaccessible** à quiconque passe par un fournisseur amont qui n'honore pas `max_age` — c'est-à-dire exactement le cas que le contrôle sert à détecter | rien : la connexion suit son cours |
 
-Tant que la seconde voie n'est pas choisie, le document doit continuer à dire
-ce qu'il dit ici : **le bouton demande, il ne garantit pas.**
+Le bouton « utiliser un autre compte » est un **confort**, pas une frontière de
+sécurité. Rien dans Metreo ne dépend de la fraîcheur de l'authentification :
+les droits viennent de l'appartenance en base, pas de l'âge d'un jeton.
+Bloquer échangerait donc un risque qui n'existe pas contre une panne
+d'accès bien réelle.
+
+### Ce qui est vérifié automatiquement, et ce qui ne peut pas l'être
+
+| Vérifié par un test | Ne peut pas l'être |
+| --- | --- |
+| `max_age=0` part avec le bouton, et seulement avec lui | que Google honore `max_age` |
+| une connexion ordinaire n'envoie ni `prompt` ni `max_age` | |
+| un `auth_time` antérieur à la demande rend « non réauthentifié » | |
+| un `auth_time` absent rend « non réauthentifié » — jamais « oui » | |
+| un `auth_time` frais rend « réauthentifié » | |
+| la tolérance d'horloge joue dans les deux sens | |
+| l'avis porte une phrase affichable, et aucun refus ne porte le même code | |
+
+La colonne de droite est courte, et c'est elle qui justifie le scénario C :
+seul un humain devant un vrai Google peut dire ce que Google fait.
+
+### Si vous voulez quand même forcer le changement de compte
+
+Il y a un moyen, et il n'est pas dans Metreo : se déconnecter de Google dans le
+navigateur, ou utiliser une fenêtre de navigation privée. L'avis affiché par
+Metreo le dit, parce que c'est l'action qui marche.
 
 ## 6. Tableau à remplir
 
-| Scénario | Date | Ce qui s'est affiché | `login_error` | Conclusion |
+| Scénario | Date | Ce qui s'est affiché | `login_error` ou avis | Conclusion |
 | --- | --- | --- | --- | --- |
 | A — première connexion | | | | |
 | B — session déjà ouverte | | | | |
-| C — changer de compte | | | | |
-| D — adresse sans compte | | | | |
+| C — changer de compte | | *Google a redemandé / avis bleu « reconnecté avec le compte déjà ouvert »* | | |
+| D — adresse sans compte | | | `unknown_user` attendu | |
 | E — retour dans Metreo | | | | |
+
+Pour le scénario C, la colonne qui compte est la troisième : notez laquelle des
+deux fins vous obtenez. Les deux sont des résultats, aucune n'est une panne.
 
 Une seule ligne compte vraiment pour l'instant : **A**. Tant qu'elle n'est pas
 remplie par un succès, Metreo n'a jamais été utilisé par un humain sur cette

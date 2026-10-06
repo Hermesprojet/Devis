@@ -182,6 +182,25 @@ def callback(
     parametres = {"login_code": code_de_connexion}
     if retour_vers:
         parametres["return_to"] = retour_vers
+
+    # La connexion RÉUSSIT dans tous les cas ci-dessous : ce qui suit est un
+    # avis, pas un refus. Le bouton « utiliser un autre compte » est un
+    # confort, et bloquer ici fermerait Metreo à quiconque passe par un
+    # fournisseur amont qui n'honore pas `max_age` — c'est-à-dire exactement
+    # la situation que ce contrôle sert à détecter.
+    #
+    # Ce qui change, c'est que l'écran peut enfin le DIRE : « vous avez été
+    # reconnecté avec le compte déjà ouvert ». Sans cet avis, une personne qui
+    # clique « autre compte » et retombe sur le même croit à un défaut de
+    # Metreo, alors que la décision appartient à Google.
+    if (
+        oidc.reauthentification_constatee(
+            transaction, claims, tolerance_secondes=settings.oidc_clock_skew_seconds
+        )
+        is False
+    ):
+        parametres["login_notice"] = "reauthentication_not_performed"
+
     return _retour(**parametres)
 
 

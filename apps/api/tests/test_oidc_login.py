@@ -12,6 +12,7 @@ exercée, pas une version allégée.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -518,3 +519,140 @@ def test_a_user_without_active_membership_is_refused(
             appartenance.is_active = False
         session.commit()
         assert oidc.active_memberships(session, utilisateur) == []
+
+
+# ---------------------------------------------------------------------------
+# `max_age` demandé, `auth_time` constaté
+# ---------------------------------------------------------------------------
+#
+# La réserve que ces tests ferment, mot pour mot : « Metreo n'envoie ni
+# `max_age`, ni ne lit `auth_time` : il ne peut donc ni forcer la
+# réauthentification, ni constater qu'elle a eu lieu. »
+#
+# La seconde moitié est celle qui compte. Forcer une réauthentification chez un
+# fournisseur amont n'est pas en notre pouvoir — Auth0 le documente, et aucun
+# paramètre n'y changera rien. CONSTATER qu'elle n'a pas eu lieu l'est, et
+# c'est ce qui permet de dire à la personne pourquoi elle retombe sur le même
+# compte, au lieu de la laisser croire à un défaut de Metreo.
+
+
+def _transaction_de_test(*, demandee: bool, il_y_a_secondes: int = 0) -> LoginTransaction:
+    return LoginTransaction(
+        state="s",
+        nonce="n",
+        code_verifier="v",
+        redirect_uri="https://exemple.invalid/retour",
+        created_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=il_y_a_secondes),
+        expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5),
+        reauthentication_requested=demandee,
+    )
+
+
+def _claims(auth_time: datetime | None) -> oidc.ExternalClaims:
+    return oidc.ExternalClaims(
+        issuer="https://fournisseur.invalid/",
+        subject="sujet-1",
+        email="personne@exemple.invalid",
+        email_verified=True,
+        full_name=None,
+        auth_time=auth_time,
+    )
+
+
+def test_no_verdict_is_given_when_no_reauthentication_was_asked_for() -> None:
+    """La question ne se pose pas, et la réponse est « on ne demande rien ».
+
+    C'est le cas de presque toutes les connexions. Répondre « non, elle n'a pas
+    eu lieu » ici serait exact et inutile — une authentification antérieure à
+    la demande est le fonctionnement même d'une session SSO. L'avis
+    s'afficherait sur chaque connexion ordinaire et cesserait d'être lu.
+    """
+    transaction = _transaction_de_test(demandee=False)
+    ancienne = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=5)
+
+    verdict = oidc.reauthentification_constatee(
+        transaction, _claims(ancienne), tolerance_secondes=60
+    )
+    assert verdict is None
+
+
+def test_an_authentication_older_than_the_request_means_the_session_was_reused() -> None:
+    """Le cas que le propriétaire doit pouvoir constater au scénario C.
+
+    Il a cliqué « utiliser un autre compte », Metreo a exigé `max_age=0`, et le
+    fournisseur a rendu une authentification vieille de cinq heures : il a
+    repris la session ouverte au lieu d'en redemander une.
+    """
+    transaction = _transaction_de_test(demandee=True)
+    ancienne = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=5)
+
+    assert (
+        oidc.reauthentification_constatee(transaction, _claims(ancienne), tolerance_secondes=60)
+        is False
+    )
+
+
+def test_a_fresh_authentication_is_recognised_as_such() -> None:
+    """Et le contre-exemple : le fournisseur a bien réauthentifié.
+
+    Sans lui, une fonction qui répondrait toujours « non » passerait le test
+    précédent, et l'avis s'afficherait même quand tout s'est bien passé.
+    """
+    transaction = _transaction_de_test(demandee=True)
+    maintenant = datetime.now(UTC).replace(tzinfo=None)
+
+    assert (
+        oidc.reauthentification_constatee(transaction, _claims(maintenant), tolerance_secondes=60)
+        is True
+    )
+
+
+def test_a_missing_auth_time_counts_as_no_reauthentication() -> None:
+    """OpenID Connect EXIGE `auth_time` dès que `max_age` est envoyé.
+
+    Un fournisseur qui l'omet alors ne respecte pas la spécification. On ne
+    peut donc rien constater — et « je ne peux pas constater » se traite comme
+    « ce n'est pas constaté », jamais comme « c'est arrivé ». Supposer que la
+    réauthentification a eu lieu parce que le jeton se tait serait exactement
+    l'affirmation que ce contrôle existe pour éviter.
+    """
+    transaction = _transaction_de_test(demandee=True)
+
+    assert (
+        oidc.reauthentification_constatee(transaction, _claims(None), tolerance_secondes=60)
+        is False
+    )
+
+
+def test_a_slightly_early_authentication_is_accepted_within_clock_skew() -> None:
+    """Deux horloges ne sont jamais d'accord à la seconde près.
+
+    Un fournisseur qui retarde de deux secondes daterait son authentification
+    d'avant une demande qu'elle suit pourtant. Sans tolérance, l'avis
+    s'afficherait sur des connexions parfaitement réauthentifiées — et la même
+    tolérance sert déjà à `exp` et `iat`, pour la même raison.
+    """
+    transaction = _transaction_de_test(demandee=True)
+    un_peu_avant = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=3)
+
+    assert (
+        oidc.reauthentification_constatee(transaction, _claims(un_peu_avant), tolerance_secondes=60)
+        is True
+    )
+    assert (
+        oidc.reauthentification_constatee(transaction, _claims(un_peu_avant), tolerance_secondes=1)
+        is False
+    ), "au-delà de la tolérance, le constat redevient négatif"
+
+
+def test_an_unreadable_auth_time_does_not_refuse_the_login() -> None:
+    """Une revendication mal formée vaut « on ne sait pas », pas un refus.
+
+    `auth_time` ne décide d'aucun accès : refuser sur une valeur illisible
+    fermerait la porte à cause d'un fournisseur bavard. Le jeton reste valide,
+    et c'est l'avis qui se déclenche.
+    """
+    for valeur in ("hier", None, True, [], {}):
+        assert oidc._instant(valeur) is None, valeur
+
+    assert oidc._instant(0) == datetime(1970, 1, 1)

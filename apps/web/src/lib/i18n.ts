@@ -45,6 +45,13 @@ const fr: Dictionary = {
     "Si Google vous reconnecte automatiquement, essayez ce bouton pour demander un nouvel écran de connexion. Si l'accès par e-mail n'y apparaît pas, contactez votre administrateur.",
   'login.noMethod':
     "Ce déploiement n'offre aucune connexion depuis un navigateur. Il accepte des jetons émis ailleurs.",
+  // Un AVIS, pas un refus : la connexion a réussi. Il existe parce qu'une
+  // personne qui clique « utiliser un autre compte » et retombe sur le même
+  // croit à un défaut de Metreo, alors que la décision appartient au
+  // fournisseur amont — Auth0 documente que `prompt=login` ne garantit pas une
+  // nouvelle authentification chez Google.
+  'login.notice.reauthentication_not_performed':
+    "Vous avez été reconnecté avec le compte déjà ouvert : votre fournisseur d'identité n'a pas redemandé d'authentification. Pour changer de compte, déconnectez-vous d'abord chez lui.",
   'login.error.provider_refused':
     "Le fournisseur d'identité a refusé la connexion.",
   'login.error.invalid_request': 'La demande de connexion était incomplète.',
