@@ -60,9 +60,7 @@ CANDIDAT_PAR_DEFAUT = "origin/claude/integration-cinq-pr"
 
 
 def _git(*arguments: str) -> str:
-    resultat = subprocess.run(
-        ["git", *arguments], capture_output=True, text=True, check=False
-    )
+    resultat = subprocess.run(["git", *arguments], capture_output=True, text=True, check=False)
     if resultat.returncode != 0:
         print(
             f"ÉCHEC : git {' '.join(arguments)}\n{resultat.stderr.strip()}",
