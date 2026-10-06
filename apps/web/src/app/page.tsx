@@ -21,6 +21,21 @@ function messageDeRetour(code: string): string {
   return traduit === cle ? t('login.error.generic') : traduit
 }
 
+/**
+ * Un AVIS, à ne pas confondre avec un refus : la connexion a réussi.
+ *
+ * Le repli n'est pas le même que pour un refus, et la différence compte : un
+ * code de refus inconnu doit toujours dire QUELQUE CHOSE, parce que
+ * l'utilisateur est bloqué et attend une raison. Un avis inconnu, lui, se
+ * TAIT : la personne est entrée, et une phrase générique sur un écran qui
+ * fonctionne n'apprendrait rien à personne tout en inquiétant.
+ */
+function messageDAvis(code: string): string | null {
+  const cle = `login.notice.${code}`
+  const traduit = t(cle)
+  return traduit === cle ? null : traduit
+}
+
 function LoginPage() {
   const router = useRouter()
   const parametres = useSearchParams()
@@ -29,11 +44,13 @@ function LoginPage() {
   const [choices, setChoices] = useState<string[]>([])
   const [error, setError] = useState<unknown>(null)
   const [retour, setRetour] = useState<string | null>(null)
+  const [avis, setAvis] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [health, setHealth] = useState<Health | null>(null)
 
   const loginCode = parametres.get('login_code')
   const loginError = parametres.get('login_error')
+  const loginNotice = parametres.get('login_notice')
   const returnTo = parametres.get('return_to')
   // Ce que le FOURNISSEUR renvoie, à ne pas confondre avec `login_code`, que
   // l'API renvoie ensuite : ce sont deux étapes distinctes du même retour.
@@ -55,6 +72,12 @@ function LoginPage() {
   useEffect(() => {
     if (loginError) setRetour(messageDeRetour(loginError))
   }, [loginError])
+
+  useEffect(() => {
+    if (!loginNotice) return
+    const phrase = messageDAvis(loginNotice)
+    if (phrase) setAvis(phrase)
+  }, [loginNotice])
 
   /**
    * Le retour du fournisseur d'identité, transmis à l'API pour vérification.
@@ -173,6 +196,13 @@ function LoginPage() {
         {retour && (
           <div className="notice warning" role="alert">
             {retour}
+          </div>
+        )}
+        {/* `info` et non `warning`, `status` et non `alert` : la connexion a
+            réussi. Un avis présenté comme un refus ferait croire à un échec. */}
+        {avis && (
+          <div className="notice info" role="status">
+            {avis}
           </div>
         )}
         <ErrorNotice error={error} />

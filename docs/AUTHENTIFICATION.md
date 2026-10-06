@@ -389,3 +389,13 @@ sert qu'une fois.
 
 Tant que ces trois points ne sont pas tranchés, le parcours est fonctionnel et
 prouvé, mais aucun humain réel ne peut se connecter.
+
+## Éprouver le parcours AVEC un fournisseur réel
+
+Tout ce qui précède éprouve **notre moitié** du protocole, et la prouve à
+chaque commit. Cela ne dit rien d'Auth0 ni de Google : aucun test, nulle part,
+n'a jamais exercé ce parcours contre de vrais conteneurs ET un vrai
+fournisseur d'identité — un banc automatisé ne franchit pas l'écran de Google.
+
+La procédure manuelle qui comble ce trou, ses cinq scénarios et ce qu'il faut
+y observer vivent dans `docs/CONTROLE_DE_CONNEXION.md`.

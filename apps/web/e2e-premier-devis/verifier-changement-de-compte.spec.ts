@@ -57,6 +57,11 @@ test('« Utiliser un autre compte » demande l’écran de connexion, et connect
   const url = page.url()
   verifierLeSocleOidc(url)
   expect(new URL(url).searchParams.get('prompt')).toBe('login')
+  // `prompt=login` demande un écran ; `max_age=0` exige une authentification.
+  // Auth0 documente que le premier ne garantit rien chez un fournisseur amont
+  // comme Google — seul le second l'impose, et surtout il oblige le jeton à
+  // porter `auth_time`, sans quoi Metreo ne peut rien CONSTATER.
+  expect(new URL(url).searchParams.get('max_age'), 'max_age perdu en route').toBe('0')
 
   // Le chemin doit rester praticable jusqu'au bout : un bouton qui demande un
   // écran de connexion mais n'ouvre plus de session ne vaut pas mieux que pas
@@ -64,6 +69,13 @@ test('« Utiliser un autre compte » demande l’écran de connexion, et connect
   await page.locator('#email').fill(ADMIN)
   await page.getByRole('button', { name: 'Se connecter' }).click()
   await page.waitForURL(/\/projets$/)
+
+  // Et l'avis « vous avez été reconnecté avec le compte déjà ouvert » ne doit
+  // PAS apparaître : ce fournisseur vient d'afficher un formulaire et de le
+  // faire remplir, donc il a réellement authentifié. Un avis ici signifierait
+  // que `auth_time` n'est pas lu, ou qu'il est comparé de travers — et il
+  // s'afficherait alors sur toutes les connexions, jusqu'à ne plus être lu.
+  await expect(page.getByText('reconnecté avec le compte déjà ouvert')).toHaveCount(0)
 
   await seDeconnecter(page)
 })
