@@ -115,6 +115,29 @@ def _dxf(
     return chemin.read_bytes()
 
 
+def _dxf_a_blocs(chemin: Path, *, insertions: int = 2, longueur: float = 5000.0) -> bytes:
+    """Un DXF dont la cotation vit dans un BLOC, inséré `insertions` fois.
+
+    C'est la forme d'un plan réel : le dessinateur fait un bloc de façade et
+    l'insère. La cotation n'existe alors qu'UNE fois dans le fichier, et porte
+    donc le même handle à chacune de ses insertions — ce que la base ne doit
+    pas confondre avec une seule mesure.
+    """
+    doc = ezdxf.new("R2013", setup=True)
+    doc.header["$INSUNITS"] = 4
+    bloc = doc.blocks.new("FACADE_COTEE")
+    cote = bloc.add_linear_dim(
+        base=(0, -800), p1=(0, 0), p2=(longueur, 0), dxfattribs={"layer": CALQUE}
+    )
+    cote.render()
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (1, 0))
+    for rang in range(insertions):
+        msp.add_blockref("FACADE_COTEE", (0, rang * 40000))
+    doc.saveas(chemin)
+    return chemin.read_bytes()
+
+
 def _projet(client: TestClient, entetes: dict[str, str], reference: str) -> str:
     reponse = client.post(
         "/api/v1/projects",
@@ -713,6 +736,92 @@ def test_a_plan_heavier_than_the_synchronous_ceiling_is_refused_by_name(
 # ---------------------------------------------------------------------------
 # Ce qu'une relecture ne doit pas défaire
 # ---------------------------------------------------------------------------
+
+
+def test_each_insertion_of_a_dimensioned_block_becomes_its_own_measurement(
+    seeded_client: TestClient, tmp_path: Path
+) -> None:
+    """Deux insertions d'un bloc coté : DEUX mesures à confirmer, pas une.
+
+    **C'est le sous-comptage vu depuis la base, et il est aussi grave que le
+    double comptage.** La cotation n'existe qu'une fois dans le fichier : les
+    deux insertions portent le même handle. Or `mesures_de_plan` déduplique
+    les citations sur `object_id` — deux mesures de même désignation
+    n'écriraient qu'une proposition, et la seconde cote disparaîtrait sans un
+    mot. Sur un plan réel, où un même bloc est inséré des dizaines de fois,
+    c'est tout le métré qui manquerait.
+
+    Le test compare les positions, pas seulement le compte : deux propositions
+    posées au même endroit en désigneraient une au hasard à l'écran, et le
+    propriétaire ne pourrait pas retrouver celle qu'il vérifie.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client,
+        admin,
+        "PLAN-BLOCS",
+        contenu=_dxf_a_blocs(tmp_path / "blocs.dxf", insertions=2),
+    )
+
+    analyse = _analyser(seeded_client, admin, document, revision)
+    assert analyse.status_code == 200, analyse.text
+    corps = analyse.json()
+
+    assert corps["mesurable"] is True
+    assert len(corps["mesures"]) == 2, (
+        "deux insertions d'un bloc coté sont deux ouvrages à vérifier ; "
+        f"obtenu {len(corps['mesures'])}"
+    )
+
+    assert {m["valeur_document"] for m in corps["mesures"]} == {"5000.0"}
+    assert len({m["object_ref"] for m in corps["mesures"]}) == 2, (
+        "les deux mesures doivent se désigner différemment, sans quoi la base n'en garde qu'une"
+    )
+    assert len({m["citation_id"] for m in corps["mesures"]}) == 2
+
+    hauteurs = sorted(float(m["cadre"]["y0"]) for m in corps["mesures"])
+    assert hauteurs[1] - hauteurs[0] > 0.5, (
+        "les deux insertions sont à 40 000 unités l'une de l'autre : des "
+        "positions voisines signifient que la transformation du bloc n'a pas "
+        "été appliquée, et le propriétaire chercherait la cote au mauvais endroit"
+    )
+
+    # Le calque traverse le bloc : c'est par lui qu'on rattache un lot.
+    assert {m["calque"] for m in corps["mesures"]} == {CALQUE}
+
+
+def test_a_dimension_inside_a_scaled_block_is_proposed_at_its_real_length(
+    seeded_client: TestClient, tmp_path: Path
+) -> None:
+    """Une cote de 5 000 dans un bloc inséré à l'échelle 2 vaut 10 000.
+
+    Le défaut le plus coûteux de toute la lecture de plans, parce qu'il produit
+    un nombre PLAUSIBLE : une quantité deux fois trop petite ne déclenche aucun
+    contrôle d'ordre de grandeur et part dans un devis.
+    """
+    doc = ezdxf.new("R2013", setup=True)
+    doc.header["$INSUNITS"] = 4
+    bloc = doc.blocks.new("FACADE_COTEE")
+    bloc.add_linear_dim(
+        base=(0, -800), p1=(0, 0), p2=(5000.0, 0), dxfattribs={"layer": CALQUE}
+    ).render()
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (1, 0))
+    msp.add_blockref("FACADE_COTEE", (0, 0), dxfattribs={"xscale": 2, "yscale": 2})
+    chemin = tmp_path / "echelle.dxf"
+    doc.saveas(chemin)
+
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client, admin, "PLAN-ECHELLE", contenu=chemin.read_bytes()
+    )
+
+    corps = _analyser(seeded_client, admin, document, revision).json()
+
+    (mesure,) = corps["mesures"]
+    assert mesure["valeur_document"] == "10000.0"
+    assert mesure["unite_document"] == "mm"
+    assert mesure["fiabilite"] == "mesurable"
 
 
 def test_reading_the_same_plan_twice_does_not_duplicate_its_proposals(

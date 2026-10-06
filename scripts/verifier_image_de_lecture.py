@@ -200,11 +200,103 @@ def controler_la_lecture(plan: Path) -> None:
     )
 
 
+def fabriquer_le_plan_a_blocs(dossier: Path) -> Path:
+    """Un plan dont les cotes vivent dans des BLOCS, comme un plan réel.
+
+    Trois insertions du même bloc coté de 5 000 mm : une à l'identique, une à
+    l'échelle 2, et une par un bloc intermédiaire. C'est la forme qu'un
+    dessinateur produit, et c'est celle qui rendait zéro avant le parcours des
+    blocs.
+    """
+    import ezdxf
+
+    document = ezdxf.new("R2000", setup=False)
+    document.header["$INSUNITS"] = 4
+    document.layers.add("COTATIONS")
+    bloc = document.blocks.new("FACADE_COTEE")
+    cotation = bloc.add_linear_dim(
+        base=(0, -800), p1=(0, 0), p2=(5000, 0), dxfattribs={"layer": "COTATIONS"}
+    )
+    cotation.render()
+    enveloppe = document.blocks.new("ETAGE")
+    enveloppe.add_blockref("FACADE_COTEE", (1000, 2000))
+
+    espace = document.modelspace()
+    espace.add_line((0, 0), (5000, 0))
+    espace.add_blockref("FACADE_COTEE", (0, 0))
+    espace.add_blockref("FACADE_COTEE", (0, 40000), dxfattribs={"xscale": 2, "yscale": 2})
+    espace.add_blockref("ETAGE", (20000, 0))
+
+    chemin = dossier / "plan_a_blocs.dxf"
+    document.saveas(chemin)
+    return chemin
+
+
+def controler_les_cotes_en_blocs(plan: Path) -> None:
+    """Les cotes des blocs sont-elles lues, à la bonne valeur, sans doublon ?
+
+    Le défaut que ce contrôle ferme ne se voit pas dans l'image seulement : il
+    se voyait partout. `modelspace.query("DIMENSION")` ne lit que le premier
+    niveau, et un plan dont les cotes vivent dans des blocs rendait **zéro
+    cotation** — pas une erreur, pas une anomalie : zéro, en silence.
+    """
+    from metreo_api.services.lecture_dxf import lire
+
+    print("3. Les cotes contenues dans des blocs sont lues, et comptées une fois")
+    constat = lire(plan, situer=True)
+
+    exiger(not constat.refuse, "le plan à blocs n'est pas refusé", f"refuse={constat.refuse}")
+    exiger(
+        len(constat.cotations) == 3,
+        "une cotation par INSERTION, ni par définition ni en double",
+        f"{len(constat.cotations)} cotation(s), attendu 3 — "
+        "(0 signifierait que les blocs ne sont pas parcourus, "
+        "4 ou plus que `*Model_Space` est compté deux fois)",
+    )
+    if len(constat.cotations) != 3:
+        return
+
+    valeurs = sorted(str(c.valeur) for c in constat.cotations)
+    exiger(
+        valeurs == ["10000.0", "5000.0", "5000.0"],
+        "l'insertion à l'échelle 2 double la longueur mesurée",
+        f"valeurs lues : {valeurs}",
+    )
+
+    references = {c.object_ref for c in constat.cotations}
+    exiger(
+        len(references) == 3,
+        "chaque instance se désigne séparément, donc la base en garde trois",
+        f"désignations : {sorted(references)}",
+    )
+    exiger(
+        any("/" in reference for reference in references),
+        "une cotation de bloc porte son chemin d'insertion",
+        f"désignations : {sorted(references)}",
+    )
+
+    positions = {
+        (round(c.cadre.x0, 6), round(c.cadre.y0, 6))
+        for c in constat.cotations
+        if c.cadre is not None
+    }
+    exiger(
+        len(positions) == 3,
+        "les trois cotations sont situées à trois endroits distincts",
+        f"{len(positions)} position(s) distincte(s)",
+    )
+    exiger(
+        all(c.calque == "COTATIONS" for c in constat.cotations),
+        "le calque traverse le bloc",
+        f"calques : {sorted({c.calque for c in constat.cotations})}",
+    )
+
+
 def controler_le_rendu(plan: Path) -> None:
     """Le dessin arrive-t-il jusqu'à une image affichable ?"""
     from metreo_api.services.rendu_de_plan import rendre
 
-    print("3. Le rendu produit un SVG affichable")
+    print("4. Le rendu produit un SVG affichable")
     rendu = rendre(plan)
 
     exiger(
@@ -232,7 +324,7 @@ def controler_le_refus_dun_type_non_lu(fichier: Path) -> None:
     from metreo_api.services.document_storage import detecter_type
     from metreo_api.services.lecture_de_plan import PlanNonLisible, verifier_que_cest_un_plan
 
-    print("4. Un type non lu est refusé par un code nommé")
+    print("5. Un type non lu est refusé par un code nommé")
     type_reel = detecter_type(fichier, fichier.stat().st_size)
     exiger(
         type_reel not in ("image/vnd.dxf", "application/pdf"),
@@ -265,7 +357,7 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
     bibliothèque : elle est donc fabriquée même quand `pypdfium2` manque, ce
     qui permet de dire laquelle des deux choses a échoué.
     """
-    print("5. L'image sait lire un PDF et en produire un aperçu")
+    print("6. L'image sait lire un PDF et en produire un aperçu")
 
     try:
         import pypdfium2
@@ -437,7 +529,7 @@ def controler_les_fixtures(dossier: Path) -> None:
     """
     from metreo_api.services.lecture_dxf import lire
 
-    print(f"6. Les fixtures commitées se relisent dans l'image ({dossier})")
+    print(f"7. Les fixtures commitées se relisent dans l'image ({dossier})")
 
     nominal = dossier / "mur_simple.dxf"
     if nominal.exists():
@@ -502,6 +594,8 @@ def main() -> int:
         print(f"  plan d'essai : {plan.stat().st_size} octets")
         print()
         controler_la_lecture(plan)
+        print()
+        controler_les_cotes_en_blocs(fabriquer_le_plan_a_blocs(dossier))
         print()
         controler_le_rendu(plan)
         print()
