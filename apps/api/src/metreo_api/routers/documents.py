@@ -16,14 +16,23 @@ from ..schemas import (
     DocumentOut,
     DocumentRevisionOut,
     DocumentStatusUpdate,
+    FragmentDeTexte,
     MesureDePlan,
     PlanLu,
+    TextesDePlan,
     ValidationDecisionCreate,
     ValidationDecisionOut,
 )
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
-from ..services import documents, exports, lecture_de_plan, mesures_de_plan, rendu_de_plan
+from ..services import (
+    documents,
+    exports,
+    lecture_de_plan,
+    mesures_de_plan,
+    rendu_de_plan,
+    rendu_pdf,
+)
 from ..services.document_storage import (
     TAILLE_MORCEAU,
     ContenuRefuse,
@@ -349,8 +358,19 @@ def _plan_lu(
     mesures = mesures_de_plan.lister(
         session, organization_id=organization_id, revision_id=revision_id
     )
+    format_lu = str(contenu.get("format") or "dxf")
     return PlanLu(
         revision_id=revision_id,
+        format="pdf" if format_lu == "pdf" else "dxf",
+        pages=int(contenu.get("pages") or 0),
+        dimensions_des_pages=[
+            [float(cote) for cote in paire]
+            for paire in (contenu.get("dimensions_des_pages") or [])
+            if isinstance(paire, list) and len(paire) == 2
+        ],
+        porte_du_texte=bool(contenu.get("porte_du_texte")),
+        fragments_lus=int(contenu.get("fragments_lus") or 0),
+        apercus=[page for page in (contenu.get("apercus") or []) if isinstance(page, int)],
         mesurable=bool(contenu.get("mesurable")),
         unite_source=contenu.get("unite_source"),
         insunits=contenu.get("insunits"),
@@ -369,8 +389,15 @@ def _plan_lu(
             for a in (contenu.get("anomalies") or [])
             if isinstance(a, dict)
         ],
-        image_disponible=lecture_de_plan.image_disponible(
-            stockage, organization_id=organization_id, revision_id=revision_id
+        # Pour un PDF, « image disponible » veut dire « la page 1 a un
+        # aperçu » : c'est ce que l'écran affiche d'abord, et c'est la seule
+        # page dont l'absence empêche d'afficher quoi que ce soit.
+        image_disponible=(
+            bool(contenu.get("apercus"))
+            if format_lu == "pdf"
+            else lecture_de_plan.image_disponible(
+                stockage, organization_id=organization_id, revision_id=revision_id
+            )
         ),
         mesures=[
             MesureDePlan(
@@ -460,10 +487,10 @@ def analyse_plan_revision(
         )
 
     stockage = StockageLocal(settings.storage_root)
-    for etape, travail in (
-        (lecture_de_plan.ETAPE_LECTURE, lecture_de_plan.travail_de_lecture(stockage)),
-        (lecture_de_plan.ETAPE_RENDU, lecture_de_plan.travail_de_rendu(stockage)),
-    ):
+    # Les étapes dépendent du format, et leur ORDRE aussi : `lecture_de_plan`
+    # porte les deux, parce que la raison de cet ordre est une propriété du
+    # format et pas une préférence de ce routeur.
+    for etape, travail in lecture_de_plan.etapes_pour(revision, stockage):
         try:
             executer_etape_dans(
                 session,
@@ -541,6 +568,11 @@ def get_plan_revision(
 def get_plan_image(
     document_id: str,
     revision_id: str,
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="La page à servir. Ignorée pour un DXF, qui n'en a qu'une.",
+    ),
     context: TenantContext = Depends(require(Permission.DOCUMENT_READ)),
     session: Session = Depends(session_scope),
     settings: Settings = Depends(get_settings),
@@ -569,7 +601,7 @@ def get_plan_image(
     ni même une balise `<text>`.
     """
     try:
-        documents.get_revision(
+        revision = documents.get_revision(
             session,
             organization_id=context.organization_id,
             document_id=document_id,
@@ -579,7 +611,17 @@ def get_plan_image(
         raise _refus_http(erreur) from erreur
 
     stockage = StockageLocal(settings.storage_root)
-    cle = rendu_de_plan.cle_du_rendu(context.organization_id, revision_id)
+    # Un PDF rend un PNG par page, un DXF un SVG unique. Le type servi est
+    # celui de l'artefact, et les en-têtes de refus total s'appliquent aux
+    # deux : un PNG n'exécute rien, mais le même chemin sert les deux et une
+    # exception par format serait une exception à oublier.
+    est_pdf = revision.media_type == "application/pdf"
+    if est_pdf:
+        cle = rendu_pdf.cle_de_l_apercu(context.organization_id, revision_id, page)
+        type_servi = "image/png"
+    else:
+        cle = rendu_de_plan.cle_du_rendu(context.organization_id, revision_id)
+        type_servi = "image/svg+xml"
     taille = stockage.taille(cle)
     if taille is None:
         # 409 et non 404 : la révision existe, elle est bien à cette
@@ -590,13 +632,17 @@ def get_plan_image(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "code": "image_de_plan_absente",
-                "message": "L'image de ce plan n'a pas encore été produite.",
+                "message": (
+                    f"L'aperçu de la page {page} de ce plan n'a pas encore été produit."
+                    if est_pdf
+                    else "L'image de ce plan n'a pas encore été produite."
+                ),
             },
         )
 
     return StreamingResponse(
         stockage.lire(cle),
-        media_type="image/svg+xml",
+        media_type=type_servi,
         headers={
             "Content-Length": str(taille),
             "X-Content-Type-Options": "nosniff",
@@ -608,4 +654,110 @@ def get_plan_image(
             "Referrer-Policy": "no-referrer",
             "Cache-Control": "private, no-store",
         },
+    )
+
+
+#: Combien de fragments de texte une réponse rend au plus.
+#:
+#: Mesuré sur un plan d'exécution réel : 4 351 fragments sur une page. Les
+#: rendre tous ferait une réponse de plusieurs mégaoctets pour afficher un
+#: écran, et le navigateur en pose la plupart hors de la zone visible.
+#:
+#: Cinq cents suffisent à couvrir un cartouche et une série de cotes, et la
+#: réponse DIT le total : un écran qui en montre 500 sur 4 351 doit pouvoir
+#: l'écrire, sans quoi l'utilisateur croira avoir tout vu.
+PLAFOND_FRAGMENTS_SERVIS = 500
+
+
+@router.get(
+    "/documents/{document_id}/revisions/{revision_id}/plan/textes",
+    response_model=TextesDePlan,
+    summary="Les textes extraits d'un PDF, situés sur son aperçu",
+)
+def get_plan_textes(
+    document_id: str,
+    revision_id: str,
+    page: int | None = Query(
+        default=None,
+        ge=1,
+        description="Ne rendre que les textes de cette page. Toutes par défaut.",
+    ),
+    depuis: int = Query(
+        default=0,
+        ge=0,
+        description="Sauter les N premiers fragments de la sélection.",
+    ),
+    context: TenantContext = Depends(require(Permission.DOCUMENT_READ)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> TextesDePlan:
+    """Ne relit PAS le PDF : relit l'artefact que l'extraction a posé.
+
+    Même raison que pour le constat — rouvrir le fichier coûterait jusqu'à une
+    seconde par écran, et rendrait des fragments qui pourraient différer de
+    ceux sur lesquels une mesure a été confirmée.
+
+    **Ces fragments ne sont pas des mesures.** Ce sont des textes situés, tels
+    que le dessinateur les a écrits. Rien ici n'affirme que « 5000 » vaut
+    5 000 mm : le dire demande une échelle, et une échelle demande une
+    confirmation humaine.
+    """
+    try:
+        documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    stockage = StockageLocal(settings.storage_root)
+    fragments = lecture_de_plan.lire_les_fragments(
+        stockage, organization_id=context.organization_id, revision_id=revision_id
+    )
+    if fragments is None:
+        # 404 avec un code nommé, comme `plan_non_analyse` : « jamais
+        # extrait » est un état, et l'écran doit pouvoir proposer l'analyse.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "textes_non_extraits",
+                "message": (
+                    "Les textes de ce document n'ont pas été extraits. Un DXF "
+                    "n'en porte pas : ses cotations sont des mesures, et elles "
+                    "sont rendues par la route du plan."
+                ),
+            },
+        )
+
+    retenus = [f for f in fragments if page is None or f.get("page") == page]
+    tranche = retenus[depuis : depuis + PLAFOND_FRAGMENTS_SERVIS]
+
+    constat = lecture_de_plan.lire_le_constat(
+        stockage, organization_id=context.organization_id, revision_id=revision_id
+    )
+    extracteur = ""
+    if constat is not None:
+        extracteur = str(constat.contenu.get("extracteur") or "")
+
+    return TextesDePlan(
+        revision_id=revision_id,
+        # Le total de la SÉLECTION, pas celui de la tranche : c'est lui qui
+        # permet d'écrire « 500 sur 4 351 » plutôt que de laisser croire que
+        # tout est là.
+        total=len(retenus),
+        page=page,
+        extracteur=extracteur,
+        fragments=[
+            FragmentDeTexte(
+                texte=str(f.get("texte", "")),
+                page=int(f.get("page") or 1),
+                cadre=CadreDePlan(
+                    x0=str(cadre[0]), y0=str(cadre[1]), x1=str(cadre[2]), y1=str(cadre[3])
+                ),
+            )
+            for f in tranche
+            if isinstance(cadre := f.get("cadre"), list) and len(cadre) == 4
+        ],
     )

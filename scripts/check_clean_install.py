@@ -102,7 +102,7 @@ def main() -> int:
         # regarderait au mauvais endroit.
         install += [
             str(ROOT / "packages" / "domain"),
-            f"{ROOT / 'apps' / 'api'}[postgres,plans]",
+            f"{ROOT / 'apps' / 'api'}[postgres,plans,pdf]",
         ]
 
         print("Installation depuis les seuls manifestes…")

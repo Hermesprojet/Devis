@@ -946,6 +946,11 @@ class PlanLu(ApiModel):
     """
 
     revision_id: str
+    #: `"dxf"` ou `"pdf"`. L'écran en a besoin AVANT de lire le reste : les
+    #: champs d'un format absent valent `None` ou une liste vide, et un écran
+    #: qui ne saurait pas lequel il lit afficherait « sans unité » pour un PDF
+    #: — ce qui est vrai, mais trompeur : un PDF n'en a jamais.
+    format: Literal["dxf", "pdf"] = "dxf"
     mesurable: bool
     unite_source: str | None
     insunits: int | None
@@ -958,6 +963,62 @@ class PlanLu(ApiModel):
     anomalies: list[AnomalieDePlan]
     image_disponible: bool
     mesures: list[MesureDePlan]
+
+    # -- ce qui n'existe que pour un PDF ------------------------------------
+    #: Zéro pour un DXF : la notion n'a pas de sens pour un espace modèle.
+    pages: int = 0
+    #: Largeur et hauteur de chaque page, en **points PostScript** (1/72 de
+    #: pouce). Ce sont des nombres, pas des chaînes décimales, et la raison est
+    #: qu'ils ne servent à AUCUN calcul de métré : ils donnent le rapport de
+    #: forme d'un aperçu. Une valeur qui entre dans un prix est une chaîne ;
+    #: celle-ci n'y entre jamais.
+    dimensions_des_pages: list[list[float]] = Field(default_factory=list)
+    #: Faux pour un document scanné : l'aperçu reste utile, l'extraction non.
+    porte_du_texte: bool = False
+    #: Combien de fragments de texte ont été récoltés. Un COMPTE, pas le texte :
+    #: les fragments se demandent à la route `…/plan/textes`, parce qu'un plan
+    #: réel en porte quelques milliers.
+    fragments_lus: int = 0
+    #: Les pages qui ont un aperçu, dans l'ordre. Une page absente de cette
+    #: liste n'est pas affichable — et `anomalies` dit alors pourquoi.
+    apercus: list[int] = Field(default_factory=list)
+
+
+class FragmentDeTexte(ApiModel):
+    """Un morceau de texte d'un PDF, et où il se trouve.
+
+    `texte` est rendu **tel que le document le porte** : espaces, virgules
+    décimales et unités comprises, sans normalisation. Le découpage en
+    fragments est celui du fichier, pas le nôtre — sur un plan réel, une cote
+    peut arriver entière (« 5000 ») ou éclatée caractère par caractère.
+    Regrouper relève d'une interprétation, et cette interprétation n'a pas
+    lieu côté serveur.
+
+    **Un fragment n'est pas une mesure.** C'est un texte situé. Il devient une
+    mesure quand un humain a confirmé une échelle, et pas avant.
+    """
+
+    texte: str
+    #: 1-indexée, comme une citation documentaire.
+    page: int
+    #: Dans le repère de l'aperçu PNG : [0,1], origine en haut à gauche. Se
+    #: pose donc directement sur l'image, sans conversion.
+    cadre: CadreDePlan
+
+
+class TextesDePlan(ApiModel):
+    """Les textes d'un PDF, par tranches : un plan réel en porte des milliers."""
+
+    revision_id: str
+    #: Le nombre total de fragments du document, toutes pages confondues —
+    #: pas celui de la tranche rendue. C'est lui qui permet à l'écran de dire
+    #: « 120 sur 4 351 » au lieu de laisser croire qu'il a tout.
+    total: int
+    #: Quelle page a été demandée, ou `None` pour toutes.
+    page: int | None
+    fragments: list[FragmentDeTexte]
+    #: L'extracteur et sa version, tels qu'ils figureront dans une citation.
+    extracteur: str
 
 
 class ValidationDecisionCreate(BaseModel):

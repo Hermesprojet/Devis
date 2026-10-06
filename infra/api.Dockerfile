@@ -31,7 +31,7 @@ COPY constraints/api.txt /src/constraints/api.txt
 # plan » — et échoue à l'analyse sur un `ModuleNotFoundError`. Le défaut ne se
 # voit donc qu'en production, sur le premier plan déposé.
 RUN pip install --no-cache-dir -c /src/constraints/api.txt \
-      /src/packages/domain "/src/apps/api[postgres,plans]"
+      /src/packages/domain "/src/apps/api[postgres,plans,pdf]"
 
 FROM python:3.11-slim AS runtime
 

@@ -62,6 +62,24 @@ plans = [
   # installée, vérifié) : permissive, sans clause réseau.
   "pillow>=11,<14",
 ]
+# Lecture des PDF. Séparée de `plans` : une installation qui ne reçoit que des
+# DXF n'a pas à porter PDFium, et l'inverse est vrai aussi.
+#
+# pypdfium2 embarque PDFium, sous **BSD-3-Clause**, et se déclare lui-même
+# « BSD-3-Clause, Apache-2.0 » (champ `License-Expression` de la distribution
+# installée, vérifié). Aucune dépendance transitive : une seule épingle.
+#
+# L'ADR 0007 §2 a tranché le partage des rôles, mesure à l'appui : extraire le
+# texte d'un plan d'étage réel prend **161 s avec pdfminer et 0,07 s avec
+# PDFium**. Le texte et le rendu passent donc par PDFium. pdfplumber, réservé
+# aux chemins vectoriels, n'est pas encore nécessaire et n'est pas déclaré :
+# une dépendance qu'aucun code n'appelle est une surface d'attaque gratuite.
+#
+# **Surtout pas PyMuPDF**, techniquement supérieur mais sous AGPL-3.0, dont la
+# clause réseau obligerait à livrer le source de Metreo à ses utilisateurs.
+pdf = [
+  "pypdfium2>=5.13,<6",
+]
 # `pyyaml` : les contrôles d'infrastructure (ops/tests/) lisent les
 # compositions Docker. Il arrivait jusqu'ici par les extras optionnels
 # d'uvicorn ou de fastapi, que personne n'active — donc par hasard, et absent

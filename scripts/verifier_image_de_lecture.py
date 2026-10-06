@@ -10,8 +10,16 @@ contrôles existants ne pouvait le voir : ils éprouvent le code, pas l'image.
 
 Vérifier que `ezdxf` s'importe ne suffirait pas davantage. On lit donc un
 VRAI fichier, on compare la cote à une valeur connue d'avance, on rend le
-dessin, et on vérifie qu'un PDF est refusé par un code nommé plutôt que par
-une exception quelconque.
+dessin, et on vérifie qu'un fichier d'un type non lu est refusé par un code
+nommé plutôt que par une exception quelconque.
+
+**Le PDF a le même problème et il est éprouvé de la même façon.** `pypdfium2`
+est un second extra, `pdf`, installé dans l'image par le même Dockerfile :
+l'oublier reproduirait exactement le défaut d'origine, un écran qui s'affiche
+et un `ModuleNotFoundError` au premier fichier déposé. La section 5 lit donc
+un PDF fabriqué sur place, compare la position d'un texte à une valeur connue
+— c'est l'inversion du repère vertical qui est en jeu — et produit un aperçu
+PNG.
 
 Ce script ne touche ni base, ni réseau, ni volume de stockage : il écrit ses
 fixtures dans un répertoire temporaire, les relit, et les jette. Il tourne
@@ -23,8 +31,15 @@ from __future__ import annotations
 import sys
 import tempfile
 from decimal import Decimal
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
+
+# La fabrique de fixtures est partagée avec les tests du dépôt : une seconde
+# copie des octets d'un PDF aurait divergé de celle que les tests éprouvent.
+# Elle vit à côté de ce script, qui est monté avec son dossier.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fabriquer_pdf_de_test
 
 #: La cote posée dans le plan d'essai, en millimètres. Connue d'avance : c'est
 #: toute la différence entre « la lecture a rendu quelque chose » et « la
@@ -34,6 +49,12 @@ COTE_ATTENDUE = Decimal("5000")
 #: Tolérance de comparaison. La cote est recalculée par ezdxf à partir des
 #: points de définition : un flottant peut rendre 4999.999999999999.
 TOLERANCE = Decimal("0.001")
+
+#: Au-dessus, la boîte du texte de référence n'est pas dans le quart haut de
+#: l'écran — donc l'axe vertical n'a pas été inversé. Calculé : le texte est à
+#: 80 pt du bord bas d'une page de 100 pt, sa hampe monte à 88,4 pt, donc
+#: `y1 = 1 − 79,8/100 ≈ 0,202`. Sans inversion il vaudrait 0,884.
+Y_ECRAN_MAXIMUM = 0.25
 
 _echecs: list[str] = []
 _controles = 0
@@ -80,14 +101,15 @@ def fabriquer_le_plan(dossier: Path) -> Path:
     return chemin
 
 
-def fabriquer_le_pdf(dossier: Path) -> Path:
-    """Le plus petit PDF valide qui soit : il n'a qu'à porter sa signature."""
-    chemin = dossier / "plan.pdf"
-    chemin.write_bytes(
-        b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-        b"2 0 obj<</Type/Pages/Count 0/Kids[]>>endobj\n"
-        b"trailer<</Root 1 0 R>>\n%%EOF\n"
-    )
+def fabriquer_un_type_non_lu(dossier: Path) -> Path:
+    """Un CSV : un type que Metreo accepte au dépôt et ne lit PAS comme un plan.
+
+    Ce fichier portait un PDF jusqu'à ce que le PDF devienne lisible. Le
+    contrôle, lui, garde tout son sens : la frontière doit se dire par un code
+    nommé, et non par une exception quelconque.
+    """
+    chemin = dossier / "bordereau.csv"
+    chemin.write_bytes(b"code;designation;unite;pu\nA1;Beton;m3;120.00\n")
     return chemin
 
 
@@ -192,15 +214,15 @@ def controler_le_rendu(plan: Path) -> None:
     )
 
 
-def controler_le_refus_du_pdf(pdf: Path) -> None:
-    """Un PDF doit être refusé en le disant, pas en tombant."""
+def controler_le_refus_dun_type_non_lu(fichier: Path) -> None:
+    """Un type que la lecture ne traite pas doit être refusé en le disant."""
     from metreo_api.services.document_storage import detecter_type
     from metreo_api.services.lecture_de_plan import PlanNonLisible, verifier_que_cest_un_plan
 
-    print("4. Un PDF est refusé par un code nommé")
-    type_reel = detecter_type(pdf, pdf.stat().st_size)
+    print("4. Un type non lu est refusé par un code nommé")
+    type_reel = detecter_type(fichier, fichier.stat().st_size)
     exiger(
-        type_reel == "application/pdf",
+        type_reel not in ("image/vnd.dxf", "application/pdf"),
         "le type est lu dans les octets, pas dans l'extension",
         f"type réel={type_reel!r}",
     )
@@ -215,7 +237,125 @@ def controler_le_refus_du_pdf(pdf: Path) -> None:
             f"code={refus.code!r}",
         )
     else:
-        exiger(False, "le PDF est refusé", "la lecture l'a ACCEPTÉ — défaut grave")
+        exiger(False, "le fichier est refusé", "la lecture l'a ACCEPTÉ — défaut grave")
+
+
+def controler_la_lecture_du_pdf(dossier: Path) -> None:
+    """Le PDF : les bibliothèques, la position d'un texte, et l'aperçu.
+
+    La position est le cœur du contrôle, et pas la présence du texte. Un PDF a
+    son origine en bas à gauche, un écran en haut à gauche : un lecteur qui
+    oublie l'inversion ne plante pas, il surligne le bas du plan quand la cote
+    est en haut. Cela ne se voit qu'en comparant à une valeur connue.
+
+    La fixture vient de `fabriquer_pdf_de_test.py`, qui n'a besoin d'aucune
+    bibliothèque : elle est donc fabriquée même quand `pypdfium2` manque, ce
+    qui permet de dire laquelle des deux choses a échoué.
+    """
+    print("5. L'image sait lire un PDF et en produire un aperçu")
+
+    try:
+        import pypdfium2
+    except ModuleNotFoundError as erreur:
+        # La répétition exacte du défaut d'origine, pour l'autre extra :
+        # l'image s'affiche, et le premier PDF déposé tombe.
+        exiger(
+            False,
+            "pypdfium2 importable",
+            f"absent de l'image — {erreur}. L'extra `pdf` n'a pas été installé.",
+        )
+        return
+    exiger(
+        True,
+        "pypdfium2 importable",
+        f"version {version('pypdfium2')} / {pypdfium2.__name__}",
+    )
+
+    from metreo_api.services.lecture_pdf import lire
+    from metreo_api.services.rendu_pdf import rendre
+
+    chemin = dossier / "reference.pdf"
+    chemin.write_bytes(fabriquer_pdf_de_test.une_page_avec_texte())
+
+    constat = lire(chemin)
+    exiger(not constat.refuse, "le PDF n'est pas refusé", f"refuse={constat.refuse}")
+    exiger(
+        constat.pages == 1 and constat.dimensions == [(200.0, 100.0)],
+        "les dimensions de page sont lues en points PostScript, sans conversion",
+        f"pages={constat.pages}, dimensions={constat.dimensions}",
+    )
+    exiger(
+        len(constat.fragments) == 1,
+        "un fragment de texte et un seul est récolté",
+        f"{len(constat.fragments)} fragment(s)",
+    )
+    if not constat.fragments:
+        return
+
+    fragment = constat.fragments[0]
+    exiger(
+        fragment.texte == fabriquer_pdf_de_test.TEXTE_REFERENCE,
+        "le texte est rendu tel qu'il est écrit",
+        f"texte={fragment.texte!r}, attendu {fabriquer_pdf_de_test.TEXTE_REFERENCE!r}",
+    )
+    exiger(fragment.page == 1, "la page est comptée depuis 1", f"page={fragment.page}")
+
+    # Le texte est posé à 80 pt du bord BAS d'une page de 100 pt : dans le
+    # repère de l'écran, sa boîte doit donc tomber dans le quart HAUT.
+    cadre = fragment.cadre
+    exiger(
+        cadre.y1 < Y_ECRAN_MAXIMUM,
+        "l'axe vertical est inversé entre le PDF et l'écran",
+        f"y0={cadre.y0:.4f}, y1={cadre.y1:.4f} — attendu y1 < {Y_ECRAN_MAXIMUM} "
+        "(sans inversion, y1 vaudrait environ 0,88)",
+    )
+    exiger(
+        0.0 <= cadre.x0 < cadre.x1 <= 1.0 and cadre.x0 < 0.2,
+        "l'axe horizontal n'est PAS inversé",
+        f"x0={cadre.x0:.4f}, x1={cadre.x1:.4f}",
+    )
+
+    # L'extraction du texte et le rendu de l'aperçu sont deux bibliothèques
+    # différentes derrière la même : la première échouerait sur un PDFium
+    # amputé, la seconde sur un Pillow absent.
+    apercu = rendre(chemin)
+    exiger(
+        apercu.png[:8] == b"\x89PNG\r\n\x1a\n",
+        "l'aperçu est bien un PNG",
+        f"{len(apercu.png)} octets, {apercu.largeur}×{apercu.hauteur} px",
+    )
+    exiger(
+        apercu.largeur == 200 and apercu.hauteur == 100,
+        "une page plus petite que la cote affichée est rendue à sa taille",
+        f"{apercu.largeur}×{apercu.hauteur} px pour une page de 200×100 pt",
+    )
+
+    # Et la couture : un cadre normalisé posé sur l'aperçu tombe dans l'image.
+    gauche = round(cadre.x0 * apercu.largeur)
+    haut = round(cadre.y0 * apercu.hauteur)
+    exiger(
+        0 <= gauche < apercu.largeur and 0 <= haut < apercu.hauteur,
+        "le cadre du texte se pose directement sur l'aperçu, sans conversion",
+        f"coin haut gauche à ({gauche}, {haut}) px dans une image de "
+        f"{apercu.largeur}×{apercu.hauteur}",
+    )
+
+    # Un PDF chiffré : le refus doit NOMMER le chiffrement, et Metreo ne doit
+    # jamais demander de mot de passe.
+    protege = dossier / "protege.pdf"
+    protege.write_bytes(fabriquer_pdf_de_test.chiffre())
+    refus = lire(protege)
+    motif = refus.motif_du_refus
+    exiger(
+        refus.refuse and motif is not None and motif.code == "pdf_chiffre",
+        "un PDF chiffré est refusé en nommant le chiffrement",
+        f"refuse={refus.refuse}, code={motif.code if motif else None!r}",
+    )
+    exiger(
+        not refus.fragments,
+        "rien du contenu chiffré ne ressort",
+        f"{len(refus.fragments)} fragment(s)",
+    )
 
 
 def controler_les_fixtures(dossier: Path) -> None:
@@ -228,7 +368,7 @@ def controler_les_fixtures(dossier: Path) -> None:
     """
     from metreo_api.services.lecture_dxf import lire
 
-    print(f"5. Les fixtures commitées se relisent dans l'image ({dossier})")
+    print(f"6. Les fixtures commitées se relisent dans l'image ({dossier})")
 
     nominal = dossier / "mur_simple.dxf"
     if nominal.exists():
@@ -296,7 +436,9 @@ def main() -> int:
         print()
         controler_le_rendu(plan)
         print()
-        controler_le_refus_du_pdf(fabriquer_le_pdf(dossier))
+        controler_le_refus_dun_type_non_lu(fabriquer_un_type_non_lu(dossier))
+        print()
+        controler_la_lecture_du_pdf(dossier)
 
     if fixtures is not None:
         print()

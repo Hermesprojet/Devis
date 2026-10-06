@@ -63,7 +63,7 @@ from ..models import (
     utcnow,
 )
 from ..services.document_storage import StockageLocal
-from . import audit, lecture_de_plan, rendu_de_plan
+from . import audit, lecture_de_plan
 
 #: Ce qu'une référence de dossier a le droit d'être.
 #:
@@ -246,12 +246,22 @@ def documents_a_detruire(
     Pas seulement les PDF. Un devis émis pose deux fichiers quand l'entreprise
     a un logo — le document et la copie figée de son logo — l'organisation
     elle-même en porte un troisième, son logo courant, et une révision de plan
-    analysée en pose deux de plus : son image et son constat.
+    analysée en pose davantage : son constat, son image s'il s'agit d'un DXF,
+    et pour un PDF ses textes extraits plus un aperçu PNG par page. La liste
+    exacte est tenue par `lecture_de_plan.cles_derivees` et pas ici : elle
+    dépend du format, et deux listes auraient divergé.
 
     `stockage` sert à n'inscrire les dérivés d'un plan QUE s'ils existent.
     Sans lui, ils ne sont pas inscrits du tout : un appelant qui ne fournit
     pas le volume ne peut pas savoir ce qu'il y a dessus, et inventer des
     clés ferait échouer la purge sur des fichiers qui n'ont jamais existé.
+
+    **Cette phrase décrivait l'intention et non le code.** Sans `stockage`,
+    l'ancienne boucle inscrivait quand même les deux clés qu'elle connaissait,
+    parce que sa garde ne s'appliquait qu'au cas contraire. Le nombre
+    d'aperçus d'un PDF n'étant pas devinable sans lire le volume, le défaut
+    serait devenu une purge en échec sur des PNG inexistants ; l'intention
+    documentée est donc désormais celle du code.
 
     **Ce que cette fonction n'inscrit TOUJOURS PAS, et qu'il faut savoir :**
     les ORIGINAUX des documents, c'est-à-dire `document_revisions.storage_key`.
@@ -323,10 +333,18 @@ def documents_a_detruire(
         .where(DocumentRevision.organization_id == organization_id)
         .order_by(DocumentRevision.id)
     ).all():
-        for cle, quoi in (
-            (rendu_de_plan.cle_du_rendu(organization_id, revision.id), "image du plan"),
-            (lecture_de_plan.cle_du_constat(organization_id, revision.id), "constat du plan"),
-        ):
+        # La liste des dérivés vit dans `lecture_de_plan` et nulle part
+        # ailleurs : un PDF en a davantage qu'un DXF — ses textes, et un PNG
+        # par page — et deux listes auraient divergé au premier format ajouté.
+        # Sans stockage, on ne sait rien du volume : on n'inscrit rien.
+        derives = (
+            lecture_de_plan.cles_derivees(
+                stockage, organization_id=organization_id, revision_id=revision.id
+            )
+            if stockage is not None
+            else []
+        )
+        for cle, quoi in derives:
             if stockage is not None and stockage.taille(cle) is None:
                 continue
             fichiers.append(
