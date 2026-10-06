@@ -154,8 +154,8 @@ def _previsualiser(organization_id: str) -> int:
                 )
             return 1
 
-        documents = conservation.documents_a_detruire(session, organization_id)
-        print(f"à détruire      {len(documents)} devis émis et leurs PDF")
+        documents = conservation.documents_a_detruire(session, organization_id, _stockage())
+        print(f"à détruire      {len(documents)} fichiers posés sur le volume")
         for doc in documents:
             print(f"    · {doc.number}  {doc.sha256[:16]}…")
     return 0
@@ -166,6 +166,7 @@ def _purger(organization_id: str, motif: str, reference: str | None) -> int:
         try:
             purge = conservation.demander(
                 session,
+                stockage=_stockage(),
                 organization_id=organization_id,
                 reason_code=motif,
                 reference=reference,

@@ -87,12 +87,38 @@ puisse tenir.
 
 ---
 
-## Phase 2 — Intelligence documentaire · **Non commencée**
+## Phase 2 — Intelligence documentaire · **Socle livré, premier parcours de plan livré**
 
 Périmètre : dépôt sécurisé PDF/image/XLSX, extraction texte native, OCR par
 adaptateur, classification, extraction structurée de quelques champs et clauses,
 citations page/zone, écran de validation côté à côté, recherche plein texte,
 comparaison de deux révisions, jeux d'évaluation anonymisés.
+
+**Ce qui est livré, et c'est le socle, pas le traitement** : le dépôt d'un
+fichier et son original immuable avec empreinte SHA-256 ; le type réel lu dans
+les octets et non dans l'extension, avec refus nommé des exécutables, des
+archives et du HTML ; les révisions et le téléchargement à l'identique ; la
+citation structurée — page, plage de caractères, boîte englobante, feuille,
+calque, objet ; la proposition d'extraction versionnée et son statut ; l'état
+idempotent par étape de pipeline ; les sept ports de traitement en `Protocol`.
+
+**Ce qui est livré ensuite, et c'est un parcours entier mais étroit** : un plan
+**DXF** se dépose, s'affiche dans Metreo sans logiciel externe, et rend ses
+mesures avec leur provenance exacte — feuille, calque, handle de l'objet — et
+leur réserve ; chacune se confirme, se corrige ou se refuse, et la décision
+humaine est consignée sans jamais réécrire la proposition machine. Deux des
+quinze étapes de pipeline s'exécutent pour de bon : `cad_read` et
+`page_render`. Mesuré de bout en bout sur un plan d'exécution réel de 7,4 Mo :
+663 mesures proposées dont 8 à vérifier, 663 situées sur l'image, en 14,1 s.
+
+**Ce qui n'est toujours pas commencé** : la lecture d'un **PDF** — ni son
+affichage, ni sa géométrie vectorielle, ni son OCR ; `vector_geometry` et
+`measurement` sont déclarées et vides. Aucune exécution asynchrone :
+`apps/worker/` n'a pas d'exécuteur, parce qu'il n'y a pas de file — le
+traitement hors requête est `scripts/lire_un_plan.py`, un processus par
+fichier. Aucune classification, aucune recherche, aucune comparaison de
+révisions. Les quatre scénarios d'acceptation ci-dessous ne sont pas
+automatisés — le scénario 12 l'est pour un PLAN, pas pour une clause de texte.
 
 Critères de fin :
 
@@ -104,16 +130,32 @@ Critères de fin :
   système (scénario 14).
 - L'extraction reste désactivable : l'édition d'un devis fonctionne sans elle.
 
-Dépendances à trancher avant de commencer : fournisseur OCR autorisé, zone
-d'hébergement des données, budget par page.
+Dépendances tranchées depuis : les bibliothèques et leurs licences sont
+arrêtées par `docs/adr/0007-lecture-de-plans.md` — Tesseract et ses données en
+Apache-2.0 pour l'OCR, PyMuPDF et Ghostscript écartés pour cause d'AGPL,
+Poppler écarté pour cause de GPL. Restent à trancher : la zone d'hébergement
+des données et le budget par page.
 
 ---
 
 ## Phase 3 — Métrés assistés, plans et CAO/BIM · **Non commencée**
 
 Périmètre : visionneuse et annotation, mesures manuelles traçables, extraction
-IFC/DXF, interface de conversion DWG, extraction assistée progressive,
-rapprochement avec le bordereau, contrôles unités/échelles.
+IFC/DXF, extraction assistée progressive, rapprochement avec le bordereau,
+contrôles unités/échelles.
+
+**Le DWG sort du périmètre, et ce n'est pas un report.** Aucune option n'est à
+la fois licite pour un service commercial, assez mûre pour porter une quantité
+facturée, et sûre : le motif de refus de chacune est consigné dans
+`docs/adr/0007-lecture-de-plans.md`. Un DWG déposé est reconnu à son en-tête de
+version et refusé en nommant la sortie — exporter en DXF ou en PDF. Le mot
+« DWG » n'apparaît dans aucune interface ni aucune offre.
+
+**Première brique livrée** : le DXF est reconnu au dépôt, ASCII comme binaire,
+et rangé sous son propre type. Il passait jusqu'ici pour un CSV, faute de
+signature — un plan était donc stocké en `.csv` et offert au pipeline d'import
+de prix. Reconnaître un fichier n'est pas le lire : aucune géométrie n'est
+encore extraite.
 
 Critères de fin :
 
@@ -179,4 +221,6 @@ calcul** — seulement un pack versionné et des traductions.
 | Sujet | Impact | Quand |
 | --- | --- | --- |
 | Pas de RLS PostgreSQL | L'isolation repose sur la couche service (testée) sans filet de sécurité base | Phase 5 |
-| `apps/worker` vide | Les opérations longues n'existent pas encore ; le répertoire est réservé | Phase 2 |
+| `apps/worker` sans exécuteur | Le premier traitement hors requête existe (`scripts/lire_un_plan.py`), mais il traite UNE révision nommée et s'arrête : il n'y a pas de file à dépiler | Phase 2 |
+| Lecture de plan SYNCHRONE | L'analyse part dans la requête HTTP. Mesuré de bout en bout sur un plan réel de 7,4 Mo : **14,1 s**. D'où le plafond `METREO_PLAN_SYNC_MAX_BYTES` (12 Mio) et le script hors requête pour le reste | Phase 2 |
+| Seul le DXF est lu | Un PDF se dépose et se télécharge, mais ne s'affiche ni ne se mesure. Rien dans l'écran ne prétend le contraire | Phase 2 |

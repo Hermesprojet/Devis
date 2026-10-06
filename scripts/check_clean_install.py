@@ -94,10 +94,16 @@ def main() -> int:
         install = [str(python), "-m", "pip", "install", "--quiet", "--no-cache-dir"]
         if args.constraints:
             install += ["-c", str(ROOT / args.constraints)]
-        # Le même jeu que `make lock` résout : sans l'extra `postgres`, le
-        # verrou décrirait un environnement que ce contrôle n'installe pas,
-        # et la comparaison des versions n'aurait plus de sens.
-        install += [str(ROOT / "packages" / "domain"), f"{ROOT / 'apps' / 'api'}[postgres]"]
+        # Le même jeu que l'IMAGE installe, et c'est ce qui donne son sens à la
+        # comparaison : le verrou décrit la clôture de `infra/api.Dockerfile`.
+        # `plans` en fait partie depuis que l'image sert les routes de lecture
+        # — l'omettre ici ferait échouer ce contrôle sur cinq paquets
+        # « verrouillés mais pas installés », alors que c'est le contrôle qui
+        # regarderait au mauvais endroit.
+        install += [
+            str(ROOT / "packages" / "domain"),
+            f"{ROOT / 'apps' / 'api'}[postgres,plans,pdf]",
+        ]
 
         print("Installation depuis les seuls manifestes…")
         proc = run(install)

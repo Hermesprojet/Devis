@@ -211,6 +211,12 @@ class TestTheDebtIsNamedAndBounded:
         "SourceCitation",
         "ExtractionProposal",
         "ValidationDecision",
+        # La calibration d'un plan PDF, posée par la lecture de plans. Elle
+        # porte bien la clé composite — c'est la base qui tient le lien entre
+        # une calibration et la révision de son organisation — et son isolation
+        # est éprouvée là où elle se voit : `test_authorization_matrix.py` exige
+        # un 404 sur l'identifiant d'un autre tenant, jamais un 403 ni un 422.
+        "PlanCalibration",
     }
 
     def _tables_with_composite_keys(self) -> set[str]:

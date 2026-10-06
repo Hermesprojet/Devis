@@ -56,7 +56,14 @@ jobs:
           python -m pip install --upgrade pip
           # Le paquet déclare ses dépendances : les installer par lui, et non
           # par une liste parallèle qui masquerait un manque dans pyproject.toml.
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev]"
+          #
+          # `plans` porte ezdxf ET Pillow — cette dernière est une dépendance
+          # DURE du module de dessin d'ezdxf, et son absence a fait tomber
+          # seize tests ICI alors que tout passait en local. Il est optionnel
+          # dans le manifeste, mais la CI
+          # l'installe : sans lui, les tests de lecture de plans se
+          # SAUTERAIENT, et une suite qui saute ne prouve rien.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans]"
       - name: Format et lint
         # scripts/ y est joint : il porte désormais de la logique — le
         # contrôle d'installation propre et celui des skills — et non plus
@@ -116,7 +123,7 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,postgres]"
       - name: Aller-retour des migrations, dans une base créée par ce run
         # Le service PostgreSQL est éphémère — il meurt avec le job — mais
         # l'aller-retour ne s'appuie pas là-dessus : il crée sa propre base au
@@ -234,7 +241,11 @@ jobs:
       - name: Installer l'API
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain ./apps/api
+          # `plans` est indispensable ICI aussi, et pas seulement aux tests
+          # Python : le banc fabrique une fixture de plan COTÉE avec ezdxf, et
+          # sans l'extra elle manquait — le parcours échouait sur un fichier
+          # absent, après avoir passé dix-sept scénarios.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[plans]"
       - name: Installer le web (verrouillé)
         working-directory: apps/web
         run: npm ci
@@ -436,6 +447,32 @@ jobs:
         run: docker build -f infra/api.Dockerfile -t metreo-api:ci .
       - name: Construire l'image du front
         run: docker build -f infra/web.Dockerfile -t metreo-web:ci .
+      - name: L'image de l'API sait lire un plan
+        # Le défaut que ce contrôle ferme : l'image installait
+        # `apps/api[postgres]` SANS l'extra `plans`. Elle démarrait, passait
+        # tous les contrôles ci-dessus, et échouait sur le PREMIER plan déposé
+        # — un `ModuleNotFoundError` que rien, ici, ne pouvait voir : les
+        # autres ateliers éprouvent le code, pas l'image.
+        #
+        # Et vérifier que `ezdxf` s'importe ne suffirait pas davantage. Le
+        # script fabrique un mur coté de 5 000 mm DANS le conteneur, le relit,
+        # compare la valeur à celle qui a été posée, rend le SVG, et vérifie
+        # qu'un type non lu est refusé par un code nommé.
+        #
+        # Le PDF a le même problème, avec un second extra — `pdf`, donc
+        # `pypdfium2` — et il est éprouvé de la même façon : un PDF fabriqué
+        # sur place, la position d'un texte comparée à une valeur connue (c'est
+        # l'inversion du repère vertical qui est en jeu), et un aperçu PNG.
+        #
+        # C'est le DOSSIER `scripts/` qui est monté, et non le seul fichier
+        # d'épreuve : la fabrique de fixtures PDF est partagée avec les tests
+        # du dépôt, et en recopier les octets ici en aurait fait deux vérités.
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts:/epreuve:ro" \
+            -v "$PWD/fixtures/plans:/fixtures:ro" \
+            --entrypoint python metreo-api:ci \
+            /epreuve/verifier_image_de_lecture.py --fixtures /fixtures
       - name: L'API ne tourne pas en root
         # Le point du contrôle : une image qui traitera en phase 2 des fichiers
         # venant de tiers ne doit pas exécuter son processus en uid 0.
@@ -565,7 +602,7 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,postgres]"
       - name: Les quatorze scénarios de connexion
         run: |
           python ops/banc_oidc.py \

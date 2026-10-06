@@ -126,28 +126,68 @@ class ExecutionVersion:
 
 @dataclass(frozen=True, slots=True)
 class SourceCitation:
+    """Un emplacement résoluble, par l'un OU l'autre de deux ancrages.
+
+    - **texte** : `page` et la plage de caractères, éventuellement `bbox` ;
+    - **CAO** : `object_id`, le handle de l'objet dans le fichier de dessin,
+      avec sa feuille et son calque.
+
+    Les champs de texte sont optionnels depuis que les plans sont lus : une
+    cotation de DXF n'a ni page ni caractères, et les inventer écrirait une
+    provenance fausse — voir la révision d8e9fa010203, qui porte la même
+    règle en base.
+
+    Ce qui reste refusé : la citation ancrée sur RIEN, et la demi-plage de
+    caractères. Les deux ancrages peuvent coexister — un plan PDF a une page
+    rendue et des objets vectoriels.
+    """
+
     revision: DocumentRevisionRef
-    page: int
-    char_start: int
-    char_end: int
-    bbox: BoundingBox
     extractor: str
     confidence: Confidence
+    page: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    bbox: BoundingBox | None = None
     sheet: str | None = None
     layer: str | None = None
     object_id: str | None = None
 
     def __post_init__(self) -> None:
-        if isinstance(self.page, bool) or self.page < 1:
+        # Les trois refus d'origine restent, mais ne mordent plus que sur une
+        # valeur PRÉSENTE : une page absente n'est pas une page invalide.
+        if self.page is not None and (isinstance(self.page, bool) or self.page < 1):
             raise InvalidCitationError("La page doit être supérieure ou égale à 1.", field="page")
-        if isinstance(self.char_start, bool) or self.char_start < 0:
+        if self.char_start is not None and (
+            isinstance(self.char_start, bool) or self.char_start < 0
+        ):
             raise InvalidCitationError(
                 "Le début de plage doit être supérieur ou égal à 0.", field="char_start"
             )
-        if isinstance(self.char_end, bool) or self.char_end <= self.char_start:
+        if (
+            self.char_start is not None
+            and self.char_end is not None
+            and (isinstance(self.char_end, bool) or self.char_end <= self.char_start)
+        ):
             raise InvalidCitationError(
                 "La fin de plage doit être strictement postérieure au début.",
                 field="char_end",
+            )
+        if (self.char_start is None) != (self.char_end is None):
+            raise InvalidCitationError(
+                "Une plage de caractères se donne entière : début et fin, ou aucun des deux.",
+                field="char_end",
+            )
+        if self.char_start is not None and self.page is None:
+            raise InvalidCitationError(
+                "Une plage de caractères sans page ne se rouvre pas : la page manque.",
+                field="page",
+            )
+        if not (self.page is not None and self.char_start is not None) and self.object_id is None:
+            raise InvalidCitationError(
+                "Une citation doit être ancrée : une page avec sa plage de caractères, "
+                "ou l'identifiant d'un objet. Sans ancrage, elle ne se rouvre pas.",
+                field="object_id",
             )
         object.__setattr__(self, "extractor", _text(self.extractor, "extractor"))
         for field_name in ("sheet", "layer", "object_id"):

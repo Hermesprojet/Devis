@@ -24,6 +24,7 @@ Ce qui vit ici fait quelque chose qu'une ligne ne fait pas.
 | --- | --- |
 | `purger_organisation.py` | Enregistre une décision de conservation, puis détruit une organisation — la **seule** porte, car ni la purge ni la décision ne passent par HTTP |
 | `migration_roundtrip.py` | Crée sa propre base, y joue montée / descente / remontée, la détruit |
+| `lire_un_plan.py` | Lit UN plan DXF déposé, hors requête HTTP : son constat, son image et ses mesures proposées. Il n'y a pas de file d'attente — ce script traite une révision nommée, et s'arrête. Sa raison d'être est le délai : l'API analyse dans la requête et refuse donc au-delà de `METREO_PLAN_SYNC_MAX_BYTES`, là où personne n'attend ici |
 
 `purger_organisation.py` montre ce qu'il va détruire avant de le faire et
 n'agit que sur `--confirmer`. Il ne peut pas passer outre les refus du service :

@@ -31,8 +31,21 @@ from ..transactions import compenser
 from . import audit
 from .document_storage import StockageLocal
 from .locking import lock_owned
-from .tenant import get_owned, owned_query
+from .tenant import find_owned, get_owned, owned_query
 
+# Les onze premières étapes traitent un document de TEXTE. Les quatre
+# dernières traitent un plan, et aucune des onze ne leur convenait :
+#
+#   page_render      rendre une page de plan en image affichable
+#   vector_geometry  extraire la géométrie vectorielle d'un PDF
+#   cad_read         lire un fichier CAO de façon déterministe (lecture_dxf)
+#   measurement      calculer une mesure depuis cette géométrie
+#
+# Cette liste vit à TROIS endroits qui doivent bouger ensemble : ici, la
+# contrainte `ck_document_step_run_step` de `models.py`, et celle de la
+# migration d8e9fa010203. `claim_step_run` refuse avant la base : oublier
+# celui-ci rendrait les étapes inatteignables par l'API tout en étant
+# acceptées en SQL. Un test compare les trois.
 DOCUMENT_PIPELINE_STEPS = frozenset(
     {
         "receive_security",
@@ -46,6 +59,10 @@ DOCUMENT_PIPELINE_STEPS = frozenset(
         "indexing",
         "consistency",
         "human_review",
+        "page_render",
+        "vector_geometry",
+        "cad_read",
+        "measurement",
     }
 )
 
@@ -375,6 +392,28 @@ def add_revision(
             "declared_media_type": original.declared_media_type,
         },
     )
+    return revision
+
+
+def revision_par_id(
+    session: Session,
+    *,
+    organization_id: str,
+    revision_id: str,
+) -> DocumentRevision:
+    """La révision, par son organisation et son identifiant SEULS.
+
+    `get_revision` exige en plus le `document_id` et vérifie le document
+    parent : c'est ce qu'il faut pour une route de téléchargement, qui part
+    d'un document. Un worker, lui, ne reçoit que (organisation, révision) —
+    passer par `get_revision` l'obligerait à deviner le document.
+
+    Et `session.get(DocumentRevision, revision_id)` serait une fuite entre
+    clients : rien n'y vérifie l'organisation. `find_owned` la porte.
+    """
+    revision = find_owned(session, DocumentRevision, organization_id, revision_id)
+    if revision is None:
+        raise RevisionRefusee("not_found", "Révision introuvable.")
     return revision
 
 
