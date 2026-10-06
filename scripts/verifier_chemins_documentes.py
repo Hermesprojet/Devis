@@ -96,6 +96,30 @@ def resoudre(chemin: str) -> Path | None:
     return None
 
 
+def fabriquee_a_la_demande(chemin: str) -> bool:
+    """Vrai si une fabrique du dépôt déclare produire ce fichier.
+
+    **Le défaut que cette règle ferme.** `fixtures/plans/plan_cote.pdf` est un
+    PDF fabriqué par `scripts/fabriquer_plans_de_test.py` et volontairement non
+    commité — un binaire commité devient un bloc que personne n'ouvre. Il existe
+    donc sur la machine de qui a lancé la fabrique, et nulle part ailleurs. Un
+    document qui le cite passait ce contrôle chez l'auteur et le faisait tomber
+    sur un dépôt propre : exactement le genre d'écart que ce script existe pour
+    attraper, retourné contre lui.
+
+    La règle plutôt qu'une exception : la fabrique DÉCLARE ce qu'elle produit
+    dans son tuple `ATTENDUS`, et c'est cette déclaration qui est lue. Un
+    fichier qu'aucune fabrique ne promet reste refusé.
+    """
+    nom = Path(chemin).name
+    for fabrique in sorted((RACINE / "scripts").glob("fabriquer_*.py")):
+        texte = fabrique.read_text(encoding="utf-8")
+        declaration = re.search(r"ATTENDUS[^=]*=\s*\(([^)]*)\)", texte, re.S)
+        if declaration and f'"{nom}"' in declaration.group(1):
+            return True
+    return False
+
+
 def porte_par_une_branche_citee(chemin: str, branches: frozenset[str]) -> str | None:
     """La branche, parmi celles que le DOCUMENT nomme, qui porte ce chemin.
 
@@ -143,6 +167,8 @@ def introuvables() -> dict[Path, set[str]]:
             if chemin in TOLERES:
                 continue
             if resoudre(chemin) is not None:
+                continue
+            if fabriquee_a_la_demande(chemin):
                 continue
             if porte_par_une_branche_citee(chemin, branches) is not None:
                 continue
