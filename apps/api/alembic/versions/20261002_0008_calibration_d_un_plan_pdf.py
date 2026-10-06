@@ -69,6 +69,7 @@ def montant() -> metreo_api.db.Amount:
     """
     return metreo_api.db.Amount(precision=28, scale=10)
 
+
 revision = "e2f3a4b50607"
 #: La tête de CETTE branche, et non celle de la branche de connexion.
 #:
