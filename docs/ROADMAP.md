@@ -25,11 +25,17 @@ formulé de façon vérifiable : soit un test l'atteste, soit il n'est pas attei
 > `next@15.5.24` — exactement la version attendue —, qui couvre les deux RCE
 > critiques du 25 août 2026. Preuves et décompte : `docs/PHASE1_VERIFICATION.md`.
 >
-> **Candidat de préproduction validé, PAS ENCORE DÉPLOYÉ.** Aucune installation
-> n'est en ligne. Le domaine `metreobtp.com` est acquis et ses DNS sont tenus
-> chez Cloudflare ; ce qui manque est un **serveur d'exécution** et un
-> **fournisseur d'identité réel**. Un domaine n'est pas un hébergement : tant
-> qu'aucune machine ne répond, l'enregistrement DNS n'a pas de cible.
+> **Déployé en préproduction le 16 septembre 2026**, au commit `39ad8d0`, sur un
+> serveur tenu par le propriétaire : les cinq services de la composition de
+> recette, migration en sortie 0, administrateur amorcé, `/api/v1/health` à 200
+> avec base `ok` et OIDC actif, accueil HTTPS public à 200. Le domaine
+> `metreobtp.com` est acquis et ses DNS sont tenus chez Cloudflare.
+>
+> **Mais personne n'y est encore entré.** Aucune connexion de bout en bout n'a
+> jamais été constatée : des conteneurs sains et des 200 ne disent rien du
+> parcours de connexion, qu'aucun test ne peut exercer contre un vrai
+> fournisseur d'identité. Tant que ce point n'est pas franchi, l'installation
+> n'est utilisable par personne.
 > **Production réelle bloquée par des décisions externes, pas par du code** :
 > sauvegardes distantes, supervision et décisions juridiques — la liste vit dans
 > `docs/EXPLOITATION.md`, « Ce qui manque encore ».
