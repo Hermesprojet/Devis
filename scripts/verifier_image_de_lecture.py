@@ -393,19 +393,13 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
         and autre.y1 > autre.y0,
         "une page dont la boîte ne commence pas à (0,0) se lit pareil",
         f"cadre={autre}"
-        + (
-            ""
-            if autre is None
-            else f" contre {cadre} — une boîte plate serait refusée en base"
-        ),
+        + ("" if autre is None else f" contre {cadre} — une boîte plate serait refusée en base"),
     )
 
     # La tuile de détail : sans elle, « confirmer ou corriger » demanderait
     # d'ouvrir le PDF hors de Metreo. Mesuré sur les plans réels : à 2 000 px
     # de grand côté, un texte fait 3,5 à 4,4 pixels de haut.
-    tuile = rendre_une_zone(
-        chemin, page=1, zone=(cadre.x0, cadre.y0, cadre.x1, cadre.y1)
-    )
+    tuile = rendre_une_zone(chemin, page=1, zone=(cadre.x0, cadre.y0, cadre.x1, cadre.y1))
     exiger(
         tuile.png[:8] == b"\x89PNG\r\n\x1a\n"
         and tuile.hauteur_du_texte_px is not None
