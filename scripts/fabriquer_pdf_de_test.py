@@ -203,6 +203,78 @@ def deux_pages_de_tailles_differentes() -> bytes:
     )
 
 
+def page_avec_boite_decalee(
+    texte: str = TEXTE_REFERENCE, *, origine_x: float = 100.0, origine_y: float = 50.0
+) -> bytes:
+    """Une page dont le coin bas gauche n'est PAS (0, 0).
+
+    Le format l'autorise, et un plan exporté depuis un logiciel de mise en page
+    le fait. Le texte est posé au même endroit RELATIF que sur la fixture de
+    référence : les deux doivent donc rendre le même cadre normalisé.
+
+    Sans cette fixture, un lecteur qui divise une coordonnée absolue par une
+    DIMENSION passe tous les autres tests, et pose la boîte ailleurs — ou,
+    quand le décalage est grand, l'écrase sur un bord en une boîte plate, que
+    la contrainte `ck_source_citation_bbox` refuse.
+    """
+    contenu = _contenu_texte(texte, origine_x + X_REFERENCE, origine_y + Y_REFERENCE)
+    boite = (
+        f"[{origine_x:g} {origine_y:g} "
+        f"{origine_x + LARGEUR_REFERENCE:g} {origine_y + HAUTEUR_REFERENCE:g}]"
+    ).encode("ascii")
+    return assembler(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox " + boite + b" "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            _flux(contenu),
+        ],
+        racine=1,
+    )
+
+
+def page_tournee(rotation: int, texte: str = TEXTE_REFERENCE) -> bytes:
+    """La page de référence, avec `/Rotate`. Le texte ne bouge pas, l'affichage si.
+
+    `get_size()` rend alors la taille AFFICHÉE — (100, 200) pour une page de
+    200 × 100 tournée de 90° — tandis que les rectangles de texte restent dans
+    le repère non tourné. Diviser l'un par l'autre pose la boîte n'importe où.
+    """
+    return assembler(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            f"<< /Type /Page /Parent 2 0 R /MediaBox "
+            f"[0 0 {LARGEUR_REFERENCE:g} {HAUTEUR_REFERENCE:g}] /Rotate {rotation:d} "
+            f"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".encode("ascii"),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            _flux(_contenu_texte(texte, X_REFERENCE, Y_REFERENCE)),
+        ],
+        racine=1,
+    )
+
+
+def page_avec_texte_hors_cadre() -> bytes:
+    """Un texte posé en dehors de la page. Le format ne l'interdit pas.
+
+    Son emplacement est inconnu — pas « au bord » : l'écraser sur un bord
+    inventerait une position, et le propriétaire chercherait la cote là.
+    """
+    return assembler(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            _flux(_contenu_texte(TEXTE_REFERENCE, -500.0, -500.0)),
+        ],
+        racine=1,
+    )
+
+
 def page_sans_texte(*, largeur: float = 300.0, hauteur: float = 200.0) -> bytes:
     """Une page qui porte un TRAIT et pas un caractère : l'image d'un scan.
 
@@ -396,6 +468,9 @@ def main() -> int:
         ("une_page_avec_texte", une_page_avec_texte()),
         ("page_avec_plusieurs_textes", page_avec_plusieurs_textes()),
         ("deux_pages_de_tailles_differentes", deux_pages_de_tailles_differentes()),
+        ("page_avec_boite_decalee", page_avec_boite_decalee()),
+        ("page_tournee(90)", page_tournee(90)),
+        ("page_avec_texte_hors_cadre", page_avec_texte_hors_cadre()),
         ("page_sans_texte", page_sans_texte()),
         ("beaucoup_de_pages(51)", beaucoup_de_pages(51)),
         ("chiffre", chiffre()),

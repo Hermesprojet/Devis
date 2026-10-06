@@ -14,6 +14,16 @@ Ce qu'il fait et ne fait pas, et la frontière n'est pas négociable :
   coordonnées sont des **points PostScript** (1/72 de pouce), qui ne disent
   rien de l'ouvrage. Passer d'un point à un millimètre demande une échelle, et
   une échelle demande une confirmation humaine. Rien ici n'y touche ;
+
+- et **un nombre n'est pas une cote**. Constaté sur un plan réel : 860 des
+  4 351 fragments de `etage-1.pdf` sont des nombres de trois chiffres ou plus.
+  Le premier d'entre eux est « 1040 » — le code postal d'Etterbeek, dans le
+  cartouche : « rue des casernes - 1040 Etterbeek ». Un lecteur qui
+  proposerait les nombres comme des cotes proposerait donc des codes postaux,
+  des numéros de plan, des années et des numéros de téléphone. Reconnaître une
+  cote demande de regarder ce qu'elle cote, c'est-à-dire de regarder le
+  dessin ; c'est à cela que sert `rendu_pdf.rendre_une_zone`, et c'est en
+  regardant une de ses tuiles que ce défaut a été vu ;
 - il ne lit **pas** les chemins vectoriels. L'ADR 0007 les confie à pdfplumber,
   qui n'est pas encore déclaré : une dépendance qu'aucun code n'appelle est une
   surface d'attaque gratuite.
@@ -51,6 +61,17 @@ PLAFOND_FRAGMENTS = 50_000
 #: l'OCR est une étape ultérieure. C'est une anomalie qui dégrade la confiance.
 SEUIL_TEXTE_MAIGRE = 50
 
+#: Le code d'erreur de PDFium pour « mot de passe incorrect ».
+#: Vérifié à l'exécution sur un PDF réellement chiffré : `err_code` vaut 4.
+CODE_MOT_DE_PASSE = 4
+
+#: En deçà, un dépassement de bord n'est pas un dépassement.
+#:
+#: Les coordonnées d'un PDF sont des flottants, et un texte collé au bord de
+#: la page ressort à 1,0000000000002. Sans cette tolérance, chaque cartouche
+#: serait annoncé « recadré » et l'avertissement perdrait tout son sens.
+TOLERANCE_DE_BORD = 1e-9
+
 #: Le plus grand côté de l'aperçu, en pixels. Même valeur que le rendu DXF :
 #: un plan A0 rendu à l'échelle 1 fait 3 370 × 2 591 points, et à l'échelle 2
 #: il demande 3,5 s et 35 Mo — mesuré. On borne donc par la taille affichée,
@@ -72,7 +93,12 @@ class Fragment:
     texte: str
     #: 1-indexée, comme une citation documentaire.
     page: int
-    cadre: Cadre
+    #: `None` quand la position n'a pas pu être établie — voir `position`.
+    cadre: Cadre | None
+    #: `"exacte"`, `"recadree"` ou `"inconnue"`. Un écran qui n'afficherait
+    #: que le cadre présenterait un surlignage partiel comme s'il était
+    #: complet ; ce champ est ce qui lui permet de le dire.
+    position: str = "exacte"
 
 
 @dataclass
@@ -95,27 +121,91 @@ class LecturePdf:
         return sum(len(f.texte) for f in self.fragments) >= SEUIL_TEXTE_MAIGRE
 
 
-def _normaliser(
-    rectangle: tuple[float, float, float, float], largeur: float, hauteur: float
-) -> Cadre | None:
-    """Du repère PDF (origine en bas à gauche) à celui de l'écran.
+#: Comment un point de la page tombe à l'écran, selon `/Rotate`.
+#:
+#: `a` et `b` sont les coordonnées du point **relatives à la boîte affichée**,
+#: ramenées dans [0,1] : `a` le long de la largeur de la page, `b` le long de
+#: sa hauteur, `b` croissant vers le HAUT puisque c'est le repère du PDF.
+#: Le résultat est `(x, y)` à l'écran, `y` croissant vers le bas.
+#:
+#: **Établi par vérité terrain, pas par raisonnement** : pour chacune des
+#: quatre rotations, la page a été rendue en PNG et la boîte d'encre réelle du
+#: texte a été relevée au pixel. Les quatre formules ci-dessous reproduisent
+#: ces quatre boîtes. Déduire la rotation d'une convention supposée a une
+#: chance sur huit d'être juste, et se trompe sans rien casser.
+_VERS_L_ECRAN: dict[int, object] = {
+    0: lambda a, b: (a, 1.0 - b),
+    90: lambda a, b: (b, a),
+    180: lambda a, b: (1.0 - a, b),
+    270: lambda a, b: (1.0 - b, 1.0 - a),
+}
 
-    `rectangle` arrive en `(gauche, bas, droite, haut)`, convention PDFium.
-    Le résultat suit celle des citations : `(x0, y0, x1, y1)` dans [0,1],
-    **origine en haut à gauche**, donc `y` inversé.
 
-    Rend `None` plutôt qu'une boîte fausse quand la page n'a pas de dimension
-    exploitable : `None` veut dire « on ne sait pas », et l'écran sait
-    l'afficher ; une boîte inventée désignerait un pixel au hasard.
+def normaliser(
+    rectangle: tuple[float, float, float, float],
+    boite_affichee: tuple[float, float, float, float],
+    rotation: int,
+) -> tuple[Cadre | None, str]:
+    """Du repère de la page à celui de l'écran, et ce qu'on sait de la position.
+
+    Rend `(cadre, position)` où `position` vaut :
+
+    - `"exacte"` : la boîte est entièrement dans la page ;
+    - `"recadree"` : elle en dépassait et a été rognée. La mesure reste
+      utilisable, mais le surlignage ne couvre pas tout le texte ;
+    - `"inconnue"` : elle est hors de la page, ou plate. Le cadre vaut alors
+      `None`, et c'est **la seule réponse honnête** — une boîte inventée
+      désignerait un pixel au hasard, et l'écran sait afficher « position
+      inconnue ».
+
+    **Trois défauts corrigés ici, chacun reproduit par construction.**
+
+    1. *L'origine de la boîte était ignorée.* `page.get_size()` rend des
+       DIMENSIONS, pas une origine ; les rectangles de texte, eux, arrivent en
+       coordonnées absolues de la page. Sur une page de `MediaBox
+       [100 50 300 150]`, un texte posé au même endroit relatif qu'une page
+       commençant à (0,0) ressortait à `x0=0,60` au lieu de 0,10 — et avec
+       `y0 = y1 = 0`, donc une boîte PLATE, que la contrainte
+       `ck_source_citation_bbox` refuse.
+    2. *`/Rotate` était ignoré.* `get_size()` rend la taille AFFICHÉE — (100,
+       200) pour une page de 200 × 100 tournée de 90° — tandis que les
+       rectangles de texte restent dans le repère non tourné. Diviser l'un par
+       l'autre pose la boîte n'importe où.
+    3. *Le rognage se faisait en silence*, par `max(0, min(1, …))`, et c'est
+       lui qui rendait le premier défaut invisible : une boîte hors cadre
+       devenait une boîte plate au bord, et rien ne le disait.
     """
+    gauche, bas, droite, haut = boite_affichee
+    largeur = droite - gauche
+    hauteur = haut - bas
     if largeur <= 0 or hauteur <= 0:
-        return None
-    gauche, bas, droite, haut = rectangle
-    x0 = max(0.0, min(1.0, gauche / largeur))
-    x1 = max(0.0, min(1.0, droite / largeur))
-    y0 = max(0.0, min(1.0, 1.0 - haut / hauteur))
-    y1 = max(0.0, min(1.0, 1.0 - bas / hauteur))
-    return Cadre(x0=x0, y0=y0, x1=x1, y1=y1)
+        return None, "inconnue"
+
+    transformer = _VERS_L_ECRAN.get(rotation % 360 if rotation else 0)
+    if transformer is None:
+        # Une rotation qui n'est pas un multiple de 90 n'existe pas dans le
+        # format. Plutôt que d'en inventer une, on dit qu'on ne sait pas.
+        return None, "inconnue"
+
+    coins = [
+        transformer((x - gauche) / largeur, (y - bas) / hauteur)  # type: ignore[operator]
+        for x in (rectangle[0], rectangle[2])
+        for y in (rectangle[1], rectangle[3])
+    ]
+    xs = [coin[0] for coin in coins]
+    ys = [coin[1] for coin in coins]
+    brut = (min(xs), min(ys), max(xs), max(ys))
+
+    # L'intersection avec la page, et ce qu'elle apprend.
+    x0, y0 = max(0.0, brut[0]), max(0.0, brut[1])
+    x1, y1 = min(1.0, brut[2]), min(1.0, brut[3])
+    if x1 <= x0 or y1 <= y0:
+        return None, "inconnue"
+
+    position = "exacte"
+    if any(valeur < -TOLERANCE_DE_BORD or valeur > 1.0 + TOLERANCE_DE_BORD for valeur in brut):
+        position = "recadree"
+    return Cadre(x0=x0, y0=y0, x1=x1, y1=y1), position
 
 
 def lire(chemin: str | Path) -> LecturePdf:
@@ -159,8 +249,11 @@ def lire(chemin: str | Path) -> LecturePdf:
         document = pdfium.PdfDocument(str(chemin))
         nombre = len(document)
     except pdfium.PdfiumError as erreur:
-        # PDFium distingue le mot de passe du reste ; son message le nomme.
-        chiffre = "password" in str(erreur).lower()
+        # Le CODE d'erreur de PDFium, pas son message : 4 est « mot de passe
+        # incorrect ». Chercher « password » dans le texte marchait, et aurait
+        # cessé de marcher au premier message traduit ou reformulé — sans
+        # bruit, en reclassant un PDF protégé en « PDF invalide ».
+        chiffre = getattr(erreur, "err_code", None) == CODE_MOT_DE_PASSE
         constat.refuse = True
         constat.motif_du_refus = Anomalie(
             "pdf_chiffre" if chiffre else "pdf_invalide",
@@ -190,10 +283,25 @@ def lire(chemin: str | Path) -> LecturePdf:
     constat.pages = nombre
     trop_de_fragments = False
 
+    recadres = 0
+    sans_position = 0
+    pages_tournees: list[int] = []
+
     for numero in range(nombre):
         page = document[numero]
+        # Les DIMENSIONS affichées, pour le rapport de forme de l'aperçu.
         largeur, hauteur = page.get_size()
         constat.dimensions.append((float(largeur), float(hauteur)))
+
+        # Et la BOÎTE, avec son origine, pour situer un texte dedans. Les deux
+        # ne sont pas la même chose : `get_size()` ne dit pas OÙ la page
+        # commence, et les rectangles de texte arrivent en coordonnées
+        # absolues. Une page de `MediaBox [100 50 300 150]` mesure bien
+        # 200 × 100, et son coin bas gauche est à (100, 50).
+        boite = tuple(float(valeur) for valeur in page.get_bbox())
+        rotation = int(page.get_rotation() or 0)
+        if rotation:
+            pages_tournees.append(numero + 1)
 
         texte_de_page = page.get_textpage()
         rectangles = texte_de_page.count_rects()
@@ -207,12 +315,53 @@ def lire(chemin: str | Path) -> LecturePdf:
             ).strip()
             if not texte:
                 continue
-            cadre = _normaliser((gauche, bas, droite, haut), largeur, hauteur)
-            if cadre is None:
-                continue
-            constat.fragments.append(Fragment(texte=texte, page=numero + 1, cadre=cadre))
+            cadre, position = normaliser(
+                (gauche, bas, droite, haut),
+                boite,  # type: ignore[arg-type]
+                rotation,
+            )
+            if position == "recadree":
+                recadres += 1
+            elif position == "inconnue":
+                sans_position += 1
+            # Un fragment sans position est CONSERVÉ : son texte reste une
+            # information — une échelle écrite dans un cartouche hors cadre
+            # vaut toujours d'être lue. C'est son emplacement qui manque, et
+            # `position` le dit au lieu de le taire.
+            constat.fragments.append(
+                Fragment(texte=texte, page=numero + 1, cadre=cadre, position=position)
+            )
         if trop_de_fragments:
             break
+
+    if pages_tournees:
+        constat.anomalies.append(
+            Anomalie(
+                "pages_tournees",
+                f"{len(pages_tournees)} page(s) portent une rotation d'affichage. "
+                "Elle est appliquée aux positions, et l'aperçu la suit aussi. "
+                "C'est signalé parce qu'un surlignage qui tomberait à côté "
+                "viendrait de là.",
+            )
+        )
+    if recadres:
+        constat.anomalies.append(
+            Anomalie(
+                "fragments_recadres",
+                f"{recadres} fragment(s) de texte dépassent du bord de la page "
+                "et ont été rognés : leur surlignage ne couvrira pas tout le "
+                "texte. La valeur lue, elle, est complète.",
+            )
+        )
+    if sans_position:
+        constat.anomalies.append(
+            Anomalie(
+                "fragments_sans_position",
+                f"{sans_position} fragment(s) de texte sont hors de la page "
+                "affichée : leur texte est conservé, leur emplacement est "
+                "inconnu. Ils ne peuvent pas être montrés sur l'aperçu.",
+            )
+        )
 
     if trop_de_fragments:
         constat.anomalies.append(

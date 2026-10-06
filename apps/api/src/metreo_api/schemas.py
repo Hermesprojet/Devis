@@ -1003,7 +1003,14 @@ class FragmentDeTexte(ApiModel):
     page: int
     #: Dans le repère de l'aperçu PNG : [0,1], origine en haut à gauche. Se
     #: pose donc directement sur l'image, sans conversion.
-    cadre: CadreDePlan
+    #:
+    #: `null` quand la position est inconnue. Ce n'est pas un oubli : écraser
+    #: une boîte hors page sur un bord inventerait un emplacement, et le
+    #: propriétaire chercherait la cote là.
+    cadre: CadreDePlan | None
+    #: `"exacte"`, `"recadree"` ou `"inconnue"`. Un écran qui n'afficherait que
+    #: le cadre présenterait un surlignage partiel comme s'il était complet.
+    position: str = "exacte"
 
 
 class TextesDePlan(ApiModel):

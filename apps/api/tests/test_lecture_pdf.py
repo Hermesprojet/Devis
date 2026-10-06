@@ -373,3 +373,245 @@ def test_the_fragment_ceiling_stops_the_reading_and_says_so(
     assert "trop_de_fragments" in codes
     message = next(a.message for a in constat.anomalies if a.code == "trop_de_fragments")
     assert "complète" in message
+
+
+# ---------------------------------------------------------------------------
+# Le repère, suite : l'origine de la page et sa rotation
+# ---------------------------------------------------------------------------
+
+
+def test_a_page_whose_box_does_not_start_at_zero_is_normalised_the_same(
+    tmp_path: Path,
+) -> None:
+    """Une page de `MediaBox [100 50 300 150]` se lit comme une page à l'origine.
+
+    **Le défaut que ce test ferme, reproduit avant d'être corrigé.**
+    `page.get_size()` rend des DIMENSIONS — 200 × 100 — et ne dit pas où la
+    page commence. Les rectangles de texte, eux, arrivent en coordonnées
+    absolues : (120, 130) et non (20, 80). Diviser l'un par l'autre donnait
+    `x0 = 0,60` au lieu de 0,10, et surtout `y0 = y1 = 0` : une boîte PLATE,
+    que la contrainte `ck_source_citation_bbox` refuse en base.
+
+    Le rognage silencieux rendait ce défaut invisible — il transformait une
+    boîte hors cadre en boîte au bord, sans un mot.
+    """
+    reference = lecture_pdf.lire(_ecrire(tmp_path, fabrique.une_page_avec_texte(), "origine.pdf"))
+    decalee = lecture_pdf.lire(_ecrire(tmp_path, fabrique.page_avec_boite_decalee(), "decalee.pdf"))
+
+    (attendu,) = reference.fragments
+    (obtenu,) = decalee.fragments
+    assert obtenu.texte == attendu.texte
+    assert obtenu.position == "exacte"
+    assert obtenu.cadre is not None and attendu.cadre is not None
+
+    for nom in ("x0", "y0", "x1", "y1"):
+        assert getattr(obtenu.cadre, nom) == pytest.approx(getattr(attendu.cadre, nom), abs=1e-6), (
+            f"{nom} diffère : l'origine de la boîte n'est pas prise en compte"
+        )
+
+    assert obtenu.cadre.y1 > obtenu.cadre.y0, "la boîte ne doit pas être plate"
+
+
+@pytest.mark.parametrize(
+    ("rotation", "encre"),
+    [
+        (0, (0.102, 0.115, 0.228, 0.195)),
+        (90, (0.800, 0.102, 0.880, 0.228)),
+        (180, (0.767, 0.800, 0.895, 0.880)),
+        (270, (0.115, 0.770, 0.195, 0.895)),
+    ],
+)
+def test_the_page_rotation_is_applied_to_the_position(
+    tmp_path: Path, rotation: int, encre: tuple[float, float, float, float]
+) -> None:
+    """Les quatre rotations, comparées à la boîte d'encre relevée au pixel.
+
+    **Les valeurs attendues ne viennent pas d'un raisonnement.** Pour chacune
+    des quatre rotations, la page a été rendue en PNG et la boîte des pixels
+    sombres a été relevée. Déduire une convention de rotation a une chance sur
+    huit d'être juste, et se tromper ne casse rien : le surlignage tombe
+    ailleurs, et personne ne s'en aperçoit avant qu'un propriétaire cherche sa
+    cote au mauvais endroit.
+
+    L'écart toléré couvre la différence entre la boîte du texte, qui inclut
+    les approches de la police, et l'encre réelle des glyphes.
+    """
+    constat = lecture_pdf.lire(
+        _ecrire(tmp_path, fabrique.page_tournee(rotation), f"r{rotation}.pdf")
+    )
+
+    (fragment,) = constat.fragments
+    assert fragment.cadre is not None
+    obtenu = (
+        fragment.cadre.x0,
+        fragment.cadre.y0,
+        fragment.cadre.x1,
+        fragment.cadre.y1,
+    )
+    for nom, valeur, attendu in zip(("x0", "y0", "x1", "y1"), obtenu, encre, strict=True):
+        assert valeur == pytest.approx(attendu, abs=0.01), (
+            f"/Rotate {rotation} : {nom} vaut {valeur:.3f}, l'encre est à {attendu:.3f}"
+        )
+
+
+def test_a_rotated_page_is_announced(tmp_path: Path) -> None:
+    """La rotation est appliquée, et elle est DITE.
+
+    Un surlignage qui tomberait à côté viendrait de là en premier : l'anomalie
+    est ce qui permet de le chercher au bon endroit au lieu de soupçonner
+    l'extraction.
+    """
+    constat = lecture_pdf.lire(_ecrire(tmp_path, fabrique.page_tournee(90), "tournee.pdf"))
+    assert "pages_tournees" in [a.code for a in constat.anomalies]
+
+    droite = lecture_pdf.lire(_ecrire(tmp_path, fabrique.une_page_avec_texte(), "droite.pdf"))
+    assert "pages_tournees" not in [a.code for a in droite.anomalies], (
+        "sans contre-exemple, une anomalie posée sur tous les documents "
+        "passerait le test précédent et ne voudrait plus rien dire"
+    )
+
+
+def test_a_text_outside_the_page_keeps_its_text_and_loses_its_position(
+    tmp_path: Path,
+) -> None:
+    """Hors de la page, l'emplacement est INCONNU — pas « au bord ».
+
+    L'écraser sur un bord inventerait une position, et le propriétaire
+    chercherait la cote là. Le texte, lui, reste : une échelle écrite dans un
+    cartouche hors cadre vaut toujours d'être lue.
+    """
+    constat = lecture_pdf.lire(_ecrire(tmp_path, fabrique.page_avec_texte_hors_cadre(), "hors.pdf"))
+
+    assert not constat.refuse
+    (fragment,) = constat.fragments
+    assert fragment.texte == fabrique.TEXTE_REFERENCE
+    assert fragment.cadre is None
+    assert fragment.position == "inconnue"
+    assert "fragments_sans_position" in [a.code for a in constat.anomalies]
+
+
+def test_a_fragment_inside_the_page_is_not_reported_as_clipped(
+    tmp_path: Path,
+) -> None:
+    """Le contre-exemple des deux anomalies de position.
+
+    Sans lui, un lecteur qui déclarerait « recadré » ou « hors cadre » tous
+    les fragments passerait les tests ci-dessus, et les deux avertissements ne
+    voudraient plus rien dire.
+    """
+    constat = lecture_pdf.lire(
+        _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "dedans.pdf")
+    )
+
+    assert all(f.position == "exacte" for f in constat.fragments)
+    codes = [a.code for a in constat.anomalies]
+    assert "fragments_recadres" not in codes
+    assert "fragments_sans_position" not in codes
+
+
+# ---------------------------------------------------------------------------
+# La tuile de détail : ce sans quoi « confirmer ou corriger » n'a pas de sens
+# ---------------------------------------------------------------------------
+
+
+def test_a_detail_tile_magnifies_a_fragment_enough_to_read_it(
+    tmp_path: Path,
+) -> None:
+    """Un aperçu de page ne permet pas de RELIRE une cote ; une tuile si.
+
+    Mesuré sur les quatre plans réels : à 2 000 pixels de grand côté, la
+    hauteur médiane d'un texte est de 3,5 à 4,4 pixels. Or le propriétaire
+    doit confirmer ou corriger une mesure, ce qui demande de la lire.
+
+    La tuile vise `COTE_TUILE` sur son grand côté, et rend la hauteur que le
+    texte atteint réellement — plutôt que de la supposer.
+    """
+    from metreo_api.services import rendu_pdf
+
+    chemin = _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "plan.pdf")
+    constat = lecture_pdf.lire(chemin)
+    fragment = next(f for f in constat.fragments if f.texte == "5000")
+    assert fragment.cadre is not None
+
+    tuile = rendu_pdf.rendre_une_zone(
+        chemin,
+        page=fragment.page,
+        zone=(
+            fragment.cadre.x0,
+            fragment.cadre.y0,
+            fragment.cadre.x1,
+            fragment.cadre.y1,
+        ),
+    )
+
+    assert tuile.png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert max(tuile.largeur, tuile.hauteur) <= rendu_pdf.COTE_TUILE
+    assert tuile.hauteur_du_texte_px is not None
+    assert tuile.hauteur_du_texte_px > 4.0, (
+        "si la tuile ne rend pas le texte plus grand que l'aperçu, elle ne sert à rien"
+    )
+
+    # Et le plein aperçu, lui, ne prétend pas rendre un texte lisible.
+    apercu = rendu_pdf.rendre(chemin)
+    assert apercu.hauteur_du_texte_px is None
+
+
+def test_a_tile_shows_the_drawing_around_the_text_not_only_the_text(
+    tmp_path: Path,
+) -> None:
+    """La marge est prise sur la HAUTEUR du texte, pas sur la taille du cadre.
+
+    **Vu à l'œil avant d'être écrit ici.** Avec une marge d'une demie du
+    cadre, la tuile d'un « 1040 » d'un plan réel montrait « - 1040 E » et pas
+    un trait du dessin : le propriétaire y lisait la cote sans pouvoir juger
+    CE QU'ELLE cote, ce qui est précisément la question qu'on lui pose. (Ce
+    « 1040 », d'ailleurs, était le code postal d'Etterbeek dans le cartouche.)
+
+    La tuile doit donc être nettement plus large que le texte lui-même.
+    """
+    from metreo_api.services import rendu_pdf
+
+    chemin = _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "plan.pdf")
+    constat = lecture_pdf.lire(chemin)
+    fragment = next(f for f in constat.fragments if f.texte == "5000")
+    assert fragment.cadre is not None
+    hauteur_du_cadre = fragment.cadre.y1 - fragment.cadre.y0
+
+    tuile = rendu_pdf.rendre_une_zone(
+        chemin,
+        page=fragment.page,
+        zone=(
+            fragment.cadre.x0,
+            fragment.cadre.y0,
+            fragment.cadre.x1,
+            fragment.cadre.y1,
+        ),
+    )
+    assert tuile.hauteur_du_texte_px is not None
+
+    # La hauteur montrée vaut au moins dix fois celle du texte : la marge est
+    # de huit fois de chaque côté, donc dix-sept fois en tout, rognée par les
+    # bords de la page.
+    part_du_texte = tuile.hauteur_du_texte_px / tuile.hauteur
+    assert part_du_texte < 0.1, (
+        f"le texte occupe {part_du_texte:.0%} de la hauteur de la tuile : "
+        "elle ne montre pas assez de dessin autour pour juger la cote"
+    )
+    assert hauteur_du_cadre > 0
+
+
+def test_a_measurement_whose_position_is_unknown_cannot_be_shown(
+    tmp_path: Path,
+) -> None:
+    """Pas de tuile sans position, et le refus le dit.
+
+    C'est la conséquence directe de `position="inconnue"` : on ne fabrique pas
+    une zone pour une mesure dont on ignore l'emplacement.
+    """
+    from metreo_api.services import rendu_pdf
+
+    chemin = _ecrire(tmp_path, fabrique.une_page_avec_texte(), "plan.pdf")
+
+    with pytest.raises(rendu_pdf.RenduRefuse) as refus:
+        rendu_pdf.rendre_une_zone(chemin, page=1, zone=(0.5, 0.5, 0.5, 0.9))
+    assert refus.value.code == "zone_invalide"

@@ -753,11 +753,20 @@ def get_plan_textes(
             FragmentDeTexte(
                 texte=str(f.get("texte", "")),
                 page=int(f.get("page") or 1),
-                cadre=CadreDePlan(
-                    x0=str(cadre[0]), y0=str(cadre[1]), x1=str(cadre[2]), y1=str(cadre[3])
+                position=str(f.get("position") or "exacte"),
+                # Un fragment sans position est rendu quand même : son texte
+                # est une information, et c'est son emplacement qui manque.
+                cadre=(
+                    CadreDePlan(
+                        x0=str(cadre[0]),
+                        y0=str(cadre[1]),
+                        x1=str(cadre[2]),
+                        y1=str(cadre[3]),
+                    )
+                    if isinstance(cadre := f.get("cadre"), list) and len(cadre) == 4
+                    else None
                 ),
             )
             for f in tranche
-            if isinstance(cadre := f.get("cadre"), list) and len(cadre) == 4
         ],
     )

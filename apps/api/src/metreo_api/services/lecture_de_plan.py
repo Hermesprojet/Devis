@@ -469,12 +469,20 @@ def _fragments_en_dictionnaire(constat: LecturePdf) -> dict[str, Any]:
             {
                 "texte": fragment.texte,
                 "page": fragment.page,
-                "cadre": [
-                    fragment.cadre.x0,
-                    fragment.cadre.y0,
-                    fragment.cadre.x1,
-                    fragment.cadre.y1,
-                ],
+                # `null` quand la position est inconnue — un fragment hors de
+                # la page affichée. Le texte reste, l'emplacement manque, et
+                # `position` dit lequel des deux cas on a.
+                "cadre": (
+                    [
+                        fragment.cadre.x0,
+                        fragment.cadre.y0,
+                        fragment.cadre.x1,
+                        fragment.cadre.y1,
+                    ]
+                    if fragment.cadre is not None
+                    else None
+                ),
+                "position": fragment.position,
             }
             for fragment in constat.fragments
         ],
