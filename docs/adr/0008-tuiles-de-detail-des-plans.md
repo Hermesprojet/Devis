@@ -31,14 +31,14 @@ de la page, rendue sur 512 pixels :
 
 | Mesuré sur la tuile de la loupe | Valeur |
 | --- | --- |
-| Étendue réellement rendue | 6,4 % de la page |
-| Papier par pixel | **0,149 à 0,211 mm** |
-| Gain sur l'aperçu | **3,2 à 4,0 fois** |
+| Étendue réellement rendue | **5 % de la page — exactement ce qui est demandé** |
+| Papier par pixel | **0,12 à 0,17 mm** |
+| Gain sur l'aperçu | **5,1 fois**, soit 512 ⁄ (2 000 × 0,05) |
 | Hauteur d'une ligne de texte | 12 à 19 px |
 
-Ces quatre nombres sont le résultat d'une correction, et le § « Le plafond de la
-marge » ci-dessous dit laquelle : la première version rendait **1,47 à 1,54 mm
-par pixel**, c'est-à-dire plus grossier que l'aperçu.
+Ces nombres sont le résultat d'une correction, et le § 3 dit laquelle : une
+marge ajoutée par le rendu faisait rendre jusqu'à 85 % de la page, soit **1,47
+à 1,54 mm par pixel** — plus grossier que l'aperçu.
 
 ### Pourquoi la solution évidente est exactement la mauvaise
 
@@ -118,47 +118,59 @@ L'organisation et la révision sont dans le **chemin**, pas dans l'empreinte :
 une collision d'empreinte afficherait une mauvaise zone du même document, ce
 qui se verrait immédiatement, et jamais le document d'un autre tenant.
 
-### 3. Le plafond de la marge, et le défaut qu'il ferme
+### 3. La tuile rend exactement la zone demandée — la marge appartient à l'appelant
 
-Une tuile ne montre pas seulement la zone demandée : elle l'élargit d'une marge
-de **huit fois sa hauteur**, pour que le propriétaire voie l'ouvrage coté et
-pas seulement le nombre. Sans marge, la tuile d'un « 1040 » de 11 points montre
-« - 1040 E » et pas un trait du dessin — le propriétaire lit la cote sans
-pouvoir juger CE QU'ELLE cote, ce qui est précisément la question qu'on lui
-pose.
+C'est l'invariant sur lequel repose tout l'écran de mesure, et il a été appris
+par l'erreur.
 
-Huit fois la hauteur convient à la boîte d'un texte, qui fait deux millièmes de
-page. **Mais la zone n'est pas toujours une boîte de texte.** La loupe de
-l'écran demande 5 % de la page : huit fois 5 % font 40 % de marge de chaque
-côté, et la tuile rendait alors 51 à 67 % × 85 % de la page sur 512 pixels.
+Une tuile élargissait d'abord la zone d'une **marge de huit fois sa hauteur**,
+pour que le propriétaire voie l'ouvrage coté et pas seulement le nombre : sans
+contexte, la tuile d'un « 1040 » de 11 points montre « - 1040 E » et pas un
+trait du dessin — il lit la cote sans pouvoir juger CE QU'ELLE cote, ce qui est
+précisément la question qu'on lui pose.
 
-| Zone demandée | Étendue rendue | Papier par pixel | Verdict |
-| --- | --- | --- | --- |
-| Boîte d'un texte (0,3 %) | 5,1 à 6,4 % | 0,149 à 0,179 mm | conforme à l'intention |
-| Loupe de l'écran (5 %) — **avant** | 51 à 67 % × 85 % | **1,47 à 1,54 mm** | **plus grossier que l'aperçu** |
-| Loupe de l'écran (5 %) — après | 6,4 % | 0,149 à 0,211 mm | 3,2 à 4,0 fois l'aperçu |
+L'étalon était bon pour la boîte d'un texte, et faux pour tout le reste.
 
-Cliquer pour agrandir rendait donc l'image **plus grossière**, et rien ne le
-disait. La marge est désormais plafonnée par ce que la tuile doit encore
-apporter : `GAIN_MINIMAL_SUR_L_APERCU = 4`, c'est-à-dire que la tuile rend au
-moins quatre fois plus de pixels par point que l'aperçu **de la même page**.
+| Zone demandée | Étendue rendue | Papier par pixel |
+| --- | --- | --- |
+| Boîte d'un texte (0,3 % de page) | 5,1 à 6,4 % | 0,149 à 0,179 mm |
+| Loupe de l'écran (5 %) | **51 à 67 % × 85 %** | **1,47 à 1,54 mm** |
+| L'aperçu pleine page, pour comparer | 100 % | 0,594 à 0,845 mm |
 
-Le plafond est calculé par page, et non écrit en fraction : `facteur_de_rendu`
-ne réduit pas une page plus petite que 2 000 points, donc 6,4 % d'une page de
-300 points — une fixture — serait dix-neuf points, un plafond absurde qui
-supprimerait toute marge là où elle ne coûte rien. La référence est la finesse
-de l'aperçu de cette page-là.
+Cliquer pour agrandir rendait l'image **plus grossière**.
 
-Et il borne la **marge**, pas la demande : une zone déjà plus large que le
-plafond garde sa largeur et ne reçoit simplement aucune marge. Rétrécir la zone
-demandée montrerait autre chose que ce que l'appelant a désigné — et sur une
-mesure, « autre chose » veut dire un autre endroit du plan.
+**Et la finesse n'était que le symptôme.** L'écran, lui, croyait que l'image
+couvrait la zone qu'il avait demandée. Il y plaçait les clics, y dessinait les
+points, et en déduisait `resolution_du_pointage` — c'est-à-dire l'incertitude
+de **toutes** les mesures. Les trois étaient faux du même facteur, sans un mot.
+Mesuré par le parcours navigateur : deux clics aux cinquièmes de la loupe
+désignaient **9 points d'écart** là où ils en désignent 101 sur un A0, et le
+serveur refusait la calibration pour « points trop rapprochés » — un message
+juste sur un geste qui ne l'était pas.
 
-**Le défaut n'a pas été vu par relecture, et il n'aurait pas pu l'être** : la
-première mesure de la finesse de la tuile recalculait la marge au lieu de
-l'observer, et retrouvait donc le chiffre qu'elle voulait trouver. Le test de
-régression compare les deux `pixels_par_point` que le code lui-même rend, et le
-script de mesure intercepte les arguments passés à PDFium.
+Un premier correctif a plafonné la marge par le gain que la tuile devait
+apporter. Il rétablissait la finesse (0,149 à 0,211 mm/px) et **laissait le
+vrai défaut intact** : l'étendue rendue ne valait toujours pas l'étendue
+demandée.
+
+**La décision est donc que le rendu n'ajoute rien.** La marge appartient à
+l'appelant — et l'écran la prenait déjà : il ne demande jamais la boîte nue
+d'une mesure, il demande une fenêtre de 5 % de page **centrée** sur elle. Une
+seule règle, aucun plafond, et la propriété dont l'écran a besoin devient vraie
+par construction.
+
+Elle est vérifiée à trois endroits, parce qu'elle peut se casser de trois
+façons :
+
+| Où | Ce qu'il attrape |
+| --- | --- |
+| Un test unitaire, sur les deux axes | une marge réintroduite dans le code, même sur un seul axe |
+| L'épreuve **dans l'image construite** | un changement de PDFium — `crop` s'applique après rotation, et une version qui changerait cela déplacerait toutes les mesures sans faire échouer un test de forme |
+| Le parcours navigateur | l'écran qui mapperait ses clics autrement que le serveur ne rend |
+
+`MARGE_DE_TUILE` subsiste comme constante **nulle**, et non supprimée : c'est
+elle qui porte cette raison, et le prochain qui voudra « juste un peu de
+contexte » doit lire pourquoi ce contexte se prend à l'autre bout.
 
 ### 4. Quatre limites de ressources, chacune avec son chiffre
 

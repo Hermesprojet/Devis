@@ -152,8 +152,15 @@ test('un plan PDF déposé montre ses textes, se calibre par deux points, se mes
   const rendu = page.getByTestId('pdf-loupe-image')
   await expect(rendu).toBeVisible({ timeout: DELAI_ANALYSE })
 
-  await cliquerA(rendu, 0.2, 0.5)
-  await cliquerA(rendu, 0.8, 0.5)
+  // Aux bords, et non aux cinquièmes : la loupe couvre 5 % de la page, soit
+  // 15 points sur la fixture de 300, et la calibration refuse à juste titre une
+  // base de moins de 10 points. Sur un A0 les mêmes fractions en désignent 160.
+  //
+  // C'est ce calcul qui a révélé le défaut de marge : les mêmes clics
+  // désignaient 9 points parce que la tuile rendait 85 % de la page tout en
+  // laissant l'écran croire qu'elle en rendait 5.
+  await cliquerA(rendu, 0.05, 0.5)
+  await cliquerA(rendu, 0.95, 0.5)
 
   const calibration = page.getByTestId('pdf-formulaire-calibration')
   await expect(calibration).toBeVisible()
