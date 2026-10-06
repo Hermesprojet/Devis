@@ -128,10 +128,11 @@ def main(argv: list[str] | None = None) -> int:
 
     sortie = Path(arguments.sortie)
     sortie.write_bytes(tuile.png)
-    # La hauteur réellement atteinte par le texte, que le parent conserve avec
-    # la tuile : c'est elle qui dit si la cote est relisible, et elle serait
-    # perdue si seul le PNG traversait.
-    print(f"{tuile.largeur} {tuile.hauteur} {tuile.hauteur_du_texte_px or 0:.2f}")
+    # La hauteur que la zone demandée atteint dans l'image, que le parent
+    # conserve avec la tuile : quand cette zone est la boîte d'une cote, c'est
+    # elle qui dit si la cote est relisible, et elle serait perdue si seul le
+    # PNG traversait.
+    print(f"{tuile.largeur} {tuile.hauteur} {tuile.hauteur_de_la_zone_px or 0:.2f}")
     return SORTIE_OK
 
 
