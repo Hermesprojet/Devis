@@ -71,6 +71,20 @@ class Settings(BaseSettings):
     storage_root: str = "./var/storage"
     max_upload_bytes: int = 25 * 1024 * 1024
 
+    #: Au-delà, un plan ne se lit PLUS dans la requête HTTP.
+    #:
+    #: La lecture d'un plan est déterministe mais lente : mesuré sur deux
+    #: plans d'exécution réels de 7,4 et 11,2 Mo, 7,3 s et 8,8 s du fichier au
+    #: SVG affichable. Tant qu'aucune file d'attente n'existe, l'analyse part
+    #: dans la requête, et une requête ne peut pas durer indéfiniment.
+    #:
+    #: 12 Mio couvre les plans mesurés en laissant une marge. Au-delà, l'API
+    #: refuse en nommant la sortie : `scripts/lire_un_plan.py`, hors requête,
+    #: n'a pas cette limite. Le réglage existe pour qu'un exploitant puisse
+    #: l'élever en connaissance de cause — il ne change pas la durée, il
+    #: change seulement qui l'accepte.
+    plan_sync_max_bytes: int = 12 * 1024 * 1024
+
     # AI / OCR -------------------------------------------------------------
     # Phase 1 ships no provider. The flag exists so acceptance scenario 10
     # ("the product stays usable with AI disabled") is a real switch and not a

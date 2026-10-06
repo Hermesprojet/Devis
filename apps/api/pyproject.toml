@@ -48,7 +48,24 @@ postgres = ["psycopg[binary]>=3.1"]
 #
 # Licence MIT, version vérifiée le 2026-10-02 : voir
 # docs/adr/0007-lecture-de-plans.md.
-plans = ["ezdxf>=1.4.4,<2"]
+plans = [
+  "ezdxf>=1.4.4,<2",
+  # Pillow est une dépendance DURE du module de dessin d'ezdxf :
+  # `ezdxf/addons/drawing/frontend.py` fait `import PIL.Image` au niveau du
+  # module, sans garde. Sans elle, le rendu d'un plan lève `ModuleNotFoundError`
+  # — trouvé en intégration continue, pas en local, où Pillow était installée
+  # par autre chose. Seize tests sont tombés d'un coup.
+  #
+  # **Surtout pas `ezdxf[draw]`**, qui serait la façon « officielle » de la
+  # déclarer : cet extra tire aussi **PyMuPDF, sous AGPL-3.0**, dont la clause
+  # réseau obligerait à livrer le source de Metreo à ses utilisateurs — la
+  # licence que l'ADR 0007 a explicitement écartée. Il tire en plus matplotlib
+  # et PySide6, dont une API qui rend un SVG n'a aucun usage.
+  #
+  # Pillow est en MIT-CMU (champ `License-Expression` de la distribution
+  # installée, vérifié) : permissive, sans clause réseau.
+  "pillow>=11,<14",
+]
 # `pyyaml` : les contrôles d'infrastructure (ops/tests/) lisent les
 # compositions Docker. Il arrivait jusqu'ici par les extras optionnels
 # d'uvicorn ou de fastapi, que personne n'active — donc par hasard, et absent

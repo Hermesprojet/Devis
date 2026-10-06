@@ -392,6 +392,54 @@ export const api = {
       requete.send(corps)
     }),
 
+  /**
+   * Lance la lecture déterministe d'un plan DXF. **Elle est SYNCHRONE.**
+   *
+   * Mesuré : 7 à 9 secondes sur deux plans réels de 7 et 11 Mo. L'écran
+   * l'annonce AVANT de lancer et montre une attente explicite pendant —
+   * sans quoi l'utilisateur conclut que c'est planté et rappelle la route,
+   * ce que le serveur refuse ensuite par un 409 `etape_deja_reussie`.
+   *
+   * Rend le même corps que `lirePlan` : le constat est disponible sans
+   * second aller-retour.
+   */
+  analyserLePlan: (documentId: string, revisionId: string) =>
+    request<PlanLu>(`/documents/${documentId}/revisions/${revisionId}/plan/analyse`, {
+      method: 'POST',
+    }),
+  /**
+   * Le constat de lecture et les mesures proposées.
+   *
+   * `404` avec le code `plan_non_analyse` quand la lecture n'a jamais été
+   * lancée : c'est un état normal du parcours, pas une panne. L'écran le
+   * distingue d'une vraie erreur et propose l'analyse.
+   */
+  lirePlan: (documentId: string, revisionId: string) =>
+    request<PlanLu>(`/documents/${documentId}/revisions/${revisionId}/plan`),
+  /**
+   * Les octets du rendu du plan — un SVG — rapatriés AVEC le jeton.
+   *
+   * Même raison que le logo : une balise `<img src>` émet une requête NUE,
+   * sans en-tête `Authorization`, et la route répond 401. Voir
+   * `octetsAuthentifies`, et le commentaire de `LecturePlan` sur la raison
+   * pour laquelle ce SVG est chargé comme IMAGE et jamais inséré en ligne.
+   */
+  imageDuPlan: (documentId: string, revisionId: string): Promise<Blob> =>
+    octetsAuthentifies(`/documents/${documentId}/revisions/${revisionId}/plan/image`),
+  /**
+   * La décision humaine sur une proposition d'extraction.
+   *
+   * **La proposition machine n'est JAMAIS réécrite.** Après cet appel,
+   * `lirePlan` rend la même `valeur_document` et renseigne `decision` : ce
+   * que la machine a proposé et ce que l'humain a retenu restent tous les
+   * deux lisibles, et l'écran montre les deux.
+   */
+  deciderProposition: (proposalId: string, body: DecisionDeProposition) =>
+    request<DecisionEnregistree>(`/extraction-proposals/${proposalId}/decisions`, {
+      method: 'POST',
+      body,
+    }),
+
   boqs: (projectId: string) => request<Boq[]>(`/projects/${projectId}/boqs`),
   createBoq: (projectId: string, body: Record<string, unknown>) =>
     request<Boq>(`/projects/${projectId}/boqs`, { method: 'POST', body }),
@@ -780,6 +828,114 @@ export type DocumentRevision = {
   author_email: string | null
   status: string
   published_at: string | null
+  created_at: string
+}
+
+// --- lecture d'un plan DXF ------------------------------------------------
+//
+// Les décimaux voyagent en CHAÎNES, comme partout ailleurs dans cette API :
+// une mesure lue sur un plan ne doit pas perdre un chiffre en passant par un
+// flottant du navigateur. Rien n'est converti ici — ni unité, ni échelle, ni
+// total : l'écran affiche ce que le serveur dit.
+
+/** Une réserve ou une anomalie, DÉJÀ rédigée en français par le serveur. */
+export interface PlanAnomalie {
+  code: string
+  message: string
+}
+
+/**
+ * Où se situe un objet dans l'image rendue.
+ *
+ * Déjà normalisé dans [0,1] par le serveur, **origine en haut à gauche** —
+ * donc dans le même sens qu'un positionnement CSS, sans inversion d'axe.
+ */
+export interface PlanCadre {
+  x0: string
+  y0: string
+  x1: string
+  y1: string
+}
+
+export interface PlanMesure {
+  proposal_id: string
+  citation_id: string
+  /** Le décimal, en chaîne, dans l'unité DU DOCUMENT. Jamais converti. */
+  valeur_document: string
+  /** `'mm' | 'cm' | 'm' | 'km' | 'in' | 'ft'`, ou `null` si le plan n'en déclare aucune. */
+  unite_document: string | null
+  /**
+   * `'lineaire' | 'alignee' | 'diametre' | 'rayon' | 'angulaire'
+   *  | 'angulaire_3_points' | 'ordonnee' | 'inconnue'`
+   *
+   * Laissé en `string` : la liste appartient au serveur et peut s'allonger.
+   * Un code inconnu de l'écran s'affiche tel quel plutôt qu'en « — ».
+   */
+  famille: string
+  fiabilite: 'mesurable' | 'a_confirmer'
+  origine_de_la_mesure: 'cote_42' | 'recalcul'
+  /** Ce que le dessinateur a tapé À LA PLACE de la mesure. Une divergence. */
+  texte_impose: string | null
+  /** PLUSIEURS réserves possibles sur une même mesure. */
+  reserves: PlanAnomalie[]
+  /** Décimal en chaîne, dans [0,1]. */
+  confiance: string
+  calque: string | null
+  feuille: string | null
+  /** Le handle DXF : la désignation stable de l'objet dans le fichier. */
+  object_ref: string | null
+  cadre: PlanCadre | null
+  /** `null` tant qu'aucun humain ne s'est prononcé. */
+  decision: 'accepted' | 'corrected' | 'rejected' | null
+  /** La valeur retenue par l'humain, s'il a corrigé. */
+  valeur_corrigee: string | null
+}
+
+export interface PlanLu {
+  revision_id: string
+  /** `false` quand rien ne peut être mesuré — typiquement sans unité source. */
+  mesurable: boolean
+  unite_source: string | null
+  insunits: number | null
+  version_dxf: string | null
+  feuilles: string[]
+  /** Nombre d'entités par calque. */
+  calques: Record<string, number>
+  /** Nombre d'entités par type. */
+  entites: Record<string, number>
+  refuse: boolean
+  motif_du_refus: PlanAnomalie | null
+  anomalies: PlanAnomalie[]
+  image_disponible: boolean
+  mesures: PlanMesure[]
+}
+
+export type DecisionHumaine = 'accepted' | 'corrected' | 'rejected'
+
+/**
+ * Le corps d'une décision humaine — union DISCRIMINÉE, pas quatre champs
+ * facultatifs.
+ *
+ * **Règle du serveur, déjà testée :** `before_value` et `after_value` sont
+ * OBLIGATOIRES pour `corrected` et INTERDITS pour les deux autres. Un type
+ * permissif laisserait écrire ici un corps que le serveur refuse par un 422,
+ * et le refus n'arriverait qu'au navigateur de l'utilisateur.
+ */
+export type DecisionDeProposition =
+  | { decision: 'accepted' | 'rejected'; reason: string }
+  | {
+      decision: 'corrected'
+      reason: string
+      before_value: Record<string, string>
+      after_value: Record<string, string>
+    }
+
+/** L'accusé de décision : il ne répète pas les valeurs documentaires. */
+export type DecisionEnregistree = {
+  id: string
+  proposal_id: string
+  actor_user_id: string
+  decision: DecisionHumaine
   created_at: string
 }
 
