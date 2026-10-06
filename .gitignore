@@ -66,3 +66,12 @@ infra/staging.env
 # Un .xlsx est une archive binaire ; commité, il devient un bloc opaque que
 # personne ne relit et que rien ne protège d'une dérive silencieuse.
 fixtures/imports/*.xlsx
+
+# Fixtures de plans BINAIRES : fabriquées par scripts/fabriquer_plans_de_test.py.
+# Un binaire commité devient un bloc que personne ne relit — même raison que
+# pour les classeurs de fixtures/imports/.
+fixtures/plans/binaire.dxf
+fixtures/plans/faux.dwg
+# Et celle-ci est du texte, mais trois mille lignes de bloc de cotation :
+# le code qui la fabrique se relit, le fichier non.
+fixtures/plans/mur_cote.dxf

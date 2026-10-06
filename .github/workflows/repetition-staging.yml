@@ -101,6 +101,23 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
+      - name: Les fixtures de plans se fabriquent avec ezdxf
+        # Le banc fabrique ses plans d'essai avec `.venv/bin/python` (ou
+        # `METREO_PYTHON`). Cet atelier n'avait aucun environnement Python :
+        # tant que la fabrique vivait APRÈS le retour anticipé `PILE_EXTERNE`,
+        # cela ne se voyait pas — elle n'était jamais appelée ici, et le
+        # parcours échouait dix-sept scénarios plus loin sur un fichier absent.
+        # Remise à sa place, elle a aussitôt réclamé son interpréteur.
+        #
+        # Seulement ce qu'il faut pour fabriquer : `ezdxf` et Pillow, sous
+        # contrainte du verrou, et non l'application entière — elle tourne ici
+        # dans un conteneur, pas sur le runner.
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet -c constraints/api.txt ezdxf pillow
+          .venv/bin/python scripts/fabriquer_plans_de_test.py
+
       - name: Répétition
         run: ops/repetition_staging.sh
 
