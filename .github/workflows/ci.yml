@@ -405,6 +405,22 @@ jobs:
         run: docker build -f infra/api.Dockerfile -t metreo-api:ci .
       - name: Construire l'image du front
         run: docker build -f infra/web.Dockerfile -t metreo-web:ci .
+      - name: L'image de l'API sait lire un plan
+        # Le défaut que ce contrôle ferme : l'image installait
+        # `apps/api[postgres]` SANS l'extra `plans`. Elle démarrait, passait
+        # tous les contrôles ci-dessus, et échouait sur le PREMIER plan déposé
+        # — un `ModuleNotFoundError` que rien, ici, ne pouvait voir : les
+        # autres ateliers éprouvent le code, pas l'image.
+        #
+        # Et vérifier que `ezdxf` s'importe ne suffirait pas davantage. Le
+        # script fabrique un mur coté de 5 000 mm DANS le conteneur, le relit,
+        # compare la valeur à celle qui a été posée, rend le SVG, et vérifie
+        # qu'un PDF est refusé par un code nommé.
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts/verifier_image_de_lecture.py:/epreuve.py:ro" \
+            -v "$PWD/fixtures/plans:/fixtures:ro" \
+            --entrypoint python metreo-api:ci /epreuve.py --fixtures /fixtures
       - name: L'API ne tourne pas en root
         # Le point du contrôle : une image qui traitera en phase 2 des fichiers
         # venant de tiers ne doit pas exécuter son processus en uid 0.
@@ -423,22 +439,6 @@ jobs:
             test "$(docker inspect -f '{{if .Config.Healthcheck}}oui{{else}}non{{end}}' "$image")" = "oui"
             echo "$image : point de santé déclaré"
           done
-      - name: L'image de l'API sait lire un plan
-        # Le défaut que ce contrôle ferme : l'image installait
-        # `apps/api[postgres]` SANS l'extra `plans`. Elle démarrait, passait
-        # tous les contrôles ci-dessus, et échouait sur le PREMIER plan déposé
-        # — un `ModuleNotFoundError` que rien, ici, ne pouvait voir : les
-        # autres ateliers éprouvent le code, pas l'image.
-        #
-        # Et vérifier que `ezdxf` s'importe ne suffirait pas davantage. Le
-        # script fabrique un mur coté de 5 000 mm DANS le conteneur, le relit,
-        # compare la valeur à celle qui a été posée, rend le SVG, et vérifie
-        # qu'un PDF est refusé par un code nommé.
-        run: |
-          docker run --rm \
-            -v "$PWD/scripts/verifier_image_de_lecture.py:/epreuve.py:ro" \
-            -v "$PWD/fixtures/plans:/fixtures:ro" \
-            --entrypoint python metreo-api:ci /epreuve.py --fixtures /fixtures
 
   audit:
     name: Vulnérabilités des dépendances
