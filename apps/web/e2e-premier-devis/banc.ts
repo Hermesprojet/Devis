@@ -247,6 +247,24 @@ function verifierBaseVierge(): void {
 }
 
 export default async function preparer(): Promise<void> {
+  // Les fixtures de plans qui ne se relisent pas, donc ne sont pas commitées.
+  // Fabriquées ICI et non dans le scénario : une fixture absente doit faire
+  // échouer le banc, pas rendre un parcours silencieux. Le dépôt a déjà payé
+  // cette leçon — deux tests prouvant le refus du DWG étaient SAUTÉS en
+  // intégration continue, faute de quoi que ce soit qui fabrique leurs
+  // fichiers, et la suite passait au vert sans vérifier la promesse.
+  //
+  // AVANT le retour anticipé ci-dessous, et c'est tout le point : ce sont des
+  // fichiers LOCAUX, que le scénario ouvre depuis le disque du banc. Les
+  // fabriquer après signifiait qu'en répétition de préproduction — le seul
+  // mode qui vise une pile externe — `mur_cote.dxf` n'existait jamais, et le
+  // parcours échouait dix-sept scénarios plus loin sur un ENOENT qui ne disait
+  // pas sa cause.
+  execFileSync('sh', ['-c', `${python} ${join(RACINE_DEPOT, 'scripts/fabriquer_plans_de_test.py')}`], {
+    cwd: RACINE_DEPOT,
+    stdio: 'inherit',
+  })
+
   if (PILE_EXTERNE) {
     // Rien à monter : on vérifie seulement que la pile est là avant de
     // reprocher au produit ce qui serait un défaut de banc.
@@ -260,17 +278,6 @@ export default async function preparer(): Promise<void> {
   const shell = Object.entries(ENVIRONNEMENT_API)
     .map(([cle, valeur]) => `${cle}=${JSON.stringify(valeur)}`)
     .join(' ')
-
-  // Les fixtures de plans qui ne se relisent pas, donc ne sont pas commitées.
-  // Fabriquées ICI et non dans le scénario : une fixture absente doit faire
-  // échouer le banc, pas rendre un parcours silencieux. Le dépôt a déjà payé
-  // cette leçon — deux tests prouvant le refus du DWG étaient SAUTÉS en
-  // intégration continue, faute de quoi que ce soit qui fabrique leurs
-  // fichiers, et la suite passait au vert sans vérifier la promesse.
-  execFileSync('sh', ['-c', `${python} ${join(RACINE_DEPOT, 'scripts/fabriquer_plans_de_test.py')}`], {
-    cwd: RACINE_DEPOT,
-    stdio: 'inherit',
-  })
 
   // Les migrations, et RIEN d'autre : `metreo_api.seed` n'est jamais appelé.
   execFileSync('sh', ['-c', `${shell} ${python} -m alembic -c ${join(DOSSIER_API, 'alembic.ini')} upgrade head`], {

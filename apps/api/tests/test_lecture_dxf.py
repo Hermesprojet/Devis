@@ -418,6 +418,50 @@ def test_a_file_that_parses_but_says_nothing_is_not_refused_and_not_measurable(
     assert constat.cotations == []
 
 
+def test_a_truncated_file_is_refused_instead_of_read_as_an_empty_plan(
+    tmp_path: Path,
+) -> None:
+    """La frontière de l'autre côté : incomplet n'est pas vide.
+
+    `recover` ouvre un DXF coupé en plein en-tête SANS lever, sans erreur
+    d'audit et sans correctif signalé — mesuré : `auditeur.errors` et
+    `auditeur.fixes` sont vides pour les deux. La lecture rendait alors
+    « 0 cotation », exactement ce que rend un plan correct sans cote. Le seul
+    marqueur qui les sépare est la fin du fichier : un DXF se termine par le
+    groupe `0 / EOF`.
+    """
+    chemin = tmp_path / "coupe.dxf"
+    chemin.write_bytes(
+        b"  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1009\n  9\n$INSUNITS\n 70\n"
+    )
+
+    constat = lecture_dxf.lire(chemin)
+
+    assert constat.refuse is True
+    assert constat.motif_du_refus is not None
+    assert constat.motif_du_refus.code == "fichier_tronque"
+    assert constat.cotations == []
+
+
+def test_a_file_that_is_not_a_dxf_is_refused_for_that_reason_not_for_truncation(
+    tmp_path: Path,
+) -> None:
+    """Le contrôle de troncature ne doit pas voler le diagnostic des autres.
+
+    Un fichier qui ne commence pas comme un DXF n'a pas de fin de DXF non
+    plus : refusé pour troncature, il recevrait un motif faux. Le contrôle ne
+    s'applique donc qu'à ce qui s'ouvre comme un DXF.
+    """
+    chemin = tmp_path / "pas-un-plan.dxf"
+    chemin.write_text("nom;prix\nmur;12\n", encoding="utf-8")
+
+    constat = lecture_dxf.lire(chemin)
+
+    assert constat.refuse is True
+    assert constat.motif_du_refus is not None
+    assert constat.motif_du_refus.code != "fichier_tronque"
+
+
 # ---------------------------------------------------------------------------
 # L'inventaire
 # ---------------------------------------------------------------------------

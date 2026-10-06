@@ -25,8 +25,13 @@ COPY constraints/api.txt /src/constraints/api.txt
 # différer de pyproject.toml, et l'image validerait un jeu de dépendances qui
 # n'est pas celui du dépôt — c'est précisément le défaut qui a laissé passer
 # l'extra `email` manquant de pydantic.
+# `plans` n'est pas un confort : l'API SERT les routes de lecture de plans, et
+# `services/lecture_dxf.py` importe `ezdxf` à l'appel. Sans cet extra, l'image
+# démarre, répond à tous les contrôles de santé, affiche l'écran « Lire le
+# plan » — et échoue à l'analyse sur un `ModuleNotFoundError`. Le défaut ne se
+# voit donc qu'en production, sur le premier plan déposé.
 RUN pip install --no-cache-dir -c /src/constraints/api.txt \
-      /src/packages/domain "/src/apps/api[postgres]"
+      /src/packages/domain "/src/apps/api[postgres,plans]"
 
 FROM python:3.11-slim AS runtime
 

@@ -477,6 +477,50 @@ def lire(chemin: str | Path, *, situer: bool = False) -> LecturePlan:
     constat = LecturePlan()
     chemin = Path(chemin)
 
+    # Un DXF se termine par le groupe `0 / EOF`. Sans lui, le fichier est
+    # incomplet — et c'est le seul moment où on peut encore le dire : `recover`
+    # ouvre un fichier coupé en plein en-tête SANS lever, sans erreur d'audit
+    # et sans correctif signalé, en rendant un document vide. La lecture
+    # répondait alors « 0 cotation », exactement comme pour un plan correct qui
+    # n'est pas coté — l'utilisateur déposait un fichier abîmé et recevait un
+    # silence. Mesuré : les deux plans réels, `mur_simple.dxf` et
+    # `sans_unites.dxf` portent ce marqueur ; `tronque.dxf` ne l'a pas.
+    #
+    # Le contrôle porte sur la FIN du fichier, pas sur son contenu : un plan
+    # valide et vide reste accepté, simplement non mesurable. C'est la
+    # frontière que fixe `test_a_file_that_parses_but_says_nothing_...`.
+    try:
+        with chemin.open("rb") as fichier:
+            tete = fichier.read(64)
+            fichier.seek(0, 2)
+            taille = fichier.tell()
+            fichier.seek(max(0, taille - 64))
+            queue = fichier.read(64)
+    except OSError as erreur:
+        constat.refuse = True
+        constat.motif_du_refus = Anomalie(
+            "fichier_illisible",
+            f"Le fichier n'a pas pu être ouvert : {type(erreur).__name__}.",
+        )
+        return constat
+
+    # Le contrôle ne vaut que pour un fichier qui COMMENCE comme un DXF. Un
+    # fichier qui n'en est pas un du tout doit être refusé pour cette
+    # raison-là, par `recover`, et non pour une troncature qu'il n'a pas.
+    debut = [ligne.strip() for ligne in tete.decode("latin-1").splitlines() if ligne.strip()][:2]
+    ressemble_a_un_dxf = debut[:2] == ["0", "SECTION"]
+
+    if ressemble_a_un_dxf and not queue.decode("latin-1").strip().endswith("EOF"):
+        constat.refuse = True
+        constat.motif_du_refus = Anomalie(
+            "fichier_tronque",
+            "Le fichier ne se termine pas par le marqueur de fin d'un DXF : il "
+            "est incomplet. Le lire rendrait un plan vide, impossible à "
+            "distinguer d'un plan correct sans cotation — il est donc refusé, "
+            "et le fichier déposé reste téléchargeable.",
+        )
+        return constat
+
     try:
         document, auditeur = recover.readfile(str(chemin), errors="strict")
     except UnicodeDecodeError:
