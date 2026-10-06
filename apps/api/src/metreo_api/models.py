@@ -30,7 +30,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    text,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -304,7 +304,7 @@ class LoginTransaction(Base):
     #: fonctionnement même d'une session SSO — et serait signalée à tort sur
     #: toutes les connexions ordinaires.
     reauthentication_requested: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+        Boolean, nullable=False, default=False, server_default=false()
     )
     #: Rempli une fois l'identité vérifiée, puis effacé à l'échange.
     login_code: Mapped[str | None] = mapped_column(String(64))

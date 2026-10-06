@@ -49,7 +49,15 @@ def upgrade() -> None:
             # Sans elle, l'ajout d'une colonne NOT NULL échoue sur une table
             # non vide — et `login_transactions` l'est dès qu'une connexion
             # est en cours au moment du déploiement.
-            server_default=sa.text("0"),
+            #
+            # `sa.false()` et NON `sa.text("0")`. La divergence est exactement
+            # celle que ce dépôt a déjà rencontrée sur les montants : SQLite
+            # accepte `DEFAULT 0` pour un booléen, PostgreSQL le refuse —
+            # « column is of type boolean but default expression is of type
+            # integer ». Un aller-retour de migration joué sur SQLite seul
+            # passe donc, et la migration casse en production. `sa.false()`
+            # laisse le dialecte écrire le littéral qui lui convient.
+            server_default=sa.false(),
         ),
     )
 
