@@ -178,6 +178,61 @@ def page_avec_plusieurs_textes(
     )
 
 
+#: Les textes de la seconde page du plan de parcours.
+#:
+#: Distincts de ceux de la première, et c'est tout l'objet : un écran qui
+#: ignorerait le changement de page afficherait les mêmes et personne ne le
+#: verrait. « DETAIL B » est le mot que le parcours cherche après avoir cliqué
+#: sur « page suivante ».
+PLACEMENTS_DE_LA_SECONDE_PAGE: tuple[tuple[str, float, float], ...] = (
+    ("DETAIL B", 40.0, 180.0),
+    ("0800", 40.0, 120.0),
+    ("1600", 180.0, 180.0),
+    ("Ech. 1:20", 180.0, 30.0),
+    ("Coupe B-B", 40.0, 60.0),
+)
+
+
+def plan_de_deux_pages(
+    *,
+    largeur: float = 300.0,
+    hauteur: float = 220.0,
+) -> bytes:
+    """Un plan de DEUX pages, chacune portant SES textes, pour un parcours complet.
+
+    **Pourquoi deux pages et non une.** La navigation entre pages est une des
+    choses qu'un écran peut faire semblant de faire : changer le numéro
+    affiché, et resservir la même image. Deux pages aux textes distincts sont
+    la seule façon de le voir — le parcours cherche « DETAIL B », qui n'existe
+    que sur la seconde.
+
+    **Pourquoi la même taille.** `deux_pages_de_tailles_differentes` éprouve
+    déjà qu'une dimension suit sa page. Ici on éprouve un parcours humain, et
+    deux formats différents y ajouteraient une variation sans rapport avec ce
+    qui est vérifié.
+
+    Les deux pages partagent la police et rien d'autre : chacune a son flux de
+    contenu, donc ses textes et ses positions.
+    """
+    premier = b"".join(_contenu_texte(texte, x, y) for texte, x, y in PLACEMENTS_DU_PLAN)
+    second = b"".join(_contenu_texte(texte, x, y) for texte, x, y in PLACEMENTS_DE_LA_SECONDE_PAGE)
+    boite = f"/MediaBox [0 0 {largeur:g} {hauteur:g}]"
+    return assembler(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+            f"<< /Type /Page /Parent 2 0 R {boite} "
+            f"/Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>".encode("ascii"),
+            f"<< /Type /Page /Parent 2 0 R {boite} "
+            f"/Resources << /Font << /F1 5 0 R >> >> /Contents 7 0 R >>".encode("ascii"),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            _flux(premier),
+            _flux(second),
+        ],
+        racine=1,
+    )
+
+
 def deux_pages_de_tailles_differentes() -> bytes:
     """Deux pages, deux formats, un texte identifiable sur chacune.
 

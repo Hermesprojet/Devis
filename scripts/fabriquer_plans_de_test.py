@@ -50,7 +50,7 @@ REMPLISSAGE = bytes((i * 7 + 13) % 256 for i in range(256))
 
 
 #: Ce que la ligne de commande doit AVOIR produit pour rendre 0.
-ATTENDUS: tuple[str, ...] = ("binaire.dxf", "faux.dwg", "mur_cote.dxf")
+ATTENDUS: tuple[str, ...] = ("binaire.dxf", "faux.dwg", "mur_cote.dxf", "plan_cote.pdf")
 
 
 def fabriquer() -> list[Path]:
@@ -71,7 +71,32 @@ def fabriquer() -> list[Path]:
     if cote is not None:
         ecrits.append(cote)
 
+    ecrits.append(_plan_pdf())
+
     return ecrits
+
+
+def _plan_pdf() -> Path:
+    """Un plan PDF de deux pages, pour le parcours de mesure à l'écran.
+
+    **Non commité pour la même raison que les deux fixtures binaires** : un PDF
+    est des octets, et un binaire commité devient un bloc que personne
+    n'ouvre. Ici le code qui l'écrit EST sa documentation — deux pages de
+    300 × 220 points, neuf textes sur la première, cinq sur la seconde, chacun
+    à une position connue.
+
+    Aucune bibliothèque : `fabriquer_pdf_de_test` écrit les octets à la main,
+    table d'offsets comprise. C'est ce qui lui permet de tourner dans l'image
+    avant qu'on sache si la bibliothèque de lecture y est installée — et c'est
+    la même fabrique que les tests du dépôt, pour qu'il n'y ait pas deux
+    vérités sur ce que contient la fixture.
+    """
+    sys.path.insert(0, str(RACINE / "scripts"))
+    import fabriquer_pdf_de_test
+
+    chemin = SORTIE / "plan_cote.pdf"
+    chemin.write_bytes(fabriquer_pdf_de_test.plan_de_deux_pages())
+    return chemin
 
 
 def _mur_cote() -> Path | None:
