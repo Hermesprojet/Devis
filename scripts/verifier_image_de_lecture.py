@@ -56,6 +56,19 @@ TOLERANCE = Decimal("0.001")
 #: `y1 = 1 − 79,8/100 ≈ 0,202`. Sans inversion il vaudrait 0,884.
 Y_ECRAN_MAXIMUM = 0.25
 
+#: La boîte d'ENCRE du texte de référence, relevée au pixel sur un rendu, pour
+#: chacune des quatre rotations d'affichage. Ces nombres ne viennent pas d'un
+#: raisonnement sur les conventions du format : la page a été rendue en PNG et
+#: les pixels sombres ont été comptés. Déduire une convention de rotation a une
+#: chance sur huit d'être juste, et se tromper ne casse rien — le surlignage
+#: tombe ailleurs, et personne ne s'en aperçoit.
+ENCRE_PAR_ROTATION: dict[int, tuple[float, float, float, float]] = {
+    0: (0.102, 0.115, 0.228, 0.195),
+    90: (0.800, 0.102, 0.880, 0.228),
+    180: (0.767, 0.800, 0.895, 0.880),
+    270: (0.115, 0.770, 0.195, 0.895),
+}
+
 _echecs: list[str] = []
 _controles = 0
 
@@ -272,7 +285,7 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
     )
 
     from metreo_api.services.lecture_pdf import lire
-    from metreo_api.services.rendu_pdf import rendre
+    from metreo_api.services.rendu_pdf import rendre, rendre_une_zone
 
     chemin = dossier / "reference.pdf"
     chemin.write_bytes(fabriquer_pdf_de_test.une_page_avec_texte())
@@ -303,6 +316,13 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
     # Le texte est posé à 80 pt du bord BAS d'une page de 100 pt : dans le
     # repère de l'écran, sa boîte doit donc tomber dans le quart HAUT.
     cadre = fragment.cadre
+    exiger(
+        cadre is not None and fragment.position == "exacte",
+        "le fragment est situé exactement, sans rognage",
+        f"position={fragment.position!r}",
+    )
+    if cadre is None:
+        return
     exiger(
         cadre.y1 < Y_ECRAN_MAXIMUM,
         "l'axe vertical est inversé entre le PDF et l'écran",
@@ -338,6 +358,61 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
         "le cadre du texte se pose directement sur l'aperçu, sans conversion",
         f"coin haut gauche à ({gauche}, {haut}) px dans une image de "
         f"{apercu.largeur}×{apercu.hauteur}",
+    )
+
+    # Une page tournée : `get_size()` rend la taille AFFICHÉE tandis que les
+    # rectangles de texte restent dans le repère non tourné. Les valeurs
+    # attendues viennent d'une boîte d'encre relevée au pixel sur un rendu.
+    for rotation, encre in ENCRE_PAR_ROTATION.items():
+        tournee = dossier / f"tournee{rotation}.pdf"
+        tournee.write_bytes(fabriquer_pdf_de_test.page_tournee(rotation))
+        lu = lire(tournee)
+        if not lu.fragments or lu.fragments[0].cadre is None:
+            exiger(False, f"/Rotate {rotation} : le texte est situé", "aucun cadre")
+            continue
+        boite = lu.fragments[0].cadre
+        obtenu = (boite.x0, boite.y0, boite.x1, boite.y1)
+        ecart = max(abs(a - b) for a, b in zip(obtenu, encre, strict=True))
+        exiger(
+            ecart < 0.02,
+            f"/Rotate {rotation} : la position suit la rotation de la page",
+            f"écart maximal {ecart:.4f} avec l'encre relevée au pixel "
+            f"{tuple(round(v, 3) for v in encre)}",
+        )
+
+    # Une page dont le coin bas gauche n'est pas (0,0) : le texte y est au même
+    # endroit RELATIF, donc le cadre doit être le même.
+    decalee = dossier / "decalee.pdf"
+    decalee.write_bytes(fabriquer_pdf_de_test.page_avec_boite_decalee())
+    lu = lire(decalee)
+    autre = lu.fragments[0].cadre if lu.fragments else None
+    exiger(
+        autre is not None
+        and abs(autre.x0 - cadre.x0) < 1e-6
+        and abs(autre.y0 - cadre.y0) < 1e-6
+        and autre.y1 > autre.y0,
+        "une page dont la boîte ne commence pas à (0,0) se lit pareil",
+        f"cadre={autre}"
+        + (
+            ""
+            if autre is None
+            else f" contre {cadre} — une boîte plate serait refusée en base"
+        ),
+    )
+
+    # La tuile de détail : sans elle, « confirmer ou corriger » demanderait
+    # d'ouvrir le PDF hors de Metreo. Mesuré sur les plans réels : à 2 000 px
+    # de grand côté, un texte fait 3,5 à 4,4 pixels de haut.
+    tuile = rendre_une_zone(
+        chemin, page=1, zone=(cadre.x0, cadre.y0, cadre.x1, cadre.y1)
+    )
+    exiger(
+        tuile.png[:8] == b"\x89PNG\r\n\x1a\n"
+        and tuile.hauteur_du_texte_px is not None
+        and tuile.hauteur_du_texte_px > 4.0,
+        "une tuile de détail agrandit le texte assez pour le relire",
+        f"{tuile.largeur}×{tuile.hauteur} px, texte "
+        f"{tuile.hauteur_du_texte_px:.0f} px, {len(tuile.png)} octets",
     )
 
     # Un PDF chiffré : le refus doit NOMMER le chiffrement, et Metreo ne doit
