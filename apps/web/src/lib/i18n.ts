@@ -36,12 +36,22 @@ const fr: Dictionary = {
   'login.submit': 'Se connecter',
   'login.demoAccounts': 'Comptes de démonstration',
   'login.organization': 'Organisation',
-  'login.oidcSubmit': "Se connecter avec le compte de l'entreprise",
+  'login.oidcSubmit': 'Continuer vers la connexion',
   'login.oidcNotice':
-    "La connexion passe par le fournisseur d'identité de votre entreprise. Aucun mot de passe n'est conservé par Metreo.",
+    "Si votre compte utilise un mot de passe, vous le saisirez sur la page de connexion qui va s'ouvrir. Metreo ne le conserve pas.",
   'login.oidcPending': 'Connexion en cours…',
+  'login.otherAccount': 'Utiliser un autre compte',
+  'login.otherAccountHelp':
+    "Si Google vous reconnecte automatiquement, essayez ce bouton pour demander un nouvel écran de connexion. Si l'accès par e-mail n'y apparaît pas, contactez votre administrateur.",
   'login.noMethod':
     "Ce déploiement n'offre aucune connexion depuis un navigateur. Il accepte des jetons émis ailleurs.",
+  // Un AVIS, pas un refus : la connexion a réussi. Il existe parce qu'une
+  // personne qui clique « utiliser un autre compte » et retombe sur le même
+  // croit à un défaut de Metreo, alors que la décision appartient au
+  // fournisseur amont — Auth0 documente que `prompt=login` ne garantit pas une
+  // nouvelle authentification chez Google.
+  'login.notice.reauthentication_not_performed':
+    "Vous avez été reconnecté avec le compte déjà ouvert : votre fournisseur d'identité n'a pas redemandé d'authentification. Pour changer de compte, déconnectez-vous d'abord chez lui.",
   'login.error.provider_refused':
     "Le fournisseur d'identité a refusé la connexion.",
   'login.error.invalid_request': 'La demande de connexion était incomplète.',
@@ -49,17 +59,47 @@ const fr: Dictionary = {
     "Ce compte n'appartient à aucune organisation active. Demandez à un administrateur de vous ajouter.",
   'login.error.unknown_user':
     "Ce compte n'est pas connu de Metreo. Un administrateur doit le créer avant la première connexion.",
-  'login.error.unverified_email':
+  'login.error.email_not_verified':
     "Le fournisseur d'identité n'a pas confirmé cette adresse e-mail.",
   'login.error.expired_state':
-    'La demande de connexion a expiré. Recommencez : le bouton ci-dessus repart de zéro.',
+    'La demande de connexion a expiré. Recommencez : le bouton de connexion repart de zéro.',
   'login.error.invalid_state':
-    'Cette demande de connexion a déjà servi. Recommencez depuis le bouton ci-dessus.',
+    'Cette demande de connexion a déjà servi. Recommencez depuis le bouton de connexion.',
   'login.error.token_expired':
     "Le fournisseur d'identité a rendu une réponse déjà périmée. Recommencez.",
   'login.error.token_not_yet_valid':
     "L'horloge du fournisseur d'identité et celle du serveur divergent trop. " +
     'Recommencez ; si le refus persiste, prévenez votre administrateur.',
+  // Refus qui viennent du fournisseur d'identité ou du réseau. L'utilisateur
+  // peut agir sur certains, sur aucun autre — la phrase le dit, plutôt que de
+  // le laisser recommencer indéfiniment.
+  'login.error.account_disabled':
+    'Ce compte est désactivé. Un administrateur de votre organisation doit le réactiver.',
+  'login.error.code_rejected':
+    "Le fournisseur d'identité a refusé cette demande de connexion. Recommencez ; si le refus persiste, prévenez votre administrateur.",
+  'login.error.provider_unavailable':
+    "Le fournisseur d'identité est injoignable. Réessayez dans un instant ; si cela dure, prévenez votre administrateur.",
+  'login.error.invalid_nonce':
+    "Cette réponse n'a pas pu être rattachée à votre demande de connexion. Recommencez depuis le bouton de connexion.",
+  'login.error.invalid_token':
+    "L'identité renvoyée par le fournisseur n'a pas pu être vérifiée. Recommencez ; si cela persiste, prévenez votre administrateur.",
+
+  // Défauts de configuration du déploiement. Rien de ce que l'utilisateur fera
+  // ne les corrigera, et le lui laisser croire est le pire des deux. La phrase
+  // ne nomme aucun réglage : cet écran est public.
+  //
+  // `provider_incomplete` n'est PAS de ce groupe, bien qu'il en ait l'air : il
+  // est aussi émis quand le point d'entrée jeton répond de travers, ce qui
+  // passe. Voir `services/oidc.py`, ses trois sites d'émission.
+  'login.error.issuer_mismatch':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+  'login.error.provider_incomplete':
+    "Le fournisseur d'identité a répondu de façon incomplète. Réessayez ; si cela se répète, c'est un réglage du déploiement, et un administrateur doit le corriger.",
+  'login.error.invalid_audience':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+  'login.error.invalid_issuer':
+    "La connexion de ce déploiement est mal configurée. Ce n'est pas votre compte qui est en cause : un administrateur doit la corriger.",
+
   'login.error.generic': 'La connexion a échoué.',
 
   'common.loading': 'Chargement…',
@@ -207,6 +247,214 @@ const fr: Dictionary = {
   'import.commit': "Confirmer l'import",
   'import.committed': 'Import confirmé.',
   'import.line': 'Ligne',
+
+  'documents.formats':
+    'PDF, PNG, JPEG, DXF, CSV, XLSX ou DOCX. Le contenu est vérifié à la réception : '
+    + 'l’extension seule ne suffit pas. Metreo LIT les plans DXF et PDF, et pas de '
+    + 'la même façon : un DXF porte ses cotes et son unité, un PDF demande que vous '
+    + 'désigniez deux points et déclariez leur distance réelle. Un plan AutoCAD '
+    + '.dwg est REFUSÉ — exportez-le en DXF ou en PDF.',
+  'documents.readPlan': 'Lire le plan',
+
+  // --- lecture d'un plan DXF ---------------------------------------------
+  // Tout ce que l'écran de lecture d'un plan montre. Les RÉSERVES et les
+  // ANOMALIES n'ont pas de clé : le serveur les rédige déjà en français, et
+  // les recomposer ici reviendrait à tenir deux textes d'accord.
+  'plan.title': 'Lecture du plan',
+  'plan.backToProject': 'Retour au chantier',
+  'plan.intro':
+    'Ce que Metreo a LU dans le fichier, et les mesures qu’il en propose. '
+    + 'Rien n’est repris dans un bordereau tant qu’une personne n’a pas '
+    + 'tranché, mesure par mesure. Aucune valeur n’est convertie : elles sont '
+    + 'affichées dans l’unité du document.',
+  'plan.notAnalysed':
+    'Ce plan n’a pas encore été lu. Lancer la lecture ne modifie pas le fichier '
+    + 'déposé : elle produit un rendu consultable et une liste de mesures proposées, '
+    + 'que vous confirmerez ou corrigerez ensuite.',
+  'plan.analyse': 'Analyser le plan',
+  'plan.analyseWarning':
+    'La lecture se fait d’un seul tenant et prend une dizaine de secondes — mesuré : '
+    + '7 à 9 secondes sur des plans de 7 et 11 Mo. Laissez cet onglet ouvert : '
+    + 'l’analyse se termine dans la réponse à ce bouton.',
+  'plan.analysing':
+    'Lecture du plan en cours. Comptez une dizaine de secondes ; ne rechargez pas la page.',
+  'plan.alreadyAnalysed':
+    'Ce plan avait déjà été lu. Le constat ci-dessous est celui de cette lecture ; '
+    + 'rien n’a été relu.',
+  'plan.analyseNotAllowed':
+    'Lancer la lecture d’un plan demande le droit de déposer un document.',
+  'plan.refused': 'Ce fichier a été refusé',
+  'plan.notMeasurable':
+    'Aucune mesure n’est exploitable : le plan ne déclare pas son unité de dessin, '
+    + 'et une longueur sans unité ne veut rien dire. Le plan reste consultable, et les '
+    + 'cotes écrites par le dessinateur restent lisibles sur le rendu.',
+  'plan.findings': 'Constat de lecture',
+  'plan.sourceUnit': 'Unité du document',
+  'plan.insunits': '$INSUNITS',
+  'plan.dxfVersion': 'Version DXF',
+  'plan.sheets': 'Feuilles',
+  'plan.entities': 'Entités par type',
+  'plan.layers': 'Calques',
+  'plan.layer': 'Calque',
+  'plan.count': 'Entités',
+  'plan.anomalies': 'Anomalies du fichier',
+  'plan.noAnomaly': 'Aucune anomalie relevée sur le fichier.',
+
+  'plan.view': 'Rendu du plan',
+  'plan.imageAlt':
+    'Rendu du plan déposé. Les mesures proposées sont détaillées en texte sous cette image.',
+  'plan.withoutUnit': 'sans unité déclarée',
+  'plan.imageUnavailable':
+    'Aucun rendu n’est disponible pour ce plan. Les mesures ci-dessous restent '
+    + 'lisibles, mais elles ne peuvent pas être situées à l’écran.',
+  'plan.imageHint':
+    'Rendu produit par le serveur à partir du fichier. Faites glisser pour déplacer ; '
+    + 'les boutons de zoom fonctionnent au clavier.',
+  'plan.zoomIn': 'Agrandir',
+  'plan.zoomOut': 'Réduire',
+  'plan.zoomFit': 'Ajuster',
+  'plan.zoomLevel': 'Échelle d’affichage',
+
+  // --- L'écran d'un plan PDF -------------------------------------------
+  //
+  // Un PDF n'a pas d'unité : tout ce vocabulaire tourne autour de ce fait.
+  // « Échelle » y désigne une DÉCLARATION humaine, jamais une lecture.
+  'plan.pdf.titre': 'Plan PDF',
+  'plan.pdf.pages': 'Pages',
+  'plan.pdf.pagesLabel': 'Pages',
+  'plan.pdf.pageSur': 'Page {page} sur {total}',
+  'plan.pdf.pageCourte': 'p. {page}',
+  'plan.pdf.outils': 'Outils',
+  'plan.pdf.texteLabel': 'Textes lus',
+  'plan.pdf.sansTexte': 'aucun — plan probablement scanné',
+  'plan.pdf.echelleLabel': 'Échelle déclarée',
+  'plan.pdf.sansEchelle': 'aucune : rien ne peut être mesuré',
+  'plan.pdf.sansApercu':
+    "Cette page n'a pas d'aperçu. Le fichier reste déposé et téléchargeable.",
+  'plan.pdf.apercuAlt': 'Aperçu de la page du plan',
+  'plan.pdf.loupe': 'Loupe',
+  'plan.pdf.loupeAlt': 'Agrandissement de la zone désignée',
+  'plan.pdf.loupeEnCours':
+    "Agrandissement en cours. La première ouverture d'une page prend quelques secondes ; les suivantes sont immédiates.",
+  'plan.pdf.pointsPoses': '{nombre} point(s) posé(s)',
+  'plan.pdf.confirmerEchelle': "Confirmer l'échelle de cette page",
+  'plan.pdf.aideEchelle':
+    "Vous venez de désigner deux points. Saisissez la distance RÉELLE qui les sépare sur l'ouvrage — pas le rapport d'échelle du cartouche, qui ne vaut plus si le PDF a été exporté « ajusté à la page ».",
+  'plan.pdf.distanceReelle': 'Distance réelle entre les deux points',
+  'plan.pdf.unite': 'Unité',
+  'plan.pdf.motif': 'Sur quoi avez-vous calibré ?',
+  'plan.pdf.motifExemple': 'ex. cote 5000 de la façade sud',
+  'plan.pdf.confirmer': "Confirmer l'échelle",
+  'plan.pdf.nommerLongueur': 'Nommer cette longueur',
+  'plan.pdf.nommerSurface': 'Nommer cette surface',
+  'plan.pdf.libelle': 'Ce que vous mesurez',
+  'plan.pdf.libelleExemple': 'ex. mur nord, dalle du séjour',
+  'plan.pdf.mesurer': 'Mesurer',
+  'plan.pdf.sansEchelleMesure':
+    "Aucune échelle n'a été confirmée pour cette page. Un PDF ne porte pas d'unité : déclarez d'abord une échelle sur une cote connue.",
+  'plan.pdf.aucuneMesure': 'Aucune mesure prise sur ce plan.',
+  'plan.pdf.mesuresPrises': 'Mesures prises',
+  'plan.pdf.colLibelle': 'Ouvrage',
+  'plan.pdf.colValeur': 'Valeur',
+  'plan.pdf.colFiabilite': 'Fiabilité',
+  'plan.pdf.colDecision': 'Décision',
+  'plan.pdf.colActions': 'Actions',
+  'plan.pdf.longueur': 'longueur',
+  'plan.pdf.surface': 'surface',
+  'plan.pdf.mesurable': 'mesurable',
+  'plan.pdf.aVerifier': 'à vérifier',
+  'plan.pdf.depuis': 'Échelle : {motif}',
+  'plan.pdf.montrer': 'Montrer sur le plan',
+  'plan.pdf.confirmerMesure': 'Confirmer',
+  'plan.pdf.corriger': 'Corriger',
+  // « Rejeter » et non « Supprimer » : la proposition de la machine reste en
+  // base avec sa citation. C'est la DÉCISION qui est enregistrée, pas un
+  // effacement — sans quoi le dossier cesserait d'être auditable.
+  'plan.pdf.rejeter': 'Rejeter',
+  'plan.pdf.aideRejeter':
+    'À utiliser quand la mesure ne veut rien dire — mauvais endroit, points mal '
+    + 'posés, échelle douteuse. La proposition reste consultable ; elle ne sera '
+    + 'simplement jamais reprise.',
+  'plan.pdf.motifDecision': 'Motif',
+  'plan.pdf.valeurCorrigee': 'Valeur retenue',
+  'plan.pdf.corrigeeEn': 'corrigée en',
+  'plan.pdf.textesLus': '{rendus} textes affichés sur {total} lus',
+  // Les réserves, nommées. Une réserve sans phrase ne s'afficherait pas, et
+  // l'utilisateur verrait « à vérifier » sans savoir pourquoi.
+  'plan.pdf.reserve.incertitude_elevee':
+    "Le pointage était trop grossier pour cette distance : agrandissez davantage et reprenez.",
+  'plan.pdf.reserve.contour_qui_se_recoupe':
+    'Le contour se croise lui-même : la surface calculée ne correspond à rien de dessiné.',
+  'plan.decision.accepted': 'confirmée',
+  'plan.decision.corrected': 'corrigée',
+  'plan.decision.rejected': 'rejetée',
+  'common.close': 'Fermer',
+  'common.saving': 'Enregistrement…',
+
+  'plan.measures': 'Mesures proposées',
+  'plan.measuresToCheck': 'Mesures à vérifier',
+  'plan.measuresClean': 'Mesures sans réserve',
+  'plan.measuresEmpty':
+    'La lecture n’a proposé aucune mesure. Le fichier a bien été lu — il ne porte '
+    + 'simplement aucune cote ni aucun objet mesurable que Metreo sache reprendre.',
+  'plan.exactValue': 'Valeur exacte lue dans le fichier :',
+  'plan.proposedValue': 'Valeur proposée',
+  'plan.retainedValue': 'Valeur retenue',
+  'plan.family': 'Famille',
+  'plan.handle': 'Handle DXF',
+  'plan.origin': 'Origine',
+  'plan.confidence': 'Confiance',
+  'plan.reserves': 'Réserves',
+  'plan.toCheck': 'à vérifier',
+  'plan.noReserve': 'sans réserve',
+  'plan.noReserveHint':
+    'Lue sans réserve par le programme. Cela ne la rend pas juste : elle reste à '
+    + 'confirmer par une personne.',
+  'plan.imposedText':
+    'Le plan affiche « {texte} » à la place de la mesure. Le dessinateur a écrit ce '
+    + 'texte lui-même : il ne correspond pas forcément à la géométrie.',
+  'plan.unknownPosition': 'Position inconnue dans l’image',
+  'plan.locate': 'Situer sur le plan',
+  'plan.located': 'Situé sur le plan',
+
+  'plan.origin.cote_42': 'cote du logiciel',
+  'plan.origin.recalcul': 'recalculée',
+  'plan.family.lineaire': 'linéaire',
+  'plan.family.alignee': 'alignée',
+  'plan.family.diametre': 'diamètre',
+  'plan.family.rayon': 'rayon',
+  'plan.family.angulaire': 'angulaire',
+  'plan.family.angulaire_3_points': 'angulaire (3 points)',
+  'plan.family.ordonnee': 'ordonnée',
+  'plan.family.inconnue': 'inconnue',
+
+  'plan.decide.accept': 'Confirmer',
+  'plan.decide.correct': 'Corriger',
+  'plan.decide.reject': 'Refuser',
+  'plan.decided.accepted': 'confirmée',
+  'plan.decided.corrected': 'corrigée',
+  'plan.decided.rejected': 'refusée',
+  'plan.decide.reason': 'Motif (obligatoire)',
+  'plan.decide.reasonHint':
+    'Ce motif est conservé avec la décision. Il explique à qui relira le dossier '
+    + 'pourquoi cette valeur a été retenue, corrigée ou écartée.',
+  'plan.decide.reasonRequired': 'Un motif est obligatoire : le serveur refuse une décision sans explication.',
+  'plan.decide.newValue': 'Valeur corrigée',
+  'plan.decide.newValueHint':
+    'Saisissez-la dans l’unité du document, rappelée à droite du champ. Rien '
+    + 'n’est converti : la valeur part telle quelle.',
+  'plan.decide.notANumber':
+    'Ce n’est pas un nombre. Exemples : 5000 ; 2,75 ; 0.5 — la virgule est acceptée.',
+  'plan.decide.noUnit':
+    'Le document ne déclare aucune unité : la valeur corrigée partira sans unité, '
+    + 'comme la proposition.',
+  'plan.decide.submit': 'Enregistrer la décision',
+  'plan.decide.notAllowed':
+    'Confirmer, corriger ou refuser une mesure demande le droit de valider un document. '
+    + 'Les mesures restent consultables.',
+  'plan.decide.machineKept':
+    'La proposition du programme n’est jamais réécrite : après une décision, elle '
+    + 'reste affichée à côté de la valeur retenue.',
 
   'estimate.title': 'Étude de prix',
   'estimate.version': 'Version',

@@ -880,6 +880,257 @@ class DocumentRevisionOut(ApiModel):
     created_at: datetime
 
 
+# -- lecture d'un plan -----------------------------------------------------
+
+
+class AnomalieDePlan(ApiModel):
+    """Un fait qui empêche ou fragilise une reprise, déjà rédigé en français.
+
+    Le message vient du serveur et part tel quel à l'écran : une interface qui
+    le recomposerait depuis le code finirait par dire autre chose que ce que
+    le lecteur a constaté.
+    """
+
+    code: str
+    message: str
+
+
+class CadreDePlan(ApiModel):
+    """Où se trouve un objet dans l'image, en [0,1], origine en haut à gauche.
+
+    Les quatre bornes sont des CHAÎNES décimales, comme toutes les valeurs
+    décimales de cette API : un flottant perdrait des chiffres au transport,
+    et une position sert à poser un surlignage au pixel près.
+    """
+
+    x0: str
+    y0: str
+    x1: str
+    y1: str
+
+
+class MesureDePlan(ApiModel):
+    """Une mesure proposée, sa provenance, sa réserve et la décision humaine.
+
+    `valeur_document` est la mesure DANS L'UNITÉ DU DOCUMENT, sans aucune
+    conversion. `valeur_corrigee` est ce qu'un humain a retenu, s'il a
+    corrigé : les deux sont rendues, parce que la proposition machine n'est
+    jamais réécrite et que l'écran doit pouvoir montrer l'écart.
+    """
+
+    proposal_id: str
+    citation_id: str
+    valeur_document: str
+    unite_document: str | None
+    famille: str
+    fiabilite: str
+    origine_de_la_mesure: str
+    texte_impose: str | None
+    reserves: list[AnomalieDePlan]
+    confiance: str
+    calque: str | None
+    feuille: str | None
+    object_ref: str | None
+    cadre: CadreDePlan | None
+    decision: str | None
+    valeur_corrigee: str | None
+
+
+class PlanLu(ApiModel):
+    """Le constat d'un plan, et les mesures qu'on en a tirées.
+
+    `mesurable` faux n'est pas une erreur : un plan sans unité déclarée reste
+    consultable et archivable — ni la visualisation ni l'archivage ne
+    demandent d'unité. Il n'est simplement pas mesurable, et l'écran doit le
+    dire au lieu de laisser une liste vide se faire interpréter.
+    """
+
+    revision_id: str
+    #: `"dxf"` ou `"pdf"`. L'écran en a besoin AVANT de lire le reste : les
+    #: champs d'un format absent valent `None` ou une liste vide, et un écran
+    #: qui ne saurait pas lequel il lit afficherait « sans unité » pour un PDF
+    #: — ce qui est vrai, mais trompeur : un PDF n'en a jamais.
+    format: Literal["dxf", "pdf"] = "dxf"
+    mesurable: bool
+    unite_source: str | None
+    insunits: int | None
+    version_dxf: str | None
+    feuilles: list[str]
+    calques: dict[str, int]
+    entites: dict[str, int]
+    refuse: bool
+    motif_du_refus: AnomalieDePlan | None
+    anomalies: list[AnomalieDePlan]
+    image_disponible: bool
+    mesures: list[MesureDePlan]
+
+    # -- ce qui n'existe que pour un PDF ------------------------------------
+    #: Zéro pour un DXF : la notion n'a pas de sens pour un espace modèle.
+    pages: int = 0
+    #: Largeur et hauteur de chaque page, en **points PostScript** (1/72 de
+    #: pouce). Ce sont des nombres, pas des chaînes décimales, et la raison est
+    #: qu'ils ne servent à AUCUN calcul de métré : ils donnent le rapport de
+    #: forme d'un aperçu. Une valeur qui entre dans un prix est une chaîne ;
+    #: celle-ci n'y entre jamais.
+    dimensions_des_pages: list[list[float]] = Field(default_factory=list)
+    #: Faux pour un document scanné : l'aperçu reste utile, l'extraction non.
+    porte_du_texte: bool = False
+    #: Combien de fragments de texte ont été récoltés. Un COMPTE, pas le texte :
+    #: les fragments se demandent à la route `…/plan/textes`, parce qu'un plan
+    #: réel en porte quelques milliers.
+    fragments_lus: int = 0
+    #: Les pages qui ont un aperçu, dans l'ordre. Une page absente de cette
+    #: liste n'est pas affichable — et `anomalies` dit alors pourquoi.
+    apercus: list[int] = Field(default_factory=list)
+
+
+class FragmentDeTexte(ApiModel):
+    """Un morceau de texte d'un PDF, et où il se trouve.
+
+    `texte` est rendu **tel que le document le porte** : espaces, virgules
+    décimales et unités comprises, sans normalisation. Le découpage en
+    fragments est celui du fichier, pas le nôtre — sur un plan réel, une cote
+    peut arriver entière (« 5000 ») ou éclatée caractère par caractère.
+    Regrouper relève d'une interprétation, et cette interprétation n'a pas
+    lieu côté serveur.
+
+    **Un fragment n'est pas une mesure.** C'est un texte situé. Il devient une
+    mesure quand un humain a confirmé une échelle, et pas avant.
+    """
+
+    texte: str
+    #: 1-indexée, comme une citation documentaire.
+    page: int
+    #: Dans le repère de l'aperçu PNG : [0,1], origine en haut à gauche. Se
+    #: pose donc directement sur l'image, sans conversion.
+    #:
+    #: `null` quand la position est inconnue. Ce n'est pas un oubli : écraser
+    #: une boîte hors page sur un bord inventerait un emplacement, et le
+    #: propriétaire chercherait la cote là.
+    cadre: CadreDePlan | None
+    #: `"exacte"`, `"recadree"` ou `"inconnue"`. Un écran qui n'afficherait que
+    #: le cadre présenterait un surlignage partiel comme s'il était complet.
+    position: str = "exacte"
+
+
+class TextesDePlan(ApiModel):
+    """Les textes d'un PDF, par tranches : un plan réel en porte des milliers."""
+
+    revision_id: str
+    #: Le nombre total de fragments du document, toutes pages confondues —
+    #: pas celui de la tranche rendue. C'est lui qui permet à l'écran de dire
+    #: « 120 sur 4 351 » au lieu de laisser croire qu'il a tout.
+    total: int
+    #: Quelle page a été demandée, ou `None` pour toutes.
+    page: int | None
+    fragments: list[FragmentDeTexte]
+    #: L'extracteur et sa version, tels qu'ils figureront dans une citation.
+    extracteur: str
+
+
+class PointDEcran(BaseModel):
+    """Un point désigné sur l'aperçu : [0,1], origine en haut à gauche.
+
+    Le MÊME repère que celui des cadres rendus par l'API. Demander au client de
+    convertir vers les points PostScript de la page lui ferait refaire une
+    transformation qui dépend de la rotation d'affichage — et la referait
+    forcément autrement.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class CalibrationCreate(BaseModel):
+    """Déclarer l'échelle d'une page : deux points, et ce qui les sépare."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(ge=1)
+    premier: PointDEcran
+    second: PointDEcran
+    #: Ce que la personne SAIT de cette distance. En chaîne décimale : un
+    #: flottant perdrait des chiffres, et cette valeur multiplie tout le reste.
+    distance_reelle: Decimal = Field(gt=0)
+    #: Un code d'unité de LONGUEUR. Refusé s'il n'en est pas un.
+    unite: str = Field(min_length=1, max_length=16)
+    #: Points PostScript par pixel d'écran au moment du pointage.
+    #:
+    #: **C'est ce champ qui décide de la confiance accordée aux mesures.**
+    #: Mesuré : sur l'aperçu pleine page d'un A0, un pixel vaut 12 à 42 mm
+    #: d'ouvrage ; sur une tuile agrandie, 0,6 à 6 mm. Un client qui ne le
+    #: déclare pas obtient le doute, pas le crédit.
+    resolution_du_pointage: Decimal = Field(gt=0)
+    #: Sur quoi la personne dit avoir calibré. Obligatoire : une calibration
+    #: sans justification ne se vérifie pas, et c'est elle qu'on relira.
+    motif: NonBlank = Field(max_length=500)
+    #: La zone où cette échelle s'applique. Absente = toute la page.
+    zone: list[float] | None = Field(default=None, min_length=4, max_length=4)
+
+
+class CalibrationOut(ApiModel):
+    """Une échelle déclarée, telle que l'écran la relit."""
+
+    id: str
+    page: int
+    distance_reelle: str
+    unite: str
+    #: « 50 mm par point ». À LIRE, pas à recalculer : un écran qui en referait
+    #: l'arithmétique obtiendrait un second facteur, et les deux divergeraient.
+    facteur_lisible: str
+    resolution_du_pointage: str
+    motif: str
+    zone: list[str] | None
+    created_at: datetime
+
+
+class MesureCreate(BaseModel):
+    """Prendre une mesure : un type, des points, un libellé."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(ge=1)
+    type: Literal["segment", "surface"]
+    points: list[PointDEcran] = Field(min_length=2, max_length=200)
+    #: Ce que la personne mesure — « mur nord », « dalle du séjour ». Une liste
+    #: de mesures sans libellé est une liste de nombres que personne ne relit.
+    libelle: NonBlank = Field(max_length=200)
+
+
+class MesureDePdf(ApiModel):
+    """Une mesure prise sur un PDF, avec de quoi la juger et la retrouver."""
+
+    proposal_id: str
+    citation_id: str
+    page: int
+    type: str
+    libelle: str
+    valeur: str
+    unite: str
+    #: Dans la MÊME unité que la valeur. Une incertitude en pourcentage
+    #: obligerait le lecteur à faire une multiplication, et il ne la fera pas.
+    incertitude: str
+    incertitude_relative: str
+    fiabilite: str
+    reserves: list[str]
+    #: Les points désignés, pour redessiner la mesure sur l'aperçu. Sans eux,
+    #: « retrouver la mesure sur le plan » redevient impossible.
+    points: list[PointDEcran]
+    cadre: CadreDePlan | None
+    #: D'où vient l'échelle qui a produit ce nombre.
+    calibration: dict[str, Any]
+    decision: str | None
+    valeur_corrigee: str | None
+
+
+class MesuresDePdf(ApiModel):
+    revision_id: str
+    calibrations: list[CalibrationOut]
+    mesures: list[MesureDePdf]
+
+
 class ValidationDecisionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

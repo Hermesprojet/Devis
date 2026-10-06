@@ -32,6 +32,15 @@ export const PERMISSIONS = {
    */
   marginRead: 'margin:read',
   documentWrite: 'document:write',
+  /**
+   * Trancher sur une proposition d'extraction : confirmer, corriger, refuser.
+   *
+   * SÉPARÉE de `document:read` : consulter un plan et se prononcer sur les
+   * mesures qu'on en a tirées ne sont pas le même geste. Les rôles `buyer`
+   * et `viewer` lisent les documents sans pouvoir trancher — l'écran leur
+   * montre donc les mesures, sans les trois commandes.
+   */
+  documentValidate: 'document:validate',
   projectRead: 'project:read',
   projectWrite: 'project:write',
 } as const

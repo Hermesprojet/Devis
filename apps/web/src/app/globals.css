@@ -94,7 +94,7 @@ label { display: block; font-size: 12px; color: var(--ink-muted); margin-bottom:
 /* Un champ que le SERVEUR a déclaré manquant. Le liseré double le message
    textuel plutôt que de le remplacer : la couleur seule ne dit rien à qui ne
    la distingue pas. */
-input.invalide, select.invalide { border-color: var(--warning); }
+input.invalide, select.invalide, textarea.invalide { border-color: var(--warning); }
 .field { margin-bottom: 12px; }
 .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .row > * { flex: 1 1 180px; }
@@ -154,6 +154,52 @@ details.subdetail table { margin-top: 8px; background: var(--bg); }
 .scenarios-resultat { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
 .scenarios-resultat .notice { margin-bottom: 0; }
 
+/* Lecture d'un plan DXF.
+   `.plan-cadre` est la FENÊTRE : elle découpe le rendu et reçoit le
+   glissement. `.plan-scene` est ce qui bouge et se met à l'échelle ; le repère
+   d'une mesure vit DEDANS, en pourcentages, pour suivre l'image au zoom sans
+   qu'une seule coordonnée soit recalculée en JavaScript.
+   `touch-action: none` est indispensable : sans lui, un doigt sur un écran
+   tactile fait défiler la page au lieu de déplacer le plan. */
+.plan-cadre {
+  position: relative;
+  overflow: hidden;
+  height: 460px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  touch-action: none;
+  cursor: grab;
+}
+.plan-cadre:active { cursor: grabbing; }
+.plan-scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+/* `max-width: none` contre la règle de confort habituelle : ici l'image DOIT
+   pouvoir dépasser son conteneur, c'est tout l'objet du zoom. */
+.plan-image { display: block; max-width: none; user-select: none; }
+/* Le repère d'une mesure : un contour EN POINTILLÉ autant qu'une couleur —
+   un liseré de couleur seule ne dit rien à qui ne la distingue pas. */
+.plan-repere {
+  position: absolute;
+  border: 2px dashed var(--accent);
+  background: rgba(31, 95, 139, .12);
+  pointer-events: none;
+}
+
+/* La liste des mesures : une liste, pas un tableau. Chaque mesure porte des
+   faits de longueur très inégale — plusieurs réserves rédigées, un texte
+   imposé, un formulaire de décision — que des colonnes fixes écraseraient. */
+.plan-mesures { list-style: none; margin: 0; padding: 0; }
+.plan-mesure { border-bottom: 1px solid var(--border); padding: 10px 12px; }
+.plan-mesure:last-child { border-bottom: 0; }
+/* La mesure VISÉE sur l'image : un fond ET un liseré épais à gauche. */
+.plan-mesure.visee { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); }
+.plan-valeur { font-size: 16px; font-weight: 700; }
+/* Les faits d'une mesure, séparés par un point médian inséré en CSS : le
+   séparateur n'est pas du contenu, et un lecteur d'écran n'a pas à l'épeler. */
+.plan-faits { font-size: 12px; margin: 2px 0 0; }
+.plan-faits span + span::before { content: ' · '; }
+.plan-reserves { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }
+
 .skeleton { color: var(--ink-muted); padding: 24px; text-align: center; }
 
 /* La page publique d'un devis.
@@ -173,3 +219,179 @@ main.public h1 {
 main.public h2 {
   font-size: 18px;
 }
+
+/* Lecture d'un plan PDF.
+   Deux différences avec l'écran DXF ci-dessus, et elles dictent tout :
+   l'aperçu est une IMAGE RASTER de taille fixe (2 000 pixels sur le grand
+   côté) et non un rendu vectoriel qu'on peut zoomer sans perte ; et les
+   positions arrivent du serveur en coordonnées NORMALISÉES [0,1], origine en
+   haut à gauche, comme les citations.
+   D'où le choix de superposer un SVG en `viewBox="0 0 1 1"` : les boîtes des
+   textes et les tracés des mesures s'y écrivent avec les nombres reçus, sans
+   une seule multiplication en JavaScript, et suivent l'image à n'importe
+   quelle largeur d'écran. */
+.pdf-apercu {
+  position: relative;
+  margin: 12px 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  /* Le pointeur est une CROIX dès l'aperçu : l'image sert à désigner un
+     endroit, pas à être lue — un clic y ouvre la loupe. */
+  cursor: crosshair;
+}
+.pdf-apercu img { display: block; width: 100%; height: auto; user-select: none; }
+
+/* Le calque des repères. `preserveAspectRatio="none"` dans le balisage : le
+   repère [0,1]² doit s'étirer exactement comme l'image, sinon un surlignage
+   glisse par rapport au texte qu'il désigne.
+   Conséquence à ne pas oublier : l'étirement est ANISOTROPE, donc toute
+   épaisseur de trait doit porter `vector-effect: non-scaling-stroke`, faute de
+   quoi un trait vertical et un trait horizontal n'ont pas la même épaisseur. */
+.pdf-surlignages {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Le calque ne reçoit aucun clic : c'est le conteneur dessous qui les
+     traduit en coordonnées de page. Sans cela, cliquer sur un surlignage ne
+     ferait rien. */
+  pointer-events: none;
+}
+
+/* Un texte lu sur le plan. Rempli très légèrement ET bordé : à 3,5 pixels de
+   haut, un simple liseré serait invisible, et un remplissage seul masquerait
+   le chiffre qu'on cherche à retrouver. */
+.pdf-texte {
+  fill: rgba(31, 95, 139, .14);
+  stroke: var(--accent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Une mesure déjà prise. Le tracé est OUVERT pour un segment, refermé pour une
+   surface — la fermeture est faite en JavaScript, pas ici, parce qu'elle change
+   la liste des points et non leur apparence. */
+.pdf-mesure {
+  fill: none;
+  stroke: var(--success);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+/* Une mesure « à vérifier » : pointillé EN PLUS de la couleur. Rouge contre
+   vert est précisément la paire que distingue le moins bien un œil
+   deutéranope ; le pointillé, lui, se voit en noir et blanc. */
+.pdf-mesure.douteuse {
+  stroke: var(--warning);
+  stroke-dasharray: 6 4;
+}
+
+/* La zone actuellement agrandie dans la loupe, reportée sur l'aperçu : c'est
+   ce qui répond à « où suis-je sur le plan ». */
+.pdf-loupe {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* La loupe : l'agrandissement d'une petite zone, seul endroit où l'on pointe
+   réellement. Mesuré : sur l'aperçu un pixel vaut 12 à 42 mm d'ouvrage, dans
+   la tuile 0,6 à 6 mm. Pointer deux points pour calibrer n'a de sens qu'ici. */
+.pdf-loupe-panneau {
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.pdf-loupe-entete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pdf-loupe-image {
+  position: relative;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: crosshair;
+}
+.pdf-loupe-image img { display: block; width: 100%; height: auto; user-select: none; }
+
+/* Un point posé. Bordé de blanc : la tuile est un dessin noir sur fond blanc,
+   et un disque de couleur seule se perd dans les hachures d'un plan. */
+.pdf-point {
+  fill: var(--danger);
+  stroke: #ffffff;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+/* Le tracé en cours de construction, avant d'être enregistré : pointillé, pour
+   qu'il ne puisse pas être confondu avec une mesure déjà prise. */
+.pdf-trace {
+  fill: rgba(163, 35, 31, .10);
+  stroke: var(--danger);
+  stroke-width: 2;
+  stroke-dasharray: 5 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* L'en-tête du plan : pages, texte lu, échelle. Une liste de définitions et
+   non un tableau — trois faits indépendants, dont le troisième est long. */
+.pdf-entete {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px 16px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.pdf-entete dt { font-size: 12px; color: var(--ink-muted); }
+.pdf-entete dd { margin: 2px 0 0; }
+
+/* La navigation entre pages et le choix de l'outil. */
+.pdf-pages,
+.pdf-outils {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.pdf-pages span { font-variant-numeric: tabular-nums; }
+
+/* Les formulaires de calibration et de mesure : une colonne, parce qu'ils
+   apparaissent SOUS l'image, à côté des points qu'on vient de poser, et que
+   les faire tenir sur une ligne obligerait à rétrécir l'aperçu. */
+.pdf-formulaire {
+  display: grid;
+  gap: 4px;
+  max-width: 420px;
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.pdf-formulaire h3 { margin: 0 0 4px; font-size: 15px; }
+.pdf-formulaire p { margin: 0 0 4px; }
+.pdf-formulaire label { font-size: 12px; color: var(--ink-muted); }
+.pdf-formulaire button { margin-top: 8px; justify-self: start; }
+
+/* Le relevé des mesures. Un tableau ici, contrairement à la liste du DXF : les
+   colonnes sont les mêmes pour toutes les lignes — valeur, fiabilité,
+   décision — et c'est leur comparaison d'une mesure à l'autre qui compte. */
+.pdf-mesures { width: 100%; }
+.pdf-mesures td { vertical-align: top; }
+.pdf-mesures strong { font-variant-numeric: tabular-nums; }
+.pdf-mesures input { width: 100%; margin-top: 4px; }
+.pdf-mesures button { margin-top: 4px; }

@@ -73,6 +73,8 @@ Les frontières sont donc **des modules, pas des processus** :
 | Partage client | `services/partage.py`, `routers/devis_public.py` | Lien à secret haché, session publique courte, page sans compte |
 | Conservation | `services/conservation.py` | Décision de conservation et purge encadrée — aucune route HTTP |
 | Documents | `services/documents.py`, `services/document_storage.py` | Métadonnées et dépôt d'originaux (socle Phase 2A) |
+| Lecture de plans | `services/lecture_dxf.py`, `services/rendu_de_plan.py`, `services/mesures_de_plan.py`, `services/lecture_de_plan.py` | Lire un DXF, le rendre en SVG affichable, et en proposer des mesures citées. Tout est déterministe : aucun modèle de langage, aucune valeur devinée, aucune conversion d'unité |
+| Travail hors requête | `services/travail_documentaire.py`, `scripts/lire_un_plan.py` | Exécuter une étape documentaire avec son état, son idempotence et ses refus bornés, dans une requête HTTP ou dans un processus séparé |
 | Audit | `services/audit.py` | Journal chaîné append-only |
 
 Ce qui doit devenir un service asynchrone le deviendra sans changer de

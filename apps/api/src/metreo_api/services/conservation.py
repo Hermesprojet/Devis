@@ -55,6 +55,7 @@ from metreo_domain.errors import DomainError
 from ..models import (
     MINUTES_D_AUTORISATION,
     MOTIFS_DE_PURGE,
+    DocumentRevision,
     IssuedQuote,
     Organization,
     OrganizationPurge,
@@ -62,7 +63,7 @@ from ..models import (
     utcnow,
 )
 from ..services.document_storage import StockageLocal
-from . import audit
+from . import audit, lecture_de_plan
 
 #: Ce qu'une référence de dossier a le droit d'être.
 #:
@@ -235,12 +236,39 @@ def devis_retenus(
     return [d for d in devis if aujourdhui < echeance(d.issued_at, annees)]
 
 
-def documents_a_detruire(session: Session, organization_id: str) -> list[Document]:
+def documents_a_detruire(
+    session: Session,
+    organization_id: str,
+    stockage: StockageLocal | None = None,
+) -> list[Document]:
     """TOUS les fichiers que l'organisation a posés sur le volume.
 
     Pas seulement les PDF. Un devis émis pose deux fichiers quand l'entreprise
-    a un logo — le document et la copie figée de son logo — et l'organisation
-    elle-même en porte un troisième, son logo courant.
+    a un logo — le document et la copie figée de son logo — l'organisation
+    elle-même en porte un troisième, son logo courant, et une révision de plan
+    analysée en pose davantage : son constat, son image s'il s'agit d'un DXF,
+    et pour un PDF ses textes extraits plus un aperçu PNG par page. La liste
+    exacte est tenue par `lecture_de_plan.cles_derivees` et pas ici : elle
+    dépend du format, et deux listes auraient divergé.
+
+    `stockage` sert à n'inscrire les dérivés d'un plan QUE s'ils existent.
+    Sans lui, ils ne sont pas inscrits du tout : un appelant qui ne fournit
+    pas le volume ne peut pas savoir ce qu'il y a dessus, et inventer des
+    clés ferait échouer la purge sur des fichiers qui n'ont jamais existé.
+
+    **Cette phrase décrivait l'intention et non le code.** Sans `stockage`,
+    l'ancienne boucle inscrivait quand même les deux clés qu'elle connaissait,
+    parce que sa garde ne s'appliquait qu'au cas contraire. Le nombre
+    d'aperçus d'un PDF n'étant pas devinable sans lire le volume, le défaut
+    serait devenu une purge en échec sur des PNG inexistants ; l'intention
+    documentée est donc désormais celle du code.
+
+    **Ce que cette fonction n'inscrit TOUJOURS PAS, et qu'il faut savoir :**
+    les ORIGINAUX des documents, c'est-à-dire `document_revisions.storage_key`.
+    Ils survivent donc à une purge d'organisation. Ce défaut est antérieur à la
+    lecture de plans et n'est pas corrigé ici : il touche le registre d'une
+    purge auditée, et mérite sa propre tranche avec ses propres tests. Il est
+    signalé plutôt que tu.
 
     Les inscrire tous n'est pas une précaution : c'est la condition pour que le
     registre dise la vérité. `executer` supprime la ligne `organizations`, donc
@@ -287,6 +315,50 @@ def documents_a_detruire(session: Session, organization_id: str) -> list[Documen
                 sha256=organisation.logo_sha256 or "",
             )
         )
+
+    # Les artefacts dérivés d'un plan : l'image et le constat.
+    #
+    # Ils sont produits par Metreo, posés sous `rendus-de-plan/`, et aucune
+    # ligne ne les désigne — leur clé est déterministe, calculée depuis la
+    # révision. C'est précisément ce qui les rendrait invisibles à une purge :
+    # `executer` supprime la révision, et plus rien ne saurait dire quels
+    # fichiers lui appartenaient. Ils sont donc inscrits ici, tant que la
+    # révision existe encore pour les nommer.
+    #
+    # Ils ne sont inscrits que s'ils existent : la plupart des révisions n'ont
+    # jamais été analysées, et inscrire un fichier absent ferait sortir la
+    # purge en échec sur un fichier qui n'a jamais existé.
+    for revision in session.scalars(
+        select(DocumentRevision)
+        .where(DocumentRevision.organization_id == organization_id)
+        .order_by(DocumentRevision.id)
+    ).all():
+        # La liste des dérivés vit dans `lecture_de_plan` et nulle part
+        # ailleurs : un PDF en a davantage qu'un DXF — ses textes, et un PNG
+        # par page — et deux listes auraient divergé au premier format ajouté.
+        # Sans stockage, on ne sait rien du volume : on n'inscrit rien.
+        derives = (
+            lecture_de_plan.cles_derivees(
+                stockage, organization_id=organization_id, revision_id=revision.id
+            )
+            if stockage is not None
+            else []
+        )
+        for cle, quoi in derives:
+            if stockage is not None and stockage.taille(cle) is None:
+                continue
+            fichiers.append(
+                Document(
+                    quote_id=revision.id,
+                    number=f"révision {revision.revision_number} ({quoi})",
+                    storage_key=cle,
+                    # L'empreinte d'un dérivé n'est pas conservée : il se
+                    # refait à l'identique depuis l'original, qui porte la
+                    # sienne. Le registre nomme le fichier, il ne certifie pas
+                    # un contenu que personne n'a signé.
+                    sha256="",
+                )
+            )
     return fichiers
 
 
@@ -304,6 +376,7 @@ def demander(
     requested_by: str | None = None,
     aujourdhui: date | None = None,
     sans_retention: bool = False,
+    stockage: StockageLocal | None = None,
 ) -> OrganizationPurge:
     """Inscrit la destruction. **N'autorise rien** : il faut `autoriser()` ensuite.
 
@@ -321,6 +394,11 @@ def demander(
     organisations semées par ce module, retrouvées par leur nom exact. Les
     trois premiers refus continuent de s'appliquer — même le jeu de
     démonstration ne se détruit pas sans écrit.
+
+    `stockage` est passé à l'inventaire pour qu'il puisse constater les
+    artefacts dérivés d'un plan, qu'aucune ligne ne désigne. Sans lui, ils ne
+    sont pas inscrits, et survivraient donc à la purge : un appelant qui
+    détruit pour de bon doit le fournir.
     """
     aujourdhui = aujourdhui or utcnow().date()
 
@@ -375,7 +453,7 @@ def demander(
                 retained=[d.number for d in retenus],
             )
 
-    documents = documents_a_detruire(session, organization_id)
+    documents = documents_a_detruire(session, organization_id, stockage)
     purge = OrganizationPurge(
         organization_id=organization_id,
         status="requested",

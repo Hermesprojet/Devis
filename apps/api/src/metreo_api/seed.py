@@ -852,6 +852,10 @@ def seed(session: Session, *, reset: bool = False) -> dict[str, str]:
                 organization_id=organization.id,
                 reason_code="demo_reset",
                 sans_retention=True,
+                # Le même volume que celui que `reprendre` nettoiera plus bas :
+                # sans lui, l'inventaire ignorerait les dérivés d'un plan et le
+                # reset les laisserait derrière lui.
+                stockage=StockageLocal(get_settings().storage_root),
             )
             # Demander n'autorise rien : la fenêtre s'ouvre explicitement ici,
             # comme pour une destruction réelle. C'est ce qui rend le geste du

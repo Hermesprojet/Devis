@@ -56,7 +56,22 @@ jobs:
           python -m pip install --upgrade pip
           # Le paquet déclare ses dépendances : les installer par lui, et non
           # par une liste parallèle qui masquerait un manque dans pyproject.toml.
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev]"
+          #
+          # `plans` porte ezdxf ET Pillow — cette dernière est une dépendance
+          # DURE du module de dessin d'ezdxf, et son absence a fait tomber
+          # seize tests ICI alors que tout passait en local. Il est optionnel
+          # dans le manifeste, mais la CI
+          # l'installe : sans lui, les tests de lecture de plans se
+          # SAUTERAIENT, et une suite qui saute ne prouve rien.
+          #
+          # `pdf` pour exactement la même raison, et il a manqué pendant
+          # plusieurs tranches : `pypdfium2` absent, les quatre-vingts tests du
+          # lecteur PDF, de la mesure, de la calibration et du cache de tuiles
+          # se sautaient ici en silence pendant que l'atelier affichait vert.
+          # `test_extras_de_lecture_de_plans.py` refuse désormais ce fichier
+          # s'il manque un extra, et `METREO_REQUIRE_PLAN_EXTRAS` fait d'un
+          # ignoré une erreur.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,pdf]"
       - name: Format et lint
         # scripts/ y est joint : il porte désormais de la logique — le
         # contrôle d'installation propre et celui des skills — et non plus
@@ -88,6 +103,11 @@ jobs:
           mypy scripts
       - name: Tests
         working-directory: apps/api
+        # METREO_REQUIRE_PLAN_EXTRAS : l'atelier vient d'installer `plans` et
+        # `pdf`. Un test de lecture de plans qui se SAUTERAIT ici est donc un
+        # mensonge sur ce qui a été éprouvé, et non un ignoré légitime.
+        env:
+          METREO_REQUIRE_PLAN_EXTRAS: "1"
         run: pytest -q
 
   api-postgres:
@@ -116,7 +136,7 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,pdf,postgres]"
       - name: Aller-retour des migrations, dans une base créée par ce run
         # Le service PostgreSQL est éphémère — il meurt avec le job — mais
         # l'aller-retour ne s'appuie pas là-dessus : il crée sa propre base au
@@ -165,6 +185,9 @@ jobs:
         # transactionnel.
         env:
           METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+          # Même raison que dans l'atelier SQLite : les extras sont installés,
+          # donc un ignoré pour extra manquant devient rouge.
+          METREO_REQUIRE_PLAN_EXTRAS: "1"
         run: pytest -q
       - name: Les tests PostgreSQL-only ont réellement tourné
         working-directory: apps/api
@@ -234,7 +257,15 @@ jobs:
       - name: Installer l'API
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain ./apps/api
+          # `plans` est indispensable ICI aussi, et pas seulement aux tests
+          # Python : le banc fabrique une fixture de plan COTÉE avec ezdxf, et
+          # sans l'extra elle manquait — le parcours échouait sur un fichier
+          # absent, après avoir passé dix-sept scénarios.
+          #
+          # Et `pdf` de même : sans `pypdfium2`, le serveur REFUSE un PDF à
+          # l'analyse, l'écran de lecture PDF ne s'affiche jamais, et le
+          # parcours échoue sur un élément introuvable — ce qui est arrivé.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[plans,pdf]"
       - name: Installer le web (verrouillé)
         working-directory: apps/web
         run: npm ci
@@ -382,6 +413,48 @@ jobs:
             || { echo "Le port de diagnostic n'est pas sur la boucle locale" >&2; exit 1; }
           echo "surcouche derrière proxy : aucun port public, diagnostic en 127.0.0.1"
 
+      - name: Composition jetable de restauration valide
+        # La seconde pile d'un exercice de restauration ne doit être joignable
+        # de nulle part : aucun port publié, aucune étiquette de proxy. Les
+        # deux marques `!override` sont ce qui le garantit, et seule une
+        # résolution réelle les éprouve.
+        env:
+          PUBLIC_HOST: http://app.example.invalid
+          PUBLIC_DOMAIN: app.example.invalid
+          PUBLIC_ORIGIN: https://app.example.invalid
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: valeur-factice-de-ci
+          POSTGRES_DB: ci
+          METREO_JWT_SECRET: valeur-factice-de-ci-0123456789abcdef
+          METREO_OIDC_ISSUER: https://issuer.example.invalid
+          METREO_OIDC_CLIENT_ID: ci
+          METREO_OIDC_CLIENT_SECRET: valeur-factice-de-ci
+          METREO_OIDC_REDIRECT_URI: https://app.example.invalid/
+          API_IMAGE: metreo-api:ci
+          WEB_IMAGE: metreo-web:ci
+        run: |
+          # Les deux montages documentés : sans et avec la surcouche derrière
+          # proxy. La jetable doit neutraliser chacun, pas seulement le second.
+          for base in "" "-f infra/docker-compose.derriere-proxy.yml"; do
+            # `$base` est volontairement scindé en deux mots.
+            # shellcheck disable=SC2086
+            rendu=$(docker compose --project-name ci-jetable \
+              -f infra/docker-compose.staging.yml $base \
+              -f infra/docker-compose.jetable.yml config)
+            if echo "$rendu" | grep -qE '^\s+published:'; then
+              echo "La pile jetable (${base:-sans proxy}) publie encore un port :" >&2
+              echo "$rendu" | grep -B3 -E '^\s+published:' >&2; exit 1
+            fi
+            # Toute étiquette `traefik.*`, pas seulement `traefik.enable` : un
+            # routeur sans `enable` reste inerte, mais une règle `Host()` qui
+            # traîne dans le rendu est un montage qu'on ne comprend plus.
+            if echo "$rendu" | grep -q 'traefik\.'; then
+              echo "La pile jetable (${base:-sans proxy}) porte encore des étiquettes Traefik :" >&2
+              echo "$rendu" | grep 'traefik\.' >&2; exit 1
+            fi
+            echo "pile jetable (${base:-sans proxy}) : aucun port publié, aucune étiquette de proxy"
+          done
+
       - name: Configuration du proxy valide
         # Un Caddyfile invalide ne se voit qu'au démarrage, c'est-à-dire au
         # moment du déploiement, c'est-à-dire trop tard. `caddy validate`
@@ -394,6 +467,32 @@ jobs:
         run: docker build -f infra/api.Dockerfile -t metreo-api:ci .
       - name: Construire l'image du front
         run: docker build -f infra/web.Dockerfile -t metreo-web:ci .
+      - name: L'image de l'API sait lire un plan
+        # Le défaut que ce contrôle ferme : l'image installait
+        # `apps/api[postgres]` SANS l'extra `plans`. Elle démarrait, passait
+        # tous les contrôles ci-dessus, et échouait sur le PREMIER plan déposé
+        # — un `ModuleNotFoundError` que rien, ici, ne pouvait voir : les
+        # autres ateliers éprouvent le code, pas l'image.
+        #
+        # Et vérifier que `ezdxf` s'importe ne suffirait pas davantage. Le
+        # script fabrique un mur coté de 5 000 mm DANS le conteneur, le relit,
+        # compare la valeur à celle qui a été posée, rend le SVG, et vérifie
+        # qu'un type non lu est refusé par un code nommé.
+        #
+        # Le PDF a le même problème, avec un second extra — `pdf`, donc
+        # `pypdfium2` — et il est éprouvé de la même façon : un PDF fabriqué
+        # sur place, la position d'un texte comparée à une valeur connue (c'est
+        # l'inversion du repère vertical qui est en jeu), et un aperçu PNG.
+        #
+        # C'est le DOSSIER `scripts/` qui est monté, et non le seul fichier
+        # d'épreuve : la fabrique de fixtures PDF est partagée avec les tests
+        # du dépôt, et en recopier les octets ici en aurait fait deux vérités.
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts:/epreuve:ro" \
+            -v "$PWD/fixtures/plans:/fixtures:ro" \
+            --entrypoint python metreo-api:ci \
+            /epreuve/verifier_image_de_lecture.py --fixtures /fixtures
       - name: L'API ne tourne pas en root
         # Le point du contrôle : une image qui traitera en phase 2 des fichiers
         # venant de tiers ne doit pas exécuter son processus en uid 0.
@@ -412,6 +511,34 @@ jobs:
             test "$(docker inspect -f '{{if .Config.Healthcheck}}oui{{else}}non{{end}}' "$image")" = "oui"
             echo "$image : point de santé déclaré"
           done
+      - name: Le front devient réellement sain
+        # Déclarer une sonde ne prouve pas qu'elle passe. La première mise en
+        # ligne l'a montré : `HOSTNAME` absent de l'image, Next lié à
+        # l'adresse du conteneur, sonde sur 127.0.0.1 en échec, conteneur
+        # jamais `healthy` — et la répétition verte, parce qu'elle ne
+        # demandait au front que d'être `running`. On le lance donc pour de
+        # bon, seul, et on attend le verdict de sa propre sonde.
+        run: |
+          # Pas de `--rm` : un conteneur qui meurt au démarrage serait retiré
+          # avec lui, et `inspect` comme `logs` n'auraient plus rien à lire —
+          # trente tours pour une erreur muette. Le `trap` le retire à la fin.
+          id=$(docker run -d --name web-sain metreo-web:ci)
+          trap 'docker rm -f web-sain >/dev/null 2>&1 || true' EXIT
+          etat=inconnu
+          for i in $(seq 1 30); do
+            etat=$(docker inspect -f '{{.State.Status}}/{{.State.Health.Status}}' "$id" 2>/dev/null || echo disparu)
+            case "$etat" in
+              running/healthy) echo "front sain après ${i}×3 s"; exit 0 ;;
+              running/unhealthy|exited/*|dead/*|disparu) break ;;
+            esac
+            sleep 3
+          done
+          echo "::error::le front n'est jamais devenu sain (état : $etat)"
+          echo "── journal de la sonde ──"
+          docker inspect -f '{{range .State.Health.Log}}{{.End}} code={{.ExitCode}} {{.Output}}{{end}}' "$id" 2>/dev/null || true
+          echo "── journal du conteneur ──"
+          docker logs "$id" 2>&1 | tail -30 || true
+          exit 1
 
   audit:
     name: Vulnérabilités des dépendances
@@ -495,7 +622,7 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,postgres]"
       - name: Les quatorze scénarios de connexion
         run: |
           python ops/banc_oidc.py \

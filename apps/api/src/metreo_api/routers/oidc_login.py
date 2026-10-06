@@ -76,13 +76,20 @@ def _erreur(exc: oidc.OidcError) -> HTTPException:
 @router.get("/start", response_model=OidcStartOut, summary="Commencer une connexion")
 def start(
     return_to: str | None = Query(default=None),
+    other_account: bool = Query(default=False),
     settings: Settings = Depends(get_settings),
     session: Session = Depends(session_scope),
 ) -> OidcStartOut:
     _require_oidc(settings)
     try:
         metadata = oidc.discover(settings)
-        url = oidc.start(session, settings, metadata=metadata, return_to=_safe_return_to(return_to))
+        url = oidc.start(
+            session,
+            settings,
+            metadata=metadata,
+            return_to=_safe_return_to(return_to),
+            other_account=other_account,
+        )
     except oidc.OidcError as exc:
         raise _erreur(exc) from exc
 
@@ -175,6 +182,25 @@ def callback(
     parametres = {"login_code": code_de_connexion}
     if retour_vers:
         parametres["return_to"] = retour_vers
+
+    # La connexion RÉUSSIT dans tous les cas ci-dessous : ce qui suit est un
+    # avis, pas un refus. Le bouton « utiliser un autre compte » est un
+    # confort, et bloquer ici fermerait Metreo à quiconque passe par un
+    # fournisseur amont qui n'honore pas `max_age` — c'est-à-dire exactement
+    # la situation que ce contrôle sert à détecter.
+    #
+    # Ce qui change, c'est que l'écran peut enfin le DIRE : « vous avez été
+    # reconnecté avec le compte déjà ouvert ». Sans cet avis, une personne qui
+    # clique « autre compte » et retombe sur le même croit à un défaut de
+    # Metreo, alors que la décision appartient à Google.
+    if (
+        oidc.reauthentification_constatee(
+            transaction, claims, tolerance_secondes=settings.oidc_clock_skew_seconds
+        )
+        is False
+    ):
+        parametres["login_notice"] = "reauthentication_not_performed"
+
     return _retour(**parametres)
 
 

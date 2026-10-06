@@ -24,21 +24,29 @@ n'est pas figé (voir `docs/ASSUMPTIONS.md`).
 > `next@15.5.24` — exactement la version attendue —, qui couvre les deux RCE
 > critiques du 25 août 2026. Preuves et décompte : `docs/PHASE1_VERIFICATION.md`.
 >
-> **Candidat de préproduction validé, PAS ENCORE DÉPLOYÉ.** Aucune installation
-> n'est en ligne. Le domaine `metreobtp.com` est acquis et ses DNS sont tenus
-> chez Cloudflare ; ce qui manque est un **serveur d'exécution** et un
-> **fournisseur d'identité réel**. Un domaine n'est pas un hébergement : tant
-> qu'aucune machine ne répond, l'enregistrement DNS n'a pas de cible.
+> **Déployé en préproduction le 16 septembre 2026**, au commit `39ad8d0`, sur un
+> serveur tenu par le propriétaire : les cinq services de la composition de
+> recette, migration en sortie 0, administrateur amorcé, `/api/v1/health` à 200
+> avec base `ok` et OIDC actif, accueil HTTPS public à 200. Le domaine
+> `metreobtp.com` est acquis et ses DNS sont tenus chez Cloudflare.
+>
+> **Mais personne n'y est encore entré.** Aucune connexion de bout en bout n'a
+> jamais été constatée : des conteneurs sains et des 200 ne disent rien du
+> parcours de connexion, qu'aucun test ne peut exercer contre un vrai
+> fournisseur d'identité. Tant que ce point n'est pas franchi, l'installation
+> n'est utilisable par personne.
 > **Production réelle bloquée par des décisions externes, pas par du code** :
 > sauvegardes distantes, supervision et décisions juridiques — la liste vit dans
 > `docs/EXPLOITATION.md`, « Ce qui manque encore ».
 >
-> Quatre choses distinctes, qui ne se remplacent pas : *fonctionnellement
+> Cinq choses distinctes, qui ne se remplacent pas : *fonctionnellement
 > complet* décrit ce qu'un utilisateur peut faire et ce que les tests prouvent ;
-> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque —
-> c'est désormais le cas ; *déployé* suppose qu'une installation existe et
-> réponde à une adresse — ce n'est pas le cas ; *prêt pour la production*
-> suppose l'exploitation.
+> *déployable* suppose en plus qu'aucun correctif de sécurité connu ne manque ;
+> *déployé* suppose qu'une installation existe et réponde à une adresse — c'est
+> le cas depuis le 16 septembre ; ***utilisé*** suppose qu'un humain y soit
+> entré, et **ce n'est pas encore le cas** ; *prêt pour la production* suppose
+> l'exploitation. Le cinquième état manquait à cette liste, et c'est celui qui
+> bloque aujourd'hui.
 
 | Phase | Périmètre | État |
 | --- | --- | --- |
@@ -83,12 +91,15 @@ make install
 `make install` crée le venv et installe **depuis les manifestes**, sous le
 verrou du dépôt. Il n'existe pas de troisième liste de dépendances : les
 `pyproject.toml` et `apps/web/package-lock.json` font foi, et c'est ce que la
-CI installe. Sans `make`, exactement la même chose :
+CI installe. Sans `make`, exactement la même chose — **extras `plans` et `pdf`
+compris** : sans eux, les tests de lecture de plans se SAUTENT, et une suite
+verte qui saute ne prouve rien. C'est arrivé.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
-pip install -c constraints/api.txt -e packages/domain -e "apps/api[dev,postgres]"
+pip install -c constraints/api.txt -e packages/domain \
+  -e "apps/api[dev,postgres,plans,pdf]"
 (cd apps/web && npm ci)
 ```
 

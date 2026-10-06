@@ -94,6 +94,64 @@ def test_citation_rejects_an_invalid_page_or_character_range(
     assert error.value.code == "invalid_document_citation"
 
 
+def test_a_cad_citation_needs_no_page_or_character_range() -> None:
+    """Une cotation de DXF est désignée par son handle, pas par une page.
+
+    Le contrat devait l'admettre pour que le domaine puisse construire la
+    citation que la base accepte désormais (révision d8e9fa010203).
+    """
+    citation_cao = SourceCitation(
+        revision=revision(),
+        extractor="lecture-dxf@ezdxf-1.4.4",
+        confidence=Confidence(Decimal("0.9")),
+        sheet="Model",
+        layer="COTATIONS",
+        object_id="2F3A",
+    )
+    assert citation_cao.page is None
+    assert citation_cao.char_start is None
+    assert citation_cao.bbox is None
+    assert citation_cao.object_id == "2F3A"
+
+
+def test_a_citation_anchored_on_nothing_is_refused() -> None:
+    """Le risque qu'ouvrait la nullabilité, et qui serait le pire des trois :
+    une provenance vide qui passe pour une provenance."""
+    with pytest.raises(InvalidCitationError) as error:
+        SourceCitation(
+            revision=revision(),
+            extractor="fixture@1",
+            confidence=Confidence(Decimal("1")),
+        )
+    assert error.value.code == "invalid_document_citation"
+
+
+def test_a_half_written_character_range_is_refused() -> None:
+    """Le début sans la fin ne se rouvre pas davantage qu'une absence."""
+    with pytest.raises(InvalidCitationError):
+        SourceCitation(
+            revision=revision(),
+            extractor="fixture@1",
+            confidence=Confidence(Decimal("1")),
+            page=2,
+            char_start=10,
+        )
+
+
+def test_a_character_range_without_a_page_is_refused() -> None:
+    """« Caractères 10 à 20 » de quelle page ? La question doit avoir une
+    réponse avant l'écriture, pas après."""
+    with pytest.raises(InvalidCitationError):
+        SourceCitation(
+            revision=revision(),
+            extractor="fixture@1",
+            confidence=Confidence(Decimal("1")),
+            char_start=10,
+            char_end=20,
+            object_id="2F3A",
+        )
+
+
 def test_structured_extraction_requires_a_citation() -> None:
     with pytest.raises(InvalidCitationError):
         StructuredExtraction(

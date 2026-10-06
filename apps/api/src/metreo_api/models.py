@@ -30,6 +30,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -295,6 +296,16 @@ class LoginTransaction(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     #: Horodatage de la consommation du `state`, au retour du fournisseur.
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    #: Vrai quand le départ a DEMANDÉ une réauthentification (`max_age=0`).
+    #:
+    #: Sans ce drapeau, la revendication `auth_time` du jeton d'identité est
+    #: ininterprétable au retour : une authentification antérieure à la demande
+    #: est parfaitement normale quand on n'a rien demandé — c'est le
+    #: fonctionnement même d'une session SSO — et serait signalée à tort sur
+    #: toutes les connexions ordinaires.
+    reauthentication_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     #: Rempli une fois l'identité vérifiée, puis effacé à l'échange.
     login_code: Mapped[str | None] = mapped_column(String(64))
     login_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -571,10 +582,16 @@ class DocumentStepRun(TimestampMixin, Base):
             "model_version",
             name="uq_document_step_run_idempotence",
         ),
+        # Les quinze étapes, et la raison des quatre dernières : un plan ne
+        # passe par aucune des onze étapes de texte. Le libellé doit rester
+        # identique, caractère pour caractère, à celui de la migration
+        # d8e9fa010203 et à `DOCUMENT_PIPELINE_STEPS` — la liste vit à trois
+        # endroits, et un test compare le service à cette contrainte.
         CheckConstraint(
             "step IN ('receive_security','detection','native_text','ocr','tables',"
             "'segmentation','classification','structured_extraction','indexing',"
-            "'consistency','human_review')",
+            "'consistency','human_review','page_render','vector_geometry',"
+            "'cad_read','measurement')",
             name="ck_document_step_run_step",
         ),
         CheckConstraint(
@@ -615,7 +632,26 @@ class DocumentStepRun(TimestampMixin, Base):
 
 
 class SourceCitation(TimestampMixin, Base):
-    """Resolvable source location; never a free-form “see page” string."""
+    """Un emplacement RÉSOLUBLE — jamais un « voir page 12 » en texte libre.
+
+    Deux ancrages, et un seul des deux suffit :
+
+    - **texte** : une page et une plage de caractères, éventuellement une
+      boîte englobante normalisée ;
+    - **CAO** : une feuille, un calque et un handle d'objet — la seule
+      désignation stable d'un objet dans un fichier de dessin.
+
+    `page`, la plage de caractères et la boîte sont nullables depuis la
+    révision d8e9fa010203. Une cotation de DXF n'a ni page ni caractères :
+    lui inventer `page = 1` et une plage factice écrirait en base une
+    provenance FAUSSE, indiscernable après coup d'une citation de texte, et
+    rendrait inécrivable le test qui doit rouvrir une citation et y retrouver
+    ce qui est cité.
+
+    Ce qui reste interdit est la citation ancrée sur RIEN :
+    `ck_source_citation_ancrage` l'exige. Les deux ancrages peuvent coexister
+    — un plan PDF a une page rendue ET un objet vectoriel.
+    """
 
     __tablename__ = "source_citations"
     __table_args__ = (
@@ -634,19 +670,72 @@ class SourceCitation(TimestampMixin, Base):
         CheckConstraint("page >= 1", name="ck_source_citation_page"),
         CheckConstraint("char_start >= 0", name="ck_source_citation_char_start"),
         CheckConstraint("char_end > char_start", name="ck_source_citation_char_range"),
+        # Le `CAST` n'est pas décoratif. `Amount` stocke un décimal en TEXTE
+        # sur SQLite, et une comparaison entre du texte et le littéral `1` se
+        # fait alors sur les CHAÎNES : mesuré, « 1.0000000000 » est REFUSÉ et
+        # « 0.9000000000 » accepté, alors que PostgreSQL accepte les deux. Une
+        # boîte touchant le bord droit du dessin tombait donc d'un côté
+        # seulement. Voir la migration d8e9fa010203.
         CheckConstraint(
-            "x0 >= 0 AND x0 <= 1 AND y0 >= 0 AND y0 <= 1 AND "
-            "x1 >= 0 AND x1 <= 1 AND y1 >= 0 AND y1 <= 1 AND "
-            "x0 < x1 AND y0 < y1",
+            "CAST(x0 AS NUMERIC) >= 0 AND CAST(x0 AS NUMERIC) <= 1 AND "
+            "CAST(y0 AS NUMERIC) >= 0 AND CAST(y0 AS NUMERIC) <= 1 AND "
+            "CAST(x1 AS NUMERIC) >= 0 AND CAST(x1 AS NUMERIC) <= 1 AND "
+            "CAST(y1 AS NUMERIC) >= 0 AND CAST(y1 AS NUMERIC) <= 1 AND "
+            "CAST(x0 AS NUMERIC) < CAST(x1 AS NUMERIC) AND "
+            "CAST(y0 AS NUMERIC) < CAST(y1 AS NUMERIC)",
             name="ck_source_citation_bbox",
         ),
+        # Même raison : une citation CAO porte une confiance de 1, parce qu'un
+        # handle désigne UN objet sans ambiguïté.
         CheckConstraint(
-            "confidence >= 0 AND confidence <= 1",
+            "CAST(confidence AS NUMERIC) >= 0 AND CAST(confidence AS NUMERIC) <= 1",
             name="ck_source_citation_confidence",
         ),
         CheckConstraint(
             "length(trim(extractor)) > 0",
             name="ck_source_citation_extractor_nonempty",
+        ),
+        # Les quatre contraintes de valeur ci-dessus ne sont NI supprimées NI
+        # réécrites, et elles ne contredisent pas la nullabilité : une CHECK
+        # est satisfaite quand son expression vaut NULL. « page >= 1 » laisse
+        # donc passer une page absente tout en continuant de refuser page = 0.
+        #
+        # Mais cette tolérance ouvre un trou, et les trois contraintes qui
+        # suivent le ferment. Elles sont bâties UNIQUEMENT en IS NULL /
+        # IS NOT NULL : une seule comparaison arithmétique les rendrait
+        # nulles, donc satisfaites, sur la valeur même qu'elles visent.
+        # Trois ancrages, et non deux depuis la révision e2f3a4b50607 :
+        #
+        # - une page ET une plage de caractères, pour un texte ;
+        # - une page ET une boîte, pour ce qui est désigné sur une IMAGE de
+        #   page — une mesure prise sur un PDF n'a pas de plage de caractères,
+        #   parce qu'elle ne cite aucun texte : elle cite un endroit ;
+        # - un `object_id`, pour un objet de dessin.
+        #
+        # Le deuxième manquait, et son absence aurait obligé à inventer une
+        # plage de caractères factice ou un faux handle pour écrire une mesure
+        # de plan. Les deux auraient produit une provenance FAUSSE, et
+        # indiscernable après coup d'une citation de texte.
+        CheckConstraint(
+            "((char_start IS NULL AND char_end IS NULL) "
+            "OR (char_start IS NOT NULL AND char_end IS NOT NULL)) "
+            "AND ((page IS NOT NULL AND char_start IS NOT NULL) "
+            "OR (page IS NOT NULL AND x0 IS NOT NULL) "
+            "OR object_id IS NOT NULL)",
+            name="ck_source_citation_ancrage",
+        ),
+        CheckConstraint(
+            "(x0 IS NULL AND y0 IS NULL AND x1 IS NULL AND y1 IS NULL) "
+            "OR (x0 IS NOT NULL AND y0 IS NOT NULL AND x1 IS NOT NULL AND y1 IS NOT NULL)",
+            name="ck_source_citation_bbox_complete",
+        ),
+        # Un handle DXF peut se lire comme chaîne vide : « object_id IS NOT
+        # NULL » serait alors satisfait par une citation qui ne désigne rien.
+        CheckConstraint(
+            "(sheet IS NULL OR length(trim(sheet)) > 0) "
+            "AND (layer IS NULL OR length(trim(layer)) > 0) "
+            "AND (object_id IS NULL OR length(trim(object_id)) > 0)",
+            name="ck_source_citation_reperes_cao_nonempty",
         ),
         Index("ix_source_citations_org_revision", "organization_id", "revision_id"),
     )
@@ -654,13 +743,13 @@ class SourceCitation(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    page: Mapped[int] = mapped_column(Integer, nullable=False)
-    char_start: Mapped[int] = mapped_column(Integer, nullable=False)
-    char_end: Mapped[int] = mapped_column(Integer, nullable=False)
-    x0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
-    y0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
-    x1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
-    y1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer)
+    char_start: Mapped[int | None] = mapped_column(Integer)
+    char_end: Mapped[int | None] = mapped_column(Integer)
+    x0: Mapped[Decimal | None] = mapped_column(Amount)
+    y0: Mapped[Decimal | None] = mapped_column(Amount)
+    x1: Mapped[Decimal | None] = mapped_column(Amount)
+    y1: Mapped[Decimal | None] = mapped_column(Amount)
     sheet: Mapped[str | None] = mapped_column(String(120))
     layer: Mapped[str | None] = mapped_column(String(120))
     object_id: Mapped[str | None] = mapped_column(String(120))
@@ -669,7 +758,45 @@ class SourceCitation(TimestampMixin, Base):
 
 
 class ExtractionProposal(TimestampMixin, Base):
-    """Machine output awaiting a separate append-only human decision."""
+    """Une sortie machine qui attend une décision humaine, en ajout seul.
+
+    **La forme de `value` pour une mesure de plan**, décidée ici parce que
+    c'est ici qu'on la lira. `schema_name = "mesure_de_plan"`,
+    `schema_version = "1"`, et toutes les valeurs numériques en CHAÎNE
+    décimale — les contrats refusent les flottants, et `Amount` quantise à
+    dix décimales.
+
+    ===================== =====================================================
+    `famille`             `lineaire`, `alignee`, `diametre`, `rayon`,
+                          `angulaire`, `angulaire_3_points`, `ordonnee`
+    `valeur_document`     la mesure, DANS L'UNITÉ DU DOCUMENT, sans conversion
+    `unite_document`      le code lu dans `$INSUNITS` : mm, cm, m, km, in, ft
+    `insunits`            l'entier brut de `$INSUNITS`, pour l'audit
+    `origine_de_la_mesure` `cote_42` (la cote stockée) ou `recalcul`
+    `texte_impose`        le texte du dessinateur s'il écrase la mesure
+    `fiabilite`           `mesurable` ou `a_confirmer`, jamais autre chose
+    `reserves`            la liste des anomalies, chacune code et message
+    ===================== =====================================================
+
+    **Aucune conversion d'unité n'y figure, et ce n'est pas un oubli.**
+
+    1. L'unité cible n'est pas connue à l'extraction : c'est celle de la ligne
+       de bordereau qu'un humain choisira ensuite. Convertir maintenant
+       reviendrait à deviner la cible.
+    2. La conversion n'est pas toujours possible : le domaine ne connaît ni
+       `in` ni `ft`, que `$INSUNITS` peut rendre, et un passage volume ↔ masse
+       exige une masse volumique sourcée. Une étape de lecture déterministe
+       échouerait là où elle doit seulement constater.
+    3. Elle n'est pas réversible au chiffre près : un aller-retour mm → m → mm
+       ne rend pas la même écriture. Une proposition doit porter le nombre que
+       le fichier porte.
+    4. Elle détruirait la provenance : la citation prouve un objet dans un
+       calque, et le nombre stocké doit être celui qu'on retrouve en rouvrant
+       cet objet — sinon le test qui rouvre la citation ne confronte plus rien.
+
+    La conversion aura lieu plus tard, quand un humain rattachera la mesure à
+    une ligne de bordereau : après la `ValidationDecision`, jamais avant.
+    """
 
     __tablename__ = "extraction_proposals"
     __table_args__ = (
@@ -684,8 +811,10 @@ class ExtractionProposal(TimestampMixin, Base):
             ondelete="CASCADE",
         ),
         UniqueConstraint("organization_id", "id", name="uq_extraction_proposal_org_id"),
+        # Même raison que sur `source_citations` : sans le `CAST`, une
+        # confiance de 1 est refusée sur SQLite et acceptée sur PostgreSQL.
         CheckConstraint(
-            "confidence >= 0 AND confidence <= 1",
+            "CAST(confidence AS NUMERIC) >= 0 AND CAST(confidence AS NUMERIC) <= 1",
             name="ck_extraction_proposal_confidence",
         ),
         CheckConstraint(
@@ -714,6 +843,112 @@ class ExtractionProposal(TimestampMixin, Base):
     prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
     model_version: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="proposed")
+
+
+class PlanCalibration(TimestampMixin, Base):
+    """L'échelle d'un PDF, telle qu'UNE PERSONNE l'a déclarée.
+
+    Un PDF ne porte aucune unité de dessin : ses coordonnées sont des points
+    PostScript, qui décrivent la feuille et ne disent rien de l'ouvrage. Passer
+    de l'un à l'autre demande un nombre que le fichier ne contient pas.
+
+    **Ce nombre n'est pas lu, il est déclaré.** Quelqu'un désigne deux points
+    sur la page et dit quelle distance les sépare dans la réalité. C'est une
+    décision humaine, au même titre qu'une `ValidationDecision`, et elle se
+    conserve pour la même raison : toute mesure qui en descend n'a de sens que
+    rapportée à elle.
+
+    **Ce qui est stocké est la DÉCLARATION, pas le facteur.** Les deux points,
+    la distance et l'unité suffisent à recalculer le facteur à l'identique ;
+    un facteur stocké finirait par diverger de ce dont il est issu, et plus
+    rien ne dirait lequel des deux a servi.
+
+    Les coordonnées sont celles de la PAGE, en points PostScript absolus — pas
+    celles de l'écran. Un repère d'écran dépend de la rotation d'affichage et
+    normalise x et y par des longueurs différentes : une diagonale y serait
+    fausse sur toute page qui n'est pas carrée.
+    """
+
+    __tablename__ = "plan_calibrations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "revision_id"],
+            ["document_revisions.organization_id", "document_revisions.id"],
+            name="fk_plan_calibrations_org_revision",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["actor_user_id", "organization_id"],
+            ["memberships.user_id", "memberships.organization_id"],
+            name="fk_plan_calibrations_actor_membership",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("organization_id", "id", name="uq_plan_calibration_org_id"),
+        CheckConstraint("page >= 1", name="ck_plan_calibration_page"),
+        # Une distance réelle nulle ou négative ne détermine aucune échelle.
+        # Le CAST est nécessaire : `Amount` vit en texte sur SQLite, où une
+        # comparaison numérique directe compare des chaînes.
+        CheckConstraint(
+            "CAST(distance_reelle AS NUMERIC) > 0",
+            name="ck_plan_calibration_distance",
+        ),
+        CheckConstraint(
+            "CAST(resolution_du_pointage AS NUMERIC) > 0",
+            name="ck_plan_calibration_resolution",
+        ),
+        CheckConstraint("length(trim(unite)) > 0", name="ck_plan_calibration_unite"),
+        # La zone est entière ou absente : une demi-zone désignerait une
+        # portion de page dont deux bords seraient inconnus.
+        CheckConstraint(
+            "(zone_x0 IS NULL AND zone_y0 IS NULL AND zone_x1 IS NULL AND zone_y1 IS NULL) "
+            "OR (zone_x0 IS NOT NULL AND zone_y0 IS NOT NULL "
+            "AND zone_x1 IS NOT NULL AND zone_y1 IS NOT NULL)",
+            name="ck_plan_calibration_zone_complete",
+        ),
+        Index("ix_plan_calibrations_org_revision", "organization_id", "revision_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    #: 1-indexée, comme une citation documentaire.
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: Les deux points désignés, en points PostScript de la page.
+    u0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    v0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    u1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    v1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+
+    #: Ce que la personne a SAISI, conservé tel quel.
+    distance_reelle: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    #: Un code d'unité de longueur, résolu par `get_unit` à l'écriture.
+    unite: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: Points PostScript par pixel d'écran au moment du pointage. C'est lui qui
+    #: porte toute l'incertitude des mesures qui descendront de cette
+    #: calibration — d'où son stockage : sans lui, on ne saurait plus si les
+    #: points ont été posés sur un aperçu grossier ou sur une vue agrandie.
+    resolution_du_pointage: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+
+    #: La zone de la page où cette calibration s'applique, en coordonnées
+    #: d'écran normalisées. `NULL` = toute la page.
+    #:
+    #: Une page peut porter plusieurs échelles — un plan au 1:50 et un détail
+    #: au 1:20 dans le même cartouche. Appliquer l'échelle du plan au détail
+    #: donnerait une mesure deux fois et demie trop grande, et parfaitement
+    #: plausible.
+    zone_x0: Mapped[Decimal | None] = mapped_column(Amount)
+    zone_y0: Mapped[Decimal | None] = mapped_column(Amount)
+    zone_x1: Mapped[Decimal | None] = mapped_column(Amount)
+    zone_y1: Mapped[Decimal | None] = mapped_column(Amount)
+
+    #: Ce sur quoi la personne dit avoir calibré — « la cote 5000 de la façade
+    #: sud ». Obligatoire : une calibration sans justification ne se vérifie
+    #: pas, et c'est elle qu'on relira dans six mois.
+    motif: Mapped[str] = mapped_column(Text, nullable=False)
+
+    actor_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
 
 
 class ValidationDecision(Base):
