@@ -5,10 +5,12 @@ une raison précise, et mesurée : **l'aperçu pleine page ne permet pas de
 relire une cote**. À 2 000 pixels sur le grand côté, la hauteur médiane d'un
 caractère y est de **2,1 à 2,5 pixels**, et un pixel vaut 0,59 à 0,85 mm de
 papier — soit 12 à 42 mm d'ouvrage aux échelles 1:20 à 1:50. Confirmer une
-mesure, ou simplement pointer deux points pour calibrer, demande vingt fois
-mieux. Mesuré aussi, pour chiffrer l'autre voie : amener ce texte au seuil de
-lecture de 8 pixels demanderait un aperçu de 6 480 à 7 590 pixels de côté,
-soit 63 à 124 Mo de bitmap — rendus en entier pour en regarder 5 %.
+mesure, ou simplement pointer deux points pour calibrer, demande nettement
+mieux. La tuile de la loupe, mesurée, rend **0,149 à 0,211 mm par pixel** et
+porte le texte à 12–19 pixels : trois à quatre fois plus fin.
+Mesuré aussi, pour chiffrer l'autre voie : amener ce texte au seuil de lecture
+de 8 pixels sur l'aperçu demanderait 6 480 à 7 590 pixels de côté, soit 63 à
+124 Mo de bitmap — rendus en entier pour en regarder 5 %.
 
 **Les trois chiffres qui dictent toute la conception.**
 
@@ -115,10 +117,11 @@ class Tuile:
     png: bytes
     largeur: int
     hauteur: int
-    #: La hauteur que le texte atteint réellement, en pixels. En deçà de seize,
-    #: la cote reste difficile à relire, et l'écran doit pouvoir le dire au
-    #: lieu d'afficher un flou sans un mot.
-    hauteur_du_texte_px: float
+    #: La hauteur que la zone demandée atteint dans l'image, en pixels. Quand
+    #: cette zone est la boîte d'un texte, c'est la hauteur de ce texte, et en
+    #: deçà de seize la cote reste difficile à relire — l'écran doit pouvoir le
+    #: dire au lieu d'afficher un flou sans un mot.
+    hauteur_de_la_zone_px: float
     #: Vrai quand elle a été relue du volume plutôt que rendue.
     depuis_le_cache: bool
 
@@ -210,7 +213,7 @@ def obtenir(
 ) -> Tuile:
     """Rend une tuile, depuis le cache si elle y est.
 
-    Les métadonnées — largeur, hauteur, hauteur du texte — sont redéduites du
+    Les métadonnées — largeur, hauteur, hauteur de la zone — sont redéduites du
     PNG quand il vient du cache, plutôt que stockées à côté. Un second fichier
     de métadonnées doublerait le nombre d'écritures et pourrait se désynchroniser
     de l'image ; les trois nombres se relisent du PNG lui-même.
@@ -224,10 +227,10 @@ def obtenir(
             png=octets,
             largeur=largeur,
             hauteur=hauteur,
-            # Inconnue depuis le cache : elle dépend de la hauteur du texte
-            # d'origine, qui n'est pas dans le PNG. L'écran la reçoit à la
-            # PREMIÈRE demande, qui est celle où il décide quoi afficher.
-            hauteur_du_texte_px=0.0,
+            # Inconnue depuis le cache : elle dépend de la zone demandée et
+            # du facteur, dont le PNG ne porte pas la trace. L'écran la reçoit
+            # à la PREMIÈRE demande, celle où il décide quoi afficher.
+            hauteur_de_la_zone_px=0.0,
             depuis_le_cache=True,
         )
 
@@ -235,7 +238,7 @@ def obtenir(
 
     with tempfile.TemporaryDirectory(prefix="metreo-tuile-") as brouillon:
         provisoire = Path(brouillon) / "tuile.png"
-        largeur, hauteur, hauteur_du_texte = _rendre_hors_processus(
+        largeur, hauteur, hauteur_de_la_zone = _rendre_hors_processus(
             original, page=page, zone=zone, sortie=provisoire
         )
         octets = provisoire.read_bytes()
@@ -273,7 +276,7 @@ def obtenir(
         png=octets,
         largeur=largeur,
         hauteur=hauteur,
-        hauteur_du_texte_px=hauteur_du_texte,
+        hauteur_de_la_zone_px=hauteur_de_la_zone,
         depuis_le_cache=False,
     )
 

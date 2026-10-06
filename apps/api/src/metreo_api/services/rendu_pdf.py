@@ -158,11 +158,17 @@ class Apercu:
     #: expliquer un aperçu flou — **jamais pour un calcul de métré** : ce
     #: nombre ne dit rien de l'ouvrage.
     pixels_par_point: float
-    #: Sur une TUILE, la hauteur que le texte visé atteint réellement, en
-    #: pixels. `None` sur un aperçu de page entière, où il n'y a pas de texte
-    #: visé. En deçà de `HAUTEUR_DE_TEXTE_VISEE`, l'écran doit dire que la
-    #: cote reste difficile à relire au lieu d'afficher un flou sans un mot.
-    hauteur_du_texte_px: float | None = None
+    #: Sur une TUILE, la hauteur que la zone DEMANDÉE atteint dans l'image, en
+    #: pixels. `None` sur un aperçu de page entière, qui ne demande aucune zone.
+    #:
+    #: **Et non « la hauteur du texte », comme ce champ s'appelait.** Les deux
+    #: coïncident quand la zone demandée EST la boîte d'un texte — le cas d'une
+    #: mesure qu'on va relire, et celui pour lequel le seuil de
+    #: `HAUTEUR_DE_TEXTE_VISEE` a un sens. Quand l'appelant demande autre chose
+    #: — la loupe de l'écran demande 5 % de la page — ce nombre est la hauteur
+    #: de la loupe, et le lire comme une hauteur de texte annonçait « 230
+    #: pixels, parfaitement lisible » là où le texte en faisait douze.
+    hauteur_de_la_zone_px: float | None = None
 
 
 def facteur_de_rendu(largeur: float, hauteur: float) -> float:
@@ -269,19 +275,40 @@ def cle_de_l_apercu(organization_id: str, revision_id: str, page: int = 1) -> st
     return f"{DOSSIER_RENDUS}/{organization_id}/{revision_id}-p{page}.png"
 
 
-#: La marge autour d'une zone, en multiples de la HAUTEUR du texte.
+#: La marge autour d'une zone, en multiples de la hauteur de cette zone.
 #:
-#: **Pas en fraction de la zone elle-même**, et la différence se voit à
-#: l'œil : une marge d'une demie de la zone autour d'un « 1040 » de 11 points
-#: donne une tuile qui montre « - 1040 E » et pas un trait du dessin. Le
-#: propriétaire y lit la cote sans pouvoir juger CE QU'ELLE cote, ce qui est
-#: précisément la question qu'on lui pose.
+#: **Pour une boîte de texte, c'est huit fois la hauteur du texte**, et c'est
+#: le cas pour lequel ce nombre a été choisi : une marge d'une demie autour
+#: d'un « 1040 » de 11 points donne une tuile qui montre « - 1040 E » et pas un
+#: trait du dessin. Le propriétaire y lit la cote sans pouvoir juger CE QU'ELLE
+#: cote, ce qui est précisément la question qu'on lui pose. Huit fois fait
+#: apparaître les lignes d'attache et l'ouvrage mesuré, et la hauteur du texte
+#: est un bon étalon parce qu'elle suit l'échelle du dessin : un plan tracé
+#: plus petit a des textes plus petits ET des ouvrages plus petits.
 #:
-#: Huit fois la hauteur du texte de chaque côté fait apparaître les lignes
-#: d'attache et l'ouvrage mesuré. La hauteur du texte est le bon étalon parce
-#: qu'elle suit l'échelle du dessin : un plan tracé plus petit a des textes
-#: plus petits ET des ouvrages plus petits.
+#: **Mais la zone n'est pas toujours une boîte de texte**, et c'est ce que la
+#: première version oubliait. La loupe de l'écran demande 5 % de la page ;
+#: huit fois 5 % font 40 % de marge de chaque côté, et la tuile rendait alors
+#: 51 à 67 % × 85 % de la page — mesuré — soit **1,47 à 1,54 mm par pixel,
+#: moins fin que l'aperçu lui-même** (0,594 à 0,845). Cliquer pour agrandir
+#: rendait l'image plus grossière. D'où le plafond ci-dessous.
 MARGE_DE_TUILE = 8.0
+
+#: Le gain minimal, en finesse, qu'une tuile doit apporter sur l'aperçu.
+#:
+#: Sur un A0, une tuile de `COTE_TUILE` pixels est aussi fine que l'aperçu
+#: quand elle montre `COTE_TUILE / COTE_AFFICHEE` de la page, soit 25,6 %.
+#: Au-delà, elle est plus GROSSIÈRE, et l'agrandissement travaille contre
+#: lui-même. Exiger un facteur quatre ramène la fraction visible à 6,4 %, ce
+#: qui donne 0,15 à 0,21 mm par pixel sur les plans réels — l'ordre de
+#: grandeur où une cote se relit.
+#:
+#: Le plafond qui en découle est calculé PAR PAGE, et non écrit en fraction :
+#: `facteur_de_rendu` ne réduit pas une page plus petite que `COTE_AFFICHEE`,
+#: donc 6,4 % d'une page de 300 points serait dix-neuf points — un plafond
+#: absurde, qui supprimerait toute marge là où elle ne coûte rien. La
+#: référence est la finesse de l'aperçu de CETTE page.
+GAIN_MINIMAL_SUR_L_APERCU = 4.0
 
 
 def rendre_une_zone(
@@ -367,9 +394,31 @@ def rendre_une_zone(
     # MÊME dans les deux directions — en fraction de la page, donc corrigée du
     # rapport de forme — sans quoi une cote large et plate recevrait un
     # bandeau horizontal et aucun contexte vertical.
-    marge = (y1 - y0) * MARGE_DE_TUILE
-    marge_x = marge * hauteur_pt / largeur_pt
-    marge_y = marge
+    #
+    # Et elle est PLAFONNÉE, par ce que la tuile doit encore apporter : une
+    # marge de huit fois la hauteur convient à la boîte d'un texte, qui fait
+    # deux millièmes de page ; appliquée aux 5 % que demande la loupe, elle
+    # faisait rendre 85 % de la page sur 512 pixels, c'est-à-dire plus
+    # grossier que l'aperçu. Le plafond porte sur l'étendue FINALE, demande
+    # comprise : une zone déjà plus large que le plafond n'est pas rétrécie —
+    # elle ne reçoit simplement aucune marge, et `hauteur_de_la_zone_px` dira à
+    # l'écran que le texte y reste illisible.
+    #
+    # Le calcul se fait EN POINTS, et non en fractions de page : la marge est
+    # la même distance physique dans les deux directions, et c'est le grand
+    # côté en points qui fixe le facteur. Raisonner en fractions mélangerait
+    # une fraction de largeur et une fraction de hauteur dans le même `max`.
+    grand_cote_demande_pt = max((x1 - x0) * largeur_pt, (y1 - y0) * hauteur_pt)
+    plafond_pt = max(
+        grand_cote_demande_pt,
+        cote / (GAIN_MINIMAL_SUR_L_APERCU * facteur_de_rendu(largeur_pt, hauteur_pt)),
+    )
+    marge_pt = min(
+        (y1 - y0) * hauteur_pt * MARGE_DE_TUILE,
+        max(0.0, (plafond_pt - grand_cote_demande_pt) / 2.0),
+    )
+    marge_x = marge_pt / largeur_pt
+    marge_y = marge_pt / hauteur_pt
     zx0 = max(0.0, x0 - marge_x)
     zy0 = max(0.0, y0 - marge_y)
     zx1 = min(1.0, x1 + marge_x)
@@ -396,11 +445,12 @@ def rendre_une_zone(
     facteur = min(cote / max(largeur_zone, hauteur_zone), FACTEUR_MAXIMAL)
     facteur = max(facteur, 1e-3)
 
-    # Et la hauteur que le texte atteint RÉELLEMENT, qui est rendue à
-    # l'appelant au lieu d'être supposée : sur une zone large — une cote dans
-    # un grand cartouche — elle peut rester sous le seuil de lisibilité, et
-    # l'écran doit pouvoir le dire plutôt que d'afficher un flou.
-    hauteur_du_texte_px = (y1 - y0) * hauteur_pt * facteur
+    # Et la hauteur que la zone demandée atteint RÉELLEMENT dans l'image,
+    # rendue à l'appelant au lieu d'être supposée : quand cette zone est la
+    # boîte d'un texte, c'est la hauteur de ce texte, et elle peut rester sous
+    # le seuil de lisibilité sur une zone large — une cote dans un grand
+    # cartouche. L'écran doit pouvoir le dire plutôt qu'afficher un flou.
+    hauteur_de_la_zone_px = (y1 - y0) * hauteur_pt * facteur
 
     image = objet.render(scale=facteur, crop=rognage, may_draw_forms=False).to_pil()
 
@@ -421,5 +471,5 @@ def rendre_une_zone(
         largeur=image.width,
         hauteur=image.height,
         pixels_par_point=facteur,
-        hauteur_du_texte_px=hauteur_du_texte_px,
+        hauteur_de_la_zone_px=hauteur_de_la_zone_px,
     )

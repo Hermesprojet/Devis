@@ -124,7 +124,7 @@ def test_a_cached_tile_is_served_without_rendering(
     assert (tuile.largeur, tuile.hauteur) == (7, 5)
     # Inconnue depuis le cache, et annoncée comme telle plutôt que devinée :
     # elle dépend de la hauteur du texte d'origine, qui n'est pas dans le PNG.
-    assert tuile.hauteur_du_texte_px == 0.0
+    assert tuile.hauteur_de_la_zone_px == 0.0
 
 
 def test_the_byte_ceiling_stops_writing_but_still_serves_the_tile(
@@ -161,7 +161,7 @@ def test_the_byte_ceiling_stops_writing_but_still_serves_the_tile(
 
     # Servie, et avec sa hauteur de texte : le propriétaire peut relire sa cote.
     assert tuile.png == _PNG_7x5
-    assert tuile.hauteur_du_texte_px == 18.0
+    assert tuile.hauteur_de_la_zone_px == 18.0
     assert tuile.depuis_le_cache is False
     # Mais PAS écrite : la demande suivante repayera le rendu.
     assert stockage.taille(tuiles.cle_de_la_tuile("org-1", "rev-1", 1, zone)) is None

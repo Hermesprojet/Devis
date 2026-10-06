@@ -547,14 +547,14 @@ def test_a_detail_tile_magnifies_a_fragment_enough_to_read_it(
 
     assert tuile.png[:8] == b"\x89PNG\r\n\x1a\n"
     assert max(tuile.largeur, tuile.hauteur) <= rendu_pdf.COTE_TUILE
-    assert tuile.hauteur_du_texte_px is not None
-    assert tuile.hauteur_du_texte_px > 4.0, (
+    assert tuile.hauteur_de_la_zone_px is not None
+    assert tuile.hauteur_de_la_zone_px > 4.0, (
         "si la tuile ne rend pas le texte plus grand que l'aperçu, elle ne sert à rien"
     )
 
     # Et le plein aperçu, lui, ne prétend pas rendre un texte lisible.
     apercu = rendu_pdf.rendre(chemin)
-    assert apercu.hauteur_du_texte_px is None
+    assert apercu.hauteur_de_la_zone_px is None
 
 
 def test_a_tile_shows_the_drawing_around_the_text_not_only_the_text(
@@ -588,12 +588,12 @@ def test_a_tile_shows_the_drawing_around_the_text_not_only_the_text(
             fragment.cadre.y1,
         ),
     )
-    assert tuile.hauteur_du_texte_px is not None
+    assert tuile.hauteur_de_la_zone_px is not None
 
     # La hauteur montrée vaut au moins dix fois celle du texte : la marge est
     # de huit fois de chaque côté, donc dix-sept fois en tout, rognée par les
     # bords de la page.
-    part_du_texte = tuile.hauteur_du_texte_px / tuile.hauteur
+    part_du_texte = tuile.hauteur_de_la_zone_px / tuile.hauteur
     assert part_du_texte < 0.1, (
         f"le texte occupe {part_du_texte:.0%} de la hauteur de la tuile : "
         "elle ne montre pas assez de dessin autour pour juger la cote"
@@ -616,3 +616,65 @@ def test_a_measurement_whose_position_is_unknown_cannot_be_shown(
     with pytest.raises(rendu_pdf.RenduRefuse) as refus:
         rendu_pdf.rendre_une_zone(chemin, page=1, zone=(0.5, 0.5, 0.5, 0.9))
     assert refus.value.code == "zone_invalide"
+
+
+def test_a_tile_of_a_loupe_sized_zone_is_finer_than_the_preview(
+    tmp_path: Path,
+) -> None:
+    """Agrandir doit agrandir. Mesuré, ce n'était pas le cas.
+
+    **Le défaut que ce test ferme.** La marge d'une tuile valait huit fois la
+    hauteur de la ZONE demandée. Pour la boîte d'un texte — deux millièmes de
+    page — c'est huit fois la hauteur du texte, ce qui était l'intention. Mais
+    la loupe de l'écran demande 5 % de la page : huit fois 5 % font 40 % de
+    marge de chaque côté, et la tuile rendait alors 51 à 67 % × 85 % de la
+    page sur 512 pixels. Mesuré sur les quatre plans réels : **1,47 à 1,54 mm
+    par pixel, contre 0,594 à 0,845 pour l'aperçu**. Cliquer pour agrandir
+    rendait l'image plus grossière, et rien ne le disait.
+
+    Le test compare les deux finesses que le code lui-même calcule —
+    `pixels_par_point` — plutôt que de recopier la formule de la marge. Une
+    vérification qui réimplémente ce qu'elle vérifie ne vérifie rien : c'est
+    exactement l'erreur qui a laissé passer la marge de huit fois 5 %.
+    """
+    from metreo_api.services import rendu_pdf
+
+    chemin = _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "plan.pdf")
+    apercu = rendu_pdf.rendre(chemin)
+    tuile = rendu_pdf.rendre_une_zone(chemin, page=1, zone=(0.40, 0.40, 0.45, 0.45))
+
+    attendu = apercu.pixels_par_point * rendu_pdf.GAIN_MINIMAL_SUR_L_APERCU
+    assert tuile.pixels_par_point >= attendu, (
+        f"la tuile rend {tuile.pixels_par_point:.3f} pixel par point et l'aperçu "
+        f"{apercu.pixels_par_point:.3f} : l'agrandissement n'apporte pas le facteur "
+        f"{rendu_pdf.GAIN_MINIMAL_SUR_L_APERCU:.0f} attendu"
+    )
+
+
+def test_a_tile_of_a_zone_already_wider_than_the_ceiling_is_not_shrunk(
+    tmp_path: Path,
+) -> None:
+    """Une zone plus large que le plafond garde sa largeur, sans marge.
+
+    Le plafond borne la MARGE, pas la demande. Rétrécir la zone demandée
+    montrerait autre chose que ce que l'appelant a désigné — et sur une mesure,
+    « autre chose » veut dire un autre endroit du plan.
+
+    Ce qui disparaît est la marge, et le champ `hauteur_de_la_zone_px` reste là
+    pour que l'écran puisse dire que le texte n'y sera pas relisible.
+    """
+    from metreo_api.services import rendu_pdf
+
+    chemin = _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "plan.pdf")
+    tuile = rendu_pdf.rendre_une_zone(chemin, page=1, zone=(0.10, 0.10, 0.90, 0.90))
+
+    constat = lecture_pdf.lire(chemin)
+    largeur_pt, hauteur_pt = constat.dimensions[0]
+    # Le grand côté rendu vaut la zone demandée, à un pixel près : aucune
+    # marge n'a été ajoutée, et rien n'a été retiré non plus.
+    attendu = max((0.90 - 0.10) * largeur_pt, (0.90 - 0.10) * hauteur_pt)
+    rendu = max(tuile.largeur, tuile.hauteur) / tuile.pixels_par_point
+    assert abs(rendu - attendu) <= 1.0, (
+        f"le grand côté rendu fait {rendu:.1f} points pour une zone demandée de "
+        f"{attendu:.1f} : la zone a été élargie ou rétrécie"
+    )

@@ -26,8 +26,19 @@ cela donne :
 **Un texte de deux pixels de haut ne se relit pas**, et un pointage à 42 mm près
 n'est pas une calibration. L'aperçu répond donc à « où est l'information »,
 jamais à « que dit-elle ». C'est la tuile de détail qui répond à la seconde
-question : à 512 pixels sur une zone de 5 % de la page, un pixel vaut 0,6 à
-6 mm et le texte monte à 103–134 px.
+question. Mesuré sur la zone que la loupe de l'écran demande réellement — 5 %
+de la page, rendue sur 512 pixels :
+
+| Mesuré sur la tuile de la loupe | Valeur |
+| --- | --- |
+| Étendue réellement rendue | 6,4 % de la page |
+| Papier par pixel | **0,149 à 0,211 mm** |
+| Gain sur l'aperçu | **3,2 à 4,0 fois** |
+| Hauteur d'une ligne de texte | 12 à 19 px |
+
+Ces quatre nombres sont le résultat d'une correction, et le § « Le plafond de la
+marge » ci-dessous dit laquelle : la première version rendait **1,47 à 1,54 mm
+par pixel**, c'est-à-dire plus grossier que l'aperçu.
 
 ### Pourquoi la solution évidente est exactement la mauvaise
 
@@ -107,7 +118,49 @@ L'organisation et la révision sont dans le **chemin**, pas dans l'empreinte :
 une collision d'empreinte afficherait une mauvaise zone du même document, ce
 qui se verrait immédiatement, et jamais le document d'un autre tenant.
 
-### 3. Quatre limites de ressources, chacune avec son chiffre
+### 3. Le plafond de la marge, et le défaut qu'il ferme
+
+Une tuile ne montre pas seulement la zone demandée : elle l'élargit d'une marge
+de **huit fois sa hauteur**, pour que le propriétaire voie l'ouvrage coté et
+pas seulement le nombre. Sans marge, la tuile d'un « 1040 » de 11 points montre
+« - 1040 E » et pas un trait du dessin — le propriétaire lit la cote sans
+pouvoir juger CE QU'ELLE cote, ce qui est précisément la question qu'on lui
+pose.
+
+Huit fois la hauteur convient à la boîte d'un texte, qui fait deux millièmes de
+page. **Mais la zone n'est pas toujours une boîte de texte.** La loupe de
+l'écran demande 5 % de la page : huit fois 5 % font 40 % de marge de chaque
+côté, et la tuile rendait alors 51 à 67 % × 85 % de la page sur 512 pixels.
+
+| Zone demandée | Étendue rendue | Papier par pixel | Verdict |
+| --- | --- | --- | --- |
+| Boîte d'un texte (0,3 %) | 5,1 à 6,4 % | 0,149 à 0,179 mm | conforme à l'intention |
+| Loupe de l'écran (5 %) — **avant** | 51 à 67 % × 85 % | **1,47 à 1,54 mm** | **plus grossier que l'aperçu** |
+| Loupe de l'écran (5 %) — après | 6,4 % | 0,149 à 0,211 mm | 3,2 à 4,0 fois l'aperçu |
+
+Cliquer pour agrandir rendait donc l'image **plus grossière**, et rien ne le
+disait. La marge est désormais plafonnée par ce que la tuile doit encore
+apporter : `GAIN_MINIMAL_SUR_L_APERCU = 4`, c'est-à-dire que la tuile rend au
+moins quatre fois plus de pixels par point que l'aperçu **de la même page**.
+
+Le plafond est calculé par page, et non écrit en fraction : `facteur_de_rendu`
+ne réduit pas une page plus petite que 2 000 points, donc 6,4 % d'une page de
+300 points — une fixture — serait dix-neuf points, un plafond absurde qui
+supprimerait toute marge là où elle ne coûte rien. La référence est la finesse
+de l'aperçu de cette page-là.
+
+Et il borne la **marge**, pas la demande : une zone déjà plus large que le
+plafond garde sa largeur et ne reçoit simplement aucune marge. Rétrécir la zone
+demandée montrerait autre chose que ce que l'appelant a désigné — et sur une
+mesure, « autre chose » veut dire un autre endroit du plan.
+
+**Le défaut n'a pas été vu par relecture, et il n'aurait pas pu l'être** : la
+première mesure de la finesse de la tuile recalculait la marge au lieu de
+l'observer, et retrouvait donc le chiffre qu'elle voulait trouver. Le test de
+régression compare les deux `pixels_par_point` que le code lui-même rend, et le
+script de mesure intercepte les arguments passés à PDFium.
+
+### 4. Quatre limites de ressources, chacune avec son chiffre
 
 | Limite | Valeur | Ce qu'elle arrête, et pourquoi ce chiffre |
 | --- | --- | --- |
@@ -122,7 +175,7 @@ fonctionner, il n'est simplement plus mis en cache, et l'événement
 qui se remplit doit être visible avant d'être plein. Le journal ne porte, ici
 comme ailleurs, **rien du contenu du plan**.
 
-### 4. Les tuiles sont des dérivés, et la purge doit les connaître
+### 5. Les tuiles sont des dérivés, et la purge doit les connaître
 
 Une tuile n'a aucune ligne en base : sa clé se calcule depuis la révision. Le
 jour où la révision disparaît, plus rien ne saurait quels fichiers lui
@@ -130,14 +183,24 @@ appartenaient. `cles_des_tuiles()` énumère donc les tuiles d'une révision pou
 que `conservation.py` les inscrive, au même titre que l'aperçu et le constat
 (ADR 0006, §4 : lignes d'abord, fichiers ensuite).
 
-### 5. Ce que l'écran reçoit, et ce qu'il en fait
+### 6. Ce que l'écran reçoit, et ce qu'il en fait
 
-La tuile servie porte sa largeur, sa hauteur et **la hauteur réellement
-atteinte par le texte en pixels**. Ce dernier nombre n'est pas décoratif : en
-deçà de 16 px, la cote reste difficile à relire, et l'écran doit pouvoir le
-dire au lieu d'afficher un flou sans un mot. Il est perdu quand la tuile vient
-du cache — il n'est pas dans le PNG — et l'écran le reçoit donc à la
-**première** demande, qui est celle où il décide quoi afficher.
+La tuile servie porte sa largeur, sa hauteur et **la hauteur que la zone
+demandée atteint dans l'image**, en pixels. Ce dernier nombre n'est pas
+décoratif : quand la zone est la boîte d'un texte — le cas d'une mesure qu'on
+va relire — c'est la hauteur de ce texte, et en deçà de 16 px la cote reste
+difficile à relire ; l'écran doit pouvoir le dire au lieu d'afficher un flou
+sans un mot.
+
+Il s'appelait « hauteur du texte », et c'était faux dès que l'appelant demandait
+autre chose qu'une boîte de texte : sur la loupe, il valait 201 à 308 pixels —
+la hauteur de la loupe — là où le texte en faisait douze à dix-neuf. Un champ
+mal nommé est un champ qui finira par être lu de travers ; celui-ci ne l'était
+encore par aucun écran, et le nom a été corrigé avant qu'il le soit.
+
+Il est perdu quand la tuile vient du cache — il n'est pas dans le PNG — et
+l'écran le reçoit donc à la **première** demande, qui est celle où il décide
+quoi afficher.
 
 ## Conséquences
 
@@ -198,6 +261,7 @@ et n'y entreront pas : ils sont des documents de chantier d'un client.
 | --- | --- |
 | Coût en direct, hors processus, et effet du cache | `scripts/mesures/mesurer_le_budget_des_tuiles.py <dossier> A\|B\|C` |
 | Poids d'une tuile sur une grille de 5 × 5 zones | `scripts/mesures/mesurer_le_poids_des_tuiles.py <dossier>` |
+| Étendue réellement rendue, par interception de l'appel à PDFium | `scripts/mesures/mesurer_l_etendue_d_une_tuile.py <dossier>` |
 
 Les deux prennent en argument un dossier de PDF **fourni par l'exploitant** :
 le dépôt porte les scripts, jamais les plans.

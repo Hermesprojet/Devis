@@ -494,11 +494,11 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
     tuile = rendre_une_zone(chemin, page=1, zone=(cadre.x0, cadre.y0, cadre.x1, cadre.y1))
     exiger(
         tuile.png[:8] == b"\x89PNG\r\n\x1a\n"
-        and tuile.hauteur_du_texte_px is not None
-        and tuile.hauteur_du_texte_px > 4.0,
+        and tuile.hauteur_de_la_zone_px is not None
+        and tuile.hauteur_de_la_zone_px > 4.0,
         "une tuile de détail agrandit le texte assez pour le relire",
         f"{tuile.largeur}×{tuile.hauteur} px, texte "
-        f"{tuile.hauteur_du_texte_px:.0f} px, {len(tuile.png)} octets",
+        f"{tuile.hauteur_de_la_zone_px:.0f} px, {len(tuile.png)} octets",
     )
 
     # Un PDF chiffré : le refus doit NOMMER le chiffrement, et Metreo ne doit
