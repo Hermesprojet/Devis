@@ -678,19 +678,24 @@ auditable.
 | Un 422 listant le champ `reason` | Motif vide ou fait d'espaces (`schemas.py:1138`) |
 | « Une correction doit conserver les valeurs avant et après. » | Correction envoyée sans valeur retenue (`schemas.py:1146-1148`) |
 
-### Quatre limites de cet écran, à ne pas prendre pour des pannes
+### Trois limites de cet écran, à ne pas prendre pour des pannes
 
-**1. Il n'y a pas de bouton « rejeter » sur l'écran PDF.** La colonne
-« Décision » sait afficher « rejetée » — la traduction existe (`i18n.ts:342`),
-l'API accepte la valeur (`schemas.py:1137`) et la fonction interne de l'écran la
-déclare dans sa signature (`LecturePdf.tsx:770`) — mais **aucun bouton ne
-l'appelle**. Les seuls appels sont `decider('accepted')` (`LecturePdf.tsx:862`)
-et `decider('corrected')` (`LecturePdf.tsx:878`). **« rejetée » ne peut donc pas
-apparaître à la suite d'un geste fait sur cet écran.** C'est une limite de
-l'écran, pas de l'API : le refus pur et simple d'une mesure n'est pas offert, et
-la seule manière d'écarter une valeur est de la corriger en expliquant pourquoi.
+> **Une quatrième limite a été relevée puis fermée pendant la rédaction de ce
+> document.** L'écran n'offrait **aucun bouton « Rejeter »** : la colonne
+> « Décision » savait afficher « rejetée », l'API acceptait la valeur et la
+> fonction interne de l'écran la déclarait dans sa signature — mais aucun bouton
+> ne l'appelait. Une mesure visiblement fausse ne laissait donc que deux issues :
+> la confirmer, ou la « corriger » vers une valeur que la personne ne connaît
+> pas. Le bouton **« Rejeter »** existe désormais, au bout de la ligne, à côté de
+> « Confirmer » et « Corriger ». Comme eux, il exige un motif.
+>
+> **Ce qu'un rejet fait, et ne fait pas** : il enregistre la décision et laisse
+> la proposition de la machine intacte, valeur comprise. Il n'efface rien — un
+> rejet qui effacerait rendrait le dossier inauditable, puisqu'on ne saurait plus
+> ce qui avait été proposé ni pourquoi il a été écarté. Éprouvé par
+> `test_a_rejected_measurement_keeps_its_proposal_and_says_it_is_rejected`.
 
-**2. Les boutons de décision ne sont pas masqués aux comptes qui n'ont pas le
+**1. Les boutons de décision ne sont pas masqués aux comptes qui n'ont pas le
 droit de valider.** L'écran DXF reçoit le droit et masque ses commandes
 (`LecturePlan.tsx:327` passe `peutValider`, employé à `LecturePlan.tsx:891`) ;
 l'écran PDF, lui, ne le reçoit pas (`LecturePlan.tsx:315-321`). Un compte sans
@@ -698,13 +703,13 @@ l'écran PDF, lui, ne le reçoit pas (`LecturePlan.tsx:315-321`). Un compte sans
 recevra l'encadré rouge. Le contrôle est bien fait, mais **côté serveur
 seulement**.
 
-**3. La valeur retenue n'est pas revérifiée.** Elle part telle que vous l'avez
+**2. La valeur retenue n'est pas revérifiée.** Elle part telle que vous l'avez
 tapée, simplement débarrassée de ses espaces de bord
 (`LecturePdf.tsx:774-783`) : aucun contrôle d'unité, de format, de séparateur
 décimal ni de cohérence avec la mesure. Une virgule, un point, une unité
 oubliée : rien ne vous arrêtera.
 
-**4. Une décision ne remplace pas la précédente, elle s'ajoute.** Seule la plus
+**3. Une décision ne remplace pas la précédente, elle s'ajoute.** Seule la plus
 récente s'affiche (`calibration_de_plan.py:553-563, 593`) ; toutes restent en
 base et dans le journal d'audit. Vous pouvez donc corriger une correction.
 
@@ -802,7 +807,6 @@ chronomètre suffit.**
 | La justesse d'une mesure sur un plan réel | Une paire DXF + PDF de la même révision, et trois cotes relevées à la main : une courte, une longue, une oblique (`docs/PLANS_REELS.md`, tableau « Quoi fournir », lignes 1 et 2) |
 | Votre seuil de tolérance | Une réponse du propriétaire. Rien dans le dépôt ne la porte aujourd'hui |
 | Le comportement sur un plan scanné (sans texte) | Un plan scanné de votre dossier. `docs/PLANS_REELS.md` note qu'aucun des quatre plans fournis ne l'est |
-| Le rejet d'une mesure | Un bouton qui n'existe pas encore |
 | Firefox, Safari | Un second projet dans la configuration Playwright |
 
 ---
@@ -919,9 +923,12 @@ sur deux plans réels, et **aucune file d'attente n'existe dans le dépôt**
 (`routers/documents.py:339-345`). Ce que plusieurs analyses simultanées
 produiraient n'est pas établi.
 
-**8. Il ne dit rien du rejet d'une mesure.**
-Le geste n'existe pas sur cet écran (voir étape 7, limite 1). Un essai ne peut
-pas éprouver ce qui n'est pas offert.
+**8. Il n'éprouve pas le rejet d'une mesure dans un navigateur.**
+Le bouton « Rejeter » existe désormais, et l'API est éprouvée par
+`test_a_rejected_measurement_keeps_its_proposal_and_says_it_is_rejected`. Mais
+le parcours automatisé, lui, ne couvre que la correction : personne n'a encore
+cliqué « Rejeter » dans un navigateur. Si vous le faites pendant l'essai,
+relevez-le — c'est un geste dont le chemin complet n'a pas de témoin.
 
 **9. Il n'éprouve pas le retour arrière.**
 Au contraire : il le ferme. Dès la première mesure enregistrée, la redescente du

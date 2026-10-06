@@ -484,6 +484,47 @@ def test_a_confirmed_measurement_shows_its_decision(seeded_client: TestClient) -
     assert relue["valeur_corrigee"] is None
 
 
+def test_a_rejected_measurement_keeps_its_proposal_and_says_it_is_rejected(
+    seeded_client: TestClient,
+) -> None:
+    """Rejeter n'efface rien : la proposition reste, la décision s'ajoute.
+
+    **Ce que ce test protège.** Le rejet était la troisième décision que la
+    route accepte depuis le début, que la colonne « Décision » de l'écran sait
+    afficher, et qu'aucun bouton ne produisait. L'écran annonçait donc un
+    vocabulaire qu'il ne pouvait pas écrire — et une mesure visiblement fausse
+    ne laissait que deux issues : la confirmer, ou la « corriger » vers une
+    valeur que la personne ne connaît pas.
+
+    Le rejet ne SUPPRIME pas la proposition, et c'est l'invariant du dossier :
+    la machine a proposé un nombre, un humain l'a écarté, et les deux doivent
+    rester lisibles. Un rejet qui effacerait rendrait le dossier inauditable —
+    on ne saurait plus ce qui avait été proposé, ni pourquoi il a été écarté.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _deposer_un_pdf(seeded_client, admin, "PDF-REJET")
+    _calibrer(seeded_client, admin, document, revision)
+    mesure = _mesurer(seeded_client, admin, document, revision).json()
+    valeur_proposee = mesure["valeur"]
+
+    reponse = seeded_client.post(
+        f"/api/v1/extraction-proposals/{mesure['proposal_id']}/decisions",
+        headers=admin,
+        json={
+            "decision": "rejected",
+            "reason": "Les deux points tombent sur le cartouche, pas sur l'ouvrage.",
+        },
+    )
+    assert reponse.status_code == 201, reponse.text
+
+    (relue,) = _relire(seeded_client, admin, document, revision).json()["mesures"]
+    assert relue["decision"] == "rejected"
+    # La proposition de la machine est intacte : même valeur, et aucune valeur
+    # corrigée n'a été inventée pour la remplacer.
+    assert relue["valeur"] == valeur_proposee
+    assert relue["valeur_corrigee"] is None
+
+
 # ---------------------------------------------------------------------------
 # La tuile
 # ---------------------------------------------------------------------------
