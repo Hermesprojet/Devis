@@ -97,9 +97,10 @@ FACTEUR_MAXIMAL = 40.0
 #:
 #: **Pourquoi une tuile existe.** Mesuré sur les quatre plans réels : à 2 000
 #: pixels de grand côté, un A0 donne 0,594 à 0,845 mm par pixel, et la hauteur
-#: MÉDIANE d'un texte y est de 3,5 à 4,4 pixels. Un texte de quatre pixels de
-#: haut ne se lit pas. L'aperçu SITUE une cote ; il ne permet pas de la
-#: relire — et le propriétaire doit pouvoir la relire pour la confirmer.
+#: MÉDIANE d'une ligne de texte y est de 2,4 à 3,6 pixels, celle d'un
+#: caractère de 2,1 à 2,5. Un texte de deux pixels de haut ne se lit pas.
+#: L'aperçu SITUE une cote ; il ne permet pas de la relire — et le
+#: propriétaire doit pouvoir la relire pour la confirmer.
 #:
 #: Seize pixels sont lisibles. C'est ce que vise la tuile, en adaptant son
 #: facteur à la hauteur réelle du fragment.
@@ -299,8 +300,9 @@ def rendre_une_zone(
     de sens d'axe.
 
     **Pourquoi cette fonction existe.** Mesuré sur les quatre plans réels : à
-    2 000 pixels de grand côté, la hauteur médiane d'un texte est de 3,5 à 4,4
-    pixels. L'aperçu situe donc un fragment sans permettre de le lire. Or le
+    2 000 pixels de grand côté, la hauteur médiane d'une ligne de texte est de
+    2,4 à 3,6 pixels. L'aperçu situe donc un fragment sans permettre de le
+    lire. Or le
     propriétaire doit pouvoir *confirmer ou corriger* une cote, ce qui demande
     de la lire. Sans tuile, « valider une mesure » voudrait dire ouvrir le PDF
     hors de Metreo — et comparer de mémoire.

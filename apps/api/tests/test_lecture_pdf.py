@@ -520,7 +520,8 @@ def test_a_detail_tile_magnifies_a_fragment_enough_to_read_it(
     """Un aperçu de page ne permet pas de RELIRE une cote ; une tuile si.
 
     Mesuré sur les quatre plans réels : à 2 000 pixels de grand côté, la
-    hauteur médiane d'un texte est de 3,5 à 4,4 pixels. Or le propriétaire
+    hauteur médiane d'une ligne de texte est de 2,4 à 3,6 pixels. Or le
+    propriétaire
     doit confirmer ou corriger une mesure, ce qui demande de la lire.
 
     La tuile vise `COTE_TUILE` sur son grand côté, et rend la hauteur que le

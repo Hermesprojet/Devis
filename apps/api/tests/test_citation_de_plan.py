@@ -455,14 +455,22 @@ def _etapes_de_la_migration() -> tuple[str, ...]:
     s'importe sans contexte Alembic — elle ne fait que définir des fonctions —
     et c'est ce qui rend cette lecture propre.
     """
+    # La DÉCLARATION `revision = "..."`, en début de ligne, et non n'importe
+    # quelle occurrence de l'identifiant : toute migration enfant le cite dans
+    # son `down_revision`, et chercher la chaîne nue trouverait donc autant de
+    # fichiers que la révision a d'enfants.
+    declaration = re.compile(
+        rf'^revision(\s*:\s*str)?\s*=\s*"{re.escape(REVISION_DES_CITATIONS_CAO)}"\s*$',
+        re.MULTILINE,
+    )
     candidats = [
         chemin
         for chemin in sorted(VERSIONS.glob("*.py"))
-        if f'"{REVISION_DES_CITATIONS_CAO}"' in chemin.read_text(encoding="utf-8")
+        if declaration.search(chemin.read_text(encoding="utf-8"))
     ]
     assert len(candidats) == 1, (
-        f"la révision {REVISION_DES_CITATIONS_CAO} n'est pas dans exactement un "
-        f"fichier de migration : {[c.name for c in candidats]}"
+        f"la révision {REVISION_DES_CITATIONS_CAO} n'est pas déclarée dans "
+        f"exactement un fichier de migration : {[c.name for c in candidats]}"
     )
     specification = importlib.util.spec_from_file_location(
         f"migration_{REVISION_DES_CITATIONS_CAO}", candidats[0]

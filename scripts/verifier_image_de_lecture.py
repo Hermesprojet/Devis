@@ -490,7 +490,7 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
 
     # La tuile de détail : sans elle, « confirmer ou corriger » demanderait
     # d'ouvrir le PDF hors de Metreo. Mesuré sur les plans réels : à 2 000 px
-    # de grand côté, un texte fait 3,5 à 4,4 pixels de haut.
+    # de grand côté, une ligne de texte fait 2,4 à 3,6 pixels de haut.
     tuile = rendre_une_zone(chemin, page=1, zone=(cadre.x0, cadre.y0, cadre.x1, cadre.y1))
     exiger(
         tuile.png[:8] == b"\x89PNG\r\n\x1a\n"

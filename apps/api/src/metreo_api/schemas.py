@@ -1028,6 +1028,109 @@ class TextesDePlan(ApiModel):
     extracteur: str
 
 
+class PointDEcran(BaseModel):
+    """Un point désigné sur l'aperçu : [0,1], origine en haut à gauche.
+
+    Le MÊME repère que celui des cadres rendus par l'API. Demander au client de
+    convertir vers les points PostScript de la page lui ferait refaire une
+    transformation qui dépend de la rotation d'affichage — et la referait
+    forcément autrement.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class CalibrationCreate(BaseModel):
+    """Déclarer l'échelle d'une page : deux points, et ce qui les sépare."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(ge=1)
+    premier: PointDEcran
+    second: PointDEcran
+    #: Ce que la personne SAIT de cette distance. En chaîne décimale : un
+    #: flottant perdrait des chiffres, et cette valeur multiplie tout le reste.
+    distance_reelle: Decimal = Field(gt=0)
+    #: Un code d'unité de LONGUEUR. Refusé s'il n'en est pas un.
+    unite: str = Field(min_length=1, max_length=16)
+    #: Points PostScript par pixel d'écran au moment du pointage.
+    #:
+    #: **C'est ce champ qui décide de la confiance accordée aux mesures.**
+    #: Mesuré : sur l'aperçu pleine page d'un A0, un pixel vaut 12 à 42 mm
+    #: d'ouvrage ; sur une tuile agrandie, 0,6 à 6 mm. Un client qui ne le
+    #: déclare pas obtient le doute, pas le crédit.
+    resolution_du_pointage: Decimal = Field(gt=0)
+    #: Sur quoi la personne dit avoir calibré. Obligatoire : une calibration
+    #: sans justification ne se vérifie pas, et c'est elle qu'on relira.
+    motif: NonBlank = Field(max_length=500)
+    #: La zone où cette échelle s'applique. Absente = toute la page.
+    zone: list[float] | None = Field(default=None, min_length=4, max_length=4)
+
+
+class CalibrationOut(ApiModel):
+    """Une échelle déclarée, telle que l'écran la relit."""
+
+    id: str
+    page: int
+    distance_reelle: str
+    unite: str
+    #: « 50 mm par point ». À LIRE, pas à recalculer : un écran qui en referait
+    #: l'arithmétique obtiendrait un second facteur, et les deux divergeraient.
+    facteur_lisible: str
+    resolution_du_pointage: str
+    motif: str
+    zone: list[str] | None
+    created_at: datetime
+
+
+class MesureCreate(BaseModel):
+    """Prendre une mesure : un type, des points, un libellé."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(ge=1)
+    type: Literal["segment", "surface"]
+    points: list[PointDEcran] = Field(min_length=2, max_length=200)
+    #: Ce que la personne mesure — « mur nord », « dalle du séjour ». Une liste
+    #: de mesures sans libellé est une liste de nombres que personne ne relit.
+    libelle: NonBlank = Field(max_length=200)
+
+
+class MesureDePdf(ApiModel):
+    """Une mesure prise sur un PDF, avec de quoi la juger et la retrouver."""
+
+    proposal_id: str
+    citation_id: str
+    page: int
+    type: str
+    libelle: str
+    valeur: str
+    unite: str
+    #: Dans la MÊME unité que la valeur. Une incertitude en pourcentage
+    #: obligerait le lecteur à faire une multiplication, et il ne la fera pas.
+    incertitude: str
+    incertitude_relative: str
+    fiabilite: str
+    reserves: list[str]
+    #: Les points désignés, pour redessiner la mesure sur l'aperçu. Sans eux,
+    #: « retrouver la mesure sur le plan » redevient impossible.
+    points: list[PointDEcran]
+    cadre: CadreDePlan | None
+    #: D'où vient l'échelle qui a produit ce nombre.
+    calibration: dict[str, Any]
+    decision: str | None
+    valeur_corrigee: str | None
+
+
+class MesuresDePdf(ApiModel):
+    revision_id: str
+    calibrations: list[CalibrationOut]
+    mesures: list[MesureDePdf]
+
+
 class ValidationDecisionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

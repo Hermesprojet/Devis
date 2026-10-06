@@ -693,10 +693,24 @@ class SourceCitation(TimestampMixin, Base):
         # suivent le ferment. Elles sont bâties UNIQUEMENT en IS NULL /
         # IS NOT NULL : une seule comparaison arithmétique les rendrait
         # nulles, donc satisfaites, sur la valeur même qu'elles visent.
+        # Trois ancrages, et non deux depuis la révision e2f3a4b50607 :
+        #
+        # - une page ET une plage de caractères, pour un texte ;
+        # - une page ET une boîte, pour ce qui est désigné sur une IMAGE de
+        #   page — une mesure prise sur un PDF n'a pas de plage de caractères,
+        #   parce qu'elle ne cite aucun texte : elle cite un endroit ;
+        # - un `object_id`, pour un objet de dessin.
+        #
+        # Le deuxième manquait, et son absence aurait obligé à inventer une
+        # plage de caractères factice ou un faux handle pour écrire une mesure
+        # de plan. Les deux auraient produit une provenance FAUSSE, et
+        # indiscernable après coup d'une citation de texte.
         CheckConstraint(
             "((char_start IS NULL AND char_end IS NULL) "
             "OR (char_start IS NOT NULL AND char_end IS NOT NULL)) "
-            "AND ((page IS NOT NULL AND char_start IS NOT NULL) OR object_id IS NOT NULL)",
+            "AND ((page IS NOT NULL AND char_start IS NOT NULL) "
+            "OR (page IS NOT NULL AND x0 IS NOT NULL) "
+            "OR object_id IS NOT NULL)",
             name="ck_source_citation_ancrage",
         ),
         CheckConstraint(
@@ -818,6 +832,112 @@ class ExtractionProposal(TimestampMixin, Base):
     prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
     model_version: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="proposed")
+
+
+class PlanCalibration(TimestampMixin, Base):
+    """L'échelle d'un PDF, telle qu'UNE PERSONNE l'a déclarée.
+
+    Un PDF ne porte aucune unité de dessin : ses coordonnées sont des points
+    PostScript, qui décrivent la feuille et ne disent rien de l'ouvrage. Passer
+    de l'un à l'autre demande un nombre que le fichier ne contient pas.
+
+    **Ce nombre n'est pas lu, il est déclaré.** Quelqu'un désigne deux points
+    sur la page et dit quelle distance les sépare dans la réalité. C'est une
+    décision humaine, au même titre qu'une `ValidationDecision`, et elle se
+    conserve pour la même raison : toute mesure qui en descend n'a de sens que
+    rapportée à elle.
+
+    **Ce qui est stocké est la DÉCLARATION, pas le facteur.** Les deux points,
+    la distance et l'unité suffisent à recalculer le facteur à l'identique ;
+    un facteur stocké finirait par diverger de ce dont il est issu, et plus
+    rien ne dirait lequel des deux a servi.
+
+    Les coordonnées sont celles de la PAGE, en points PostScript absolus — pas
+    celles de l'écran. Un repère d'écran dépend de la rotation d'affichage et
+    normalise x et y par des longueurs différentes : une diagonale y serait
+    fausse sur toute page qui n'est pas carrée.
+    """
+
+    __tablename__ = "plan_calibrations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "revision_id"],
+            ["document_revisions.organization_id", "document_revisions.id"],
+            name="fk_plan_calibrations_org_revision",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["actor_user_id", "organization_id"],
+            ["memberships.user_id", "memberships.organization_id"],
+            name="fk_plan_calibrations_actor_membership",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("organization_id", "id", name="uq_plan_calibration_org_id"),
+        CheckConstraint("page >= 1", name="ck_plan_calibration_page"),
+        # Une distance réelle nulle ou négative ne détermine aucune échelle.
+        # Le CAST est nécessaire : `Amount` vit en texte sur SQLite, où une
+        # comparaison numérique directe compare des chaînes.
+        CheckConstraint(
+            "CAST(distance_reelle AS NUMERIC) > 0",
+            name="ck_plan_calibration_distance",
+        ),
+        CheckConstraint(
+            "CAST(resolution_du_pointage AS NUMERIC) > 0",
+            name="ck_plan_calibration_resolution",
+        ),
+        CheckConstraint("length(trim(unite)) > 0", name="ck_plan_calibration_unite"),
+        # La zone est entière ou absente : une demi-zone désignerait une
+        # portion de page dont deux bords seraient inconnus.
+        CheckConstraint(
+            "(zone_x0 IS NULL AND zone_y0 IS NULL AND zone_x1 IS NULL AND zone_y1 IS NULL) "
+            "OR (zone_x0 IS NOT NULL AND zone_y0 IS NOT NULL "
+            "AND zone_x1 IS NOT NULL AND zone_y1 IS NOT NULL)",
+            name="ck_plan_calibration_zone_complete",
+        ),
+        Index("ix_plan_calibrations_org_revision", "organization_id", "revision_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    organization_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    #: 1-indexée, comme une citation documentaire.
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: Les deux points désignés, en points PostScript de la page.
+    u0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    v0: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    u1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    v1: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+
+    #: Ce que la personne a SAISI, conservé tel quel.
+    distance_reelle: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+    #: Un code d'unité de longueur, résolu par `get_unit` à l'écriture.
+    unite: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    #: Points PostScript par pixel d'écran au moment du pointage. C'est lui qui
+    #: porte toute l'incertitude des mesures qui descendront de cette
+    #: calibration — d'où son stockage : sans lui, on ne saurait plus si les
+    #: points ont été posés sur un aperçu grossier ou sur une vue agrandie.
+    resolution_du_pointage: Mapped[Decimal] = mapped_column(Amount, nullable=False)
+
+    #: La zone de la page où cette calibration s'applique, en coordonnées
+    #: d'écran normalisées. `NULL` = toute la page.
+    #:
+    #: Une page peut porter plusieurs échelles — un plan au 1:50 et un détail
+    #: au 1:20 dans le même cartouche. Appliquer l'échelle du plan au détail
+    #: donnerait une mesure deux fois et demie trop grande, et parfaitement
+    #: plausible.
+    zone_x0: Mapped[Decimal | None] = mapped_column(Amount)
+    zone_y0: Mapped[Decimal | None] = mapped_column(Amount)
+    zone_x1: Mapped[Decimal | None] = mapped_column(Amount)
+    zone_y1: Mapped[Decimal | None] = mapped_column(Amount)
+
+    #: Ce sur quoi la personne dit avoir calibré — « la cote 5000 de la façade
+    #: sud ». Obligatoire : une calibration sans justification ne se vérifie
+    #: pas, et c'est elle qu'on relira dans six mois.
+    motif: Mapped[str] = mapped_column(Text, nullable=False)
+
+    actor_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
 
 
 class ValidationDecision(Base):

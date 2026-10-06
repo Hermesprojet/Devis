@@ -6,19 +6,27 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from metreo_domain.errors import UnknownUnitError
+
 from ..config import Settings, get_settings
 from ..db import session_scope
-from ..models import Document, DocumentRevision, ValidationDecision
+from ..models import Document, DocumentRevision, PlanCalibration, ValidationDecision
 from ..schemas import (
     AnomalieDePlan,
     CadreDePlan,
+    CalibrationCreate,
+    CalibrationOut,
     DocumentCreate,
     DocumentOut,
     DocumentRevisionOut,
     DocumentStatusUpdate,
     FragmentDeTexte,
+    MesureCreate,
+    MesureDePdf,
     MesureDePlan,
+    MesuresDePdf,
     PlanLu,
+    PointDEcran,
     TextesDePlan,
     ValidationDecisionCreate,
     ValidationDecisionOut,
@@ -26,12 +34,15 @@ from ..schemas import (
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
 from ..services import (
+    calibration_de_plan,
     documents,
     exports,
     lecture_de_plan,
     mesures_de_plan,
+    mesures_pdf,
     rendu_de_plan,
     rendu_pdf,
+    tuiles,
 )
 from ..services.document_storage import (
     TAILLE_MORCEAU,
@@ -769,4 +780,334 @@ def get_plan_textes(
             )
             for f in tranche
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Calibrer un PDF, puis le mesurer
+# ---------------------------------------------------------------------------
+
+
+def _calibration_out(calibration: PlanCalibration) -> CalibrationOut:
+    zone = None
+    if calibration.zone_x0 is not None:
+        zone = [
+            str(calibration.zone_x0),
+            str(calibration.zone_y0),
+            str(calibration.zone_x1),
+            str(calibration.zone_y1),
+        ]
+    return CalibrationOut(
+        id=calibration.id,
+        page=calibration.page,
+        distance_reelle=str(calibration.distance_reelle),
+        unite=calibration.unite,
+        facteur_lisible=calibration_de_plan.facteur_lisible(calibration),
+        resolution_du_pointage=str(calibration.resolution_du_pointage),
+        motif=calibration.motif,
+        zone=zone,
+        created_at=calibration.created_at,
+    )
+
+
+def _refus_de_calibration(erreur: Exception, code: str, message: str) -> HTTPException:
+    """422 et un code nommé : la demande est recevable, le plan ne s'y prête pas.
+
+    Pas 400 : la requête est bien formée. Pas 500 : rien n'a cassé. C'est le
+    document — ou l'absence d'échelle — qui empêche de répondre, et l'écran
+    doit pouvoir le dire à l'utilisateur dans ses mots.
+    """
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"code": code, "message": message},
+    )
+
+
+@router.post(
+    "/documents/{document_id}/revisions/{revision_id}/plan/calibration",
+    response_model=CalibrationOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Déclarer l'échelle d'une page de PDF",
+)
+def post_calibration(
+    document_id: str,
+    revision_id: str,
+    payload: CalibrationCreate,
+    context: TenantContext = Depends(require(Permission.DOCUMENT_WRITE)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> CalibrationOut:
+    """Enregistre ce qu'une personne déclare : deux points, et leur distance.
+
+    **Un PDF ne porte aucune unité.** Cette route est donc le seul chemin par
+    lequel une mesure devient possible — et il passe obligatoirement par une
+    personne. Rien ici ne lit l'échelle du cartouche : elle ne vaut plus dès
+    qu'un export a coché « ajuster à la page », et s'y fier produirait des
+    quantités fausses et plausibles.
+
+    `DOCUMENT_WRITE` et non `DOCUMENT_VALIDATE` : calibrer n'approuve rien. Les
+    mesures qui en descendront resteront des propositions, et c'est leur
+    acceptation qui demandera le droit de valider.
+    """
+    try:
+        documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    try:
+        calibration = calibration_de_plan.calibrer(
+            session,
+            stockage=StockageLocal(settings.storage_root),
+            organization_id=context.organization_id,
+            revision_id=revision_id,
+            actor_user_id=context.user.id,
+            page=payload.page,
+            premier_ecran=(payload.premier.x, payload.premier.y),
+            second_ecran=(payload.second.x, payload.second.y),
+            distance_reelle=payload.distance_reelle,
+            unite=payload.unite,
+            resolution_du_pointage=payload.resolution_du_pointage,
+            motif=payload.motif,
+            zone=tuple(payload.zone) if payload.zone else None,  # type: ignore[arg-type]
+        )
+    except calibration_de_plan.CalibrationRefusee as refus:
+        raise _refus_de_calibration(refus, refus.code, refus.message) from refus
+    except mesures_pdf.MesureRefusee as refus:
+        raise _refus_de_calibration(refus, refus.code, refus.message) from refus
+    except UnknownUnitError as erreur:
+        raise _refus_de_calibration(
+            erreur,
+            "unknown_unit",
+            f"L'unité « {payload.unite} » n'est pas connue de Metreo.",
+        ) from erreur
+
+    return _calibration_out(calibration)
+
+
+@router.post(
+    "/documents/{document_id}/revisions/{revision_id}/plan/mesures",
+    response_model=MesureDePdf,
+    status_code=status.HTTP_201_CREATED,
+    summary="Mesurer un segment ou une surface sur un PDF calibré",
+)
+def post_mesure_de_pdf(
+    document_id: str,
+    revision_id: str,
+    payload: MesureCreate,
+    context: TenantContext = Depends(require(Permission.DOCUMENT_WRITE)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> MesureDePdf:
+    """Mesure, puis écrit une PROPOSITION — jamais une quantité approuvée.
+
+    La mesure arrive avec son incertitude, calculée depuis la résolution à
+    laquelle les points ont été posés. Au-delà du seuil, elle reste « à
+    vérifier » : conservée, parce qu'un ordre de grandeur sert, et réservée,
+    parce que personne ne l'a encore regardée.
+    """
+    try:
+        documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    try:
+        ecrite = calibration_de_plan.mesurer(
+            session,
+            stockage=StockageLocal(settings.storage_root),
+            organization_id=context.organization_id,
+            revision_id=revision_id,
+            page=payload.page,
+            type_de_mesure=payload.type,
+            points_ecran=[(point.x, point.y) for point in payload.points],
+            libelle=payload.libelle,
+        )
+    except calibration_de_plan.CalibrationRefusee as refus:
+        raise _refus_de_calibration(refus, refus.code, refus.message) from refus
+    except mesures_pdf.MesureRefusee as refus:
+        raise _refus_de_calibration(refus, refus.code, refus.message) from refus
+
+    relues = calibration_de_plan.lister(
+        session, organization_id=context.organization_id, revision_id=revision_id
+    )
+    ajoutee = next(m for m in relues if m.proposal_id == ecrite.proposal_id)
+    return _mesure_de_pdf(ajoutee)
+
+
+def _mesure_de_pdf(mesure: calibration_de_plan.MesureALire) -> MesureDePdf:
+    return MesureDePdf(
+        proposal_id=mesure.proposal_id,
+        citation_id=mesure.citation_id,
+        page=mesure.page,
+        type=mesure.type,
+        libelle=mesure.libelle,
+        valeur=mesure.valeur,
+        unite=mesure.unite,
+        incertitude=mesure.incertitude,
+        incertitude_relative=mesure.incertitude_relative,
+        fiabilite=mesure.fiabilite,
+        reserves=list(mesure.reserves),
+        points=[PointDEcran(x=x, y=y) for x, y in mesure.points_ecran],
+        cadre=(
+            CadreDePlan(
+                x0=mesure.cadre[0],
+                y0=mesure.cadre[1],
+                x1=mesure.cadre[2],
+                y1=mesure.cadre[3],
+            )
+            if mesure.cadre
+            else None
+        ),
+        calibration=mesure.calibration,
+        decision=mesure.decision,
+        valeur_corrigee=mesure.valeur_corrigee,
+    )
+
+
+@router.get(
+    "/documents/{document_id}/revisions/{revision_id}/plan/mesures",
+    response_model=MesuresDePdf,
+    summary="Les échelles déclarées et les mesures prises sur un PDF",
+)
+def get_mesures_de_pdf(
+    document_id: str,
+    revision_id: str,
+    context: TenantContext = Depends(require(Permission.DOCUMENT_READ)),
+    session: Session = Depends(session_scope),
+) -> MesuresDePdf:
+    """Tout ce qu'il faut pour redessiner le travail fait sur ce plan.
+
+    Les calibrations ET les mesures, parce que l'écran doit pouvoir afficher
+    d'où vient chaque nombre. Une mesure sans son échéelle est un nombre sans
+    provenance, et c'est exactement ce que ce produit refuse de montrer.
+    """
+    try:
+        documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    return MesuresDePdf(
+        revision_id=revision_id,
+        calibrations=[
+            _calibration_out(ligne)
+            for ligne in calibration_de_plan.lister_les_calibrations(
+                session,
+                organization_id=context.organization_id,
+                revision_id=revision_id,
+            )
+        ],
+        mesures=[
+            _mesure_de_pdf(mesure)
+            for mesure in calibration_de_plan.lister(
+                session,
+                organization_id=context.organization_id,
+                revision_id=revision_id,
+            )
+        ],
+    )
+
+
+@router.get(
+    "/documents/{document_id}/revisions/{revision_id}/plan/tuile",
+    summary="Agrandir une zone d'une page, pour la relire",
+    response_class=StreamingResponse,
+)
+def get_tuile(
+    document_id: str,
+    revision_id: str,
+    page: int = Query(default=1, ge=1),
+    # La page entière par défaut. Une zone obligatoire ferait répondre 422 à
+    # une demande sans paramètres — AVANT le contrôle d'appartenance — et un
+    # identifiant d'un autre tenant deviendrait distinguable d'un identifiant
+    # inexistant par le seul code de retour. L'invariant du dépôt est que les
+    # deux sont indiscernables.
+    x0: float = Query(default=0.0, ge=0.0, le=1.0),
+    y0: float = Query(default=0.0, ge=0.0, le=1.0),
+    x1: float = Query(default=1.0, ge=0.0, le=1.0),
+    y1: float = Query(default=1.0, ge=0.0, le=1.0),
+    context: TenantContext = Depends(require(Permission.DOCUMENT_READ)),
+    session: Session = Depends(session_scope),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Sert l'agrandissement d'une zone — depuis le cache quand elle y est.
+
+    **Pourquoi cette route existe.** Mesuré sur quatre plans réels : sur
+    l'aperçu pleine page, la hauteur médiane d'une ligne de texte est de 2,4 à
+    3,6 pixels, et un pixel vaut 12 à 42 millimètres d'ouvrage aux échelles
+    1:20 à 1:50. On ne peut donc ni relire une cote, ni pointer utilement. La
+    tuile est ce qui rend les deux possibles.
+
+    **Ce qu'elle coûte, et ce que ça implique.** Le rendu se fait dans un
+    processus séparé qui meurt ensuite, parce que charger une page réserve 54 à
+    422 Mo que PDFium ne rend pas au système. Première demande : 0,2 à 5,3
+    secondes. Les suivantes : 0,3 milliseconde, depuis le volume. L'écran doit
+    donc traiter cette route comme lente la première fois, et instantanée
+    ensuite. La décision complète, avec ses limites de ressources, est l'ADR
+    0008.
+    """
+    try:
+        revision = documents.get_revision(
+            session,
+            organization_id=context.organization_id,
+            document_id=document_id,
+            revision_id=revision_id,
+        )
+    except documents.RevisionRefusee as erreur:
+        raise _refus_http(erreur) from erreur
+
+    if x1 <= x0 or y1 <= y0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "zone_invalide",
+                "message": "La zone demandée est plate ou inversée.",
+            },
+        )
+
+    stockage = StockageLocal(settings.storage_root)
+    try:
+        tuile = tuiles.obtenir(
+            stockage,
+            organization_id=context.organization_id,
+            revision_id=revision_id,
+            original=stockage.chemin(revision.storage_key),
+            page=page,
+            zone=(x0, y0, x1, y1),
+        )
+    except tuiles.TuileRefusee as refus:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": refus.code, "message": refus.message},
+        ) from refus
+
+    return StreamingResponse(
+        iter([tuile.png]),
+        media_type="image/png",
+        headers={
+            "Content-Length": str(len(tuile.png)),
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": (
+                "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            ),
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "private, no-store",
+            # Pour le diagnostic : une tuile servie en une milliseconde vient
+            # du volume, une servie en quatre secondes vient d'être rendue.
+            "X-Metreo-Tuile": "cache" if tuile.depuis_le_cache else "rendue",
+        },
     )

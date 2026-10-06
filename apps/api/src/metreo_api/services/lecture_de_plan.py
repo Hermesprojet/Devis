@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session
 
 from ..models import DocumentRevision
 from ..transactions import compenser
-from . import lecture_dxf, lecture_pdf, mesures_de_plan, rendu_de_plan, rendu_pdf
+from . import lecture_dxf, lecture_pdf, mesures_de_plan, rendu_de_plan, rendu_pdf, tuiles
 from .document_storage import StockageLocal
 from .lecture_dxf import LecturePlan
 from .lecture_pdf import LecturePdf
@@ -202,6 +202,14 @@ def cles_derivees(
             for page in pages
             if isinstance(page, int)
         ]
+
+    # Les tuiles de détail. Leur nombre n'est pas devinable — il dépend du
+    # nombre de fois où quelqu'un a zoomé — et elles ne sont donc pas calculées
+    # mais ÉNUMÉRÉES depuis le volume.
+    cles += [
+        (cle, "tuile de détail")
+        for cle in tuiles.cles_des_tuiles(stockage, organization_id, revision_id)
+    ]
     return cles
 
 
@@ -449,6 +457,10 @@ def _constat_pdf_en_dictionnaire(
         # Ce qui n'existe que pour un PDF.
         "pages": constat.pages,
         "dimensions_des_pages": [[largeur, hauteur] for largeur, hauteur in constat.dimensions],
+        # La boîte complète et la rotation, sans lesquelles un point désigné à
+        # l'écran ne peut pas être ramené dans le repère de la page.
+        "boites_des_pages": [list(boite) for boite in constat.boites],
+        "rotations_des_pages": list(constat.rotations),
         "porte_du_texte": constat.porte_du_texte,
         "fragments_lus": len(constat.fragments),
         "apercus": apercus,

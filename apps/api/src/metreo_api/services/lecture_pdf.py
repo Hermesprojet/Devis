@@ -112,6 +112,16 @@ class LecturePdf:
     #: Largeur et hauteur de chaque page, en **points PostScript**. Conservées
     #: brutes : c'est l'unité du document, et aucune conversion n'a lieu ici.
     dimensions: list[tuple[float, float]] = field(default_factory=list)
+    #: La BOÎTE de chaque page — `(gauche, bas, droite, haut)` — et non ses
+    #: seules dimensions. Les deux diffèrent dès que la page ne commence pas à
+    #: (0,0), et c'est la boîte qu'il faut pour situer ou mesurer quoi que ce
+    #: soit : les coordonnées d'un texte, comme celles d'un point désigné à la
+    #: souris, sont absolues.
+    boites: list[tuple[float, float, float, float]] = field(default_factory=list)
+    #: La rotation d'affichage de chaque page, en degrés (0, 90, 180, 270).
+    #: Nécessaire à qui veut convertir un point de l'écran vers la page —
+    #: l'opération inverse de celle que fait `normaliser`.
+    rotations: list[int] = field(default_factory=list)
     fragments: list[Fragment] = field(default_factory=list)
     anomalies: list[Anomalie] = field(default_factory=list)
 
@@ -300,6 +310,8 @@ def lire(chemin: str | Path) -> LecturePdf:
         # 200 × 100, et son coin bas gauche est à (100, 50).
         boite = tuple(float(valeur) for valeur in page.get_bbox())
         rotation = int(page.get_rotation() or 0)
+        constat.boites.append(boite)  # type: ignore[arg-type]
+        constat.rotations.append(rotation)
         if rotation:
             pages_tournees.append(numero + 1)
 
