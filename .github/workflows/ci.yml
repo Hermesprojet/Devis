@@ -56,7 +56,11 @@ jobs:
           python -m pip install --upgrade pip
           # Le paquet déclare ses dépendances : les installer par lui, et non
           # par une liste parallèle qui masquerait un manque dans pyproject.toml.
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev]"
+          #
+          # `plans` porte ezdxf. Il est optionnel dans le manifeste, mais la CI
+          # l'installe : sans lui, les tests de lecture de plans se
+          # SAUTERAIENT, et une suite qui saute ne prouve rien.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans]"
       - name: Format et lint
         # scripts/ y est joint : il porte désormais de la logique — le
         # contrôle d'installation propre et celui des skills — et non plus
@@ -116,7 +120,7 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,postgres]"
       - name: Aller-retour des migrations, dans une base créée par ce run
         # Le service PostgreSQL est éphémère — il meurt avec le job — mais
         # l'aller-retour ne s'appuie pas là-dessus : il crée sa propre base au
@@ -565,7 +569,7 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,postgres]"
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,postgres]"
       - name: Les quatorze scénarios de connexion
         run: |
           python ops/banc_oidc.py \

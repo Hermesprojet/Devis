@@ -87,12 +87,26 @@ puisse tenir.
 
 ---
 
-## Phase 2 — Intelligence documentaire · **Non commencée**
+## Phase 2 — Intelligence documentaire · **Socle livré, traitement non commencé**
 
 Périmètre : dépôt sécurisé PDF/image/XLSX, extraction texte native, OCR par
 adaptateur, classification, extraction structurée de quelques champs et clauses,
 citations page/zone, écran de validation côté à côté, recherche plein texte,
 comparaison de deux révisions, jeux d'évaluation anonymisés.
+
+**Ce qui est livré, et c'est le socle, pas le traitement** : le dépôt d'un
+fichier et son original immuable avec empreinte SHA-256 ; le type réel lu dans
+les octets et non dans l'extension, avec refus nommé des exécutables, des
+archives et du HTML ; les révisions et le téléchargement à l'identique ; la
+citation structurée — page, plage de caractères, boîte englobante, feuille,
+calque, objet ; la proposition d'extraction versionnée et son statut ; l'état
+idempotent par étape de pipeline ; les sept ports de traitement en `Protocol`.
+
+**Ce qui n'est pas commencé** : aucun fichier n'est encore LU. Aucune
+bibliothèque de lecture PDF ni CAO, aucun OCR, aucune exécution asynchrone —
+`apps/worker/` ne contient qu'un `README.md`. Les onze étapes de pipeline sont
+déclarées, aucune ne s'exécute. Les quatre scénarios d'acceptation ci-dessous
+ne sont pas automatisés.
 
 Critères de fin :
 
@@ -104,16 +118,32 @@ Critères de fin :
   système (scénario 14).
 - L'extraction reste désactivable : l'édition d'un devis fonctionne sans elle.
 
-Dépendances à trancher avant de commencer : fournisseur OCR autorisé, zone
-d'hébergement des données, budget par page.
+Dépendances tranchées depuis : les bibliothèques et leurs licences sont
+arrêtées par `docs/adr/0007-lecture-de-plans.md` — Tesseract et ses données en
+Apache-2.0 pour l'OCR, PyMuPDF et Ghostscript écartés pour cause d'AGPL,
+Poppler écarté pour cause de GPL. Restent à trancher : la zone d'hébergement
+des données et le budget par page.
 
 ---
 
 ## Phase 3 — Métrés assistés, plans et CAO/BIM · **Non commencée**
 
 Périmètre : visionneuse et annotation, mesures manuelles traçables, extraction
-IFC/DXF, interface de conversion DWG, extraction assistée progressive,
-rapprochement avec le bordereau, contrôles unités/échelles.
+IFC/DXF, extraction assistée progressive, rapprochement avec le bordereau,
+contrôles unités/échelles.
+
+**Le DWG sort du périmètre, et ce n'est pas un report.** Aucune option n'est à
+la fois licite pour un service commercial, assez mûre pour porter une quantité
+facturée, et sûre : le motif de refus de chacune est consigné dans
+`docs/adr/0007-lecture-de-plans.md`. Un DWG déposé est reconnu à son en-tête de
+version et refusé en nommant la sortie — exporter en DXF ou en PDF. Le mot
+« DWG » n'apparaît dans aucune interface ni aucune offre.
+
+**Première brique livrée** : le DXF est reconnu au dépôt, ASCII comme binaire,
+et rangé sous son propre type. Il passait jusqu'ici pour un CSV, faute de
+signature — un plan était donc stocké en `.csv` et offert au pipeline d'import
+de prix. Reconnaître un fichier n'est pas le lire : aucune géométrie n'est
+encore extraite.
 
 Critères de fin :
 
