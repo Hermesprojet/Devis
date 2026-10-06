@@ -12,7 +12,7 @@
  * **Les trois chiffres mesurés qui dictent cette interface.**
  *
  * 1. Sur l'aperçu pleine page, un pixel vaut **12 à 42 millimètres d'ouvrage**
- *    (quatre plans réels, A0, 2 000 px de grand côté). On ne peut donc pas y
+ *    (quatre plans réels de grand format, 2 000 px de grand côté). On ne peut donc pas y
  *    pointer utilement : l'aperçu sert à TROUVER, la tuile agrandie à POINTER.
  * 2. La hauteur médiane d'une ligne de texte y est de **2,4 à 3,6 pixels**,
  *    celle d'un caractère de 2,1 à 2,5. On ne peut pas non plus y relire une

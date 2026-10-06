@@ -10,7 +10,8 @@ symétriques, et la différence est imposée par les formats :
   résolution est définitif au moment du rendu.
 
 **Ce que coûte cette asymétrie, mesuré le 6 octobre 2026 sur quatre plans
-réels.** Un A0 de 3 370 × 2 591 points rendu à l'échelle 2 donne
+réels.** Un plan de 3 370 × 2 591 points — 1 189 × 914 mm, l'un des quatre —
+rendu à l'échelle 2 donne
 6 741 × 5 182 pixels en 3,46 s. C'est déjà hors d'une requête HTTP, et la
 surface croît avec le carré du facteur : doubler encore coûterait quatorze
 secondes et 140 Mo. La résolution est donc bornée par la **taille affichée**
@@ -95,10 +96,11 @@ FACTEUR_MAXIMAL = 40.0
 
 #: La hauteur visée, en pixels, pour le texte d'une tuile.
 #:
-#: **Pourquoi une tuile existe.** Mesuré sur les quatre plans réels : à 2 000
-#: pixels de grand côté, un A0 donne 0,594 à 0,845 mm par pixel, et la hauteur
-#: MÉDIANE d'une ligne de texte y est de 2,4 à 3,6 pixels, celle d'un
-#: caractère de 2,1 à 2,5. Un texte de deux pixels de haut ne se lit pas.
+#: **Pourquoi une tuile existe.** Mesuré sur les quatre plans réels, dont le
+#: grand côté va de 1 189 à 1 690 mm : à 2 000 pixels de grand côté, un pixel
+#: vaut 0,594 à 0,845 mm de papier, et la hauteur MÉDIANE d'une ligne de texte
+#: y est de 2,4 à 3,6 pixels, celle d'un caractère de 2,1 à 2,5. Un texte de
+#: deux pixels de haut ne se lit pas.
 #: L'aperçu SITUE une cote ; il ne permet pas de la relire — et le
 #: propriétaire doit pouvoir la relire pour la confirmer.
 #:

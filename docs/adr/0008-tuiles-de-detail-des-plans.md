@@ -14,8 +14,8 @@
 ### Le problème se voit à l'écran, et il est chiffrable
 
 L'aperçu d'une page de plan est rendu à 2 000 pixels sur le grand côté. Sur les
-quatre plans réels du donneur d'ordre — quatre A0, conservés hors du dépôt —
-cela donne :
+quatre plans réels du donneur d'ordre — des **grands formats de 1 189 à
+1 690 mm de grand côté**, conservés hors du dépôt — cela donne :
 
 | Mesuré sur l'aperçu à 2 000 px | Valeur |
 | --- | --- |
@@ -60,7 +60,8 @@ Trois faits en sortent, et ils décident de tout :
 2. **La mémoire n'est pas rendue** à la fermeture du document. 489 Mo restent
    résidents, et le plan suivant n'y ajoute rien — il réutilise ce qui est déjà
    réservé. Ce n'est donc pas une fuite, c'est un **plancher définitif** : tout
-   travailleur qui a rendu un A0 dense pèse un demi-gigaoctet jusqu'à sa mort.
+   travailleur qui a rendu un grand format dense pèse un demi-gigaoctet jusqu'à
+   sa mort.
 3. **Le coût ne suit pas la taille du fichier** mais la densité du dessin : le
    plus lourd des quatre sur le disque est le moins cher des deux en mémoire.
    Aucune borne utile ne peut donc être déduite de l'octet déposé.

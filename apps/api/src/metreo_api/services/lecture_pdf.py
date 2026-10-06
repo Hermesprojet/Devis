@@ -33,7 +33,8 @@ Le repère change, et c'est le piège principal : le PDF a son origine **en bas
 dans `_normaliser`, et un test la fixe sur une fixture dont on connaît la
 position attendue.
 
-Mesuré le 6 octobre 2026 sur quatre plans réels (A0, une page chacun) :
+Mesuré le 6 octobre 2026 sur quatre plans réels (grand format, une page
+chacun : 1 480 × 850, 1 690 × 850 et deux fois 1 189 × 914 mm) :
 l'ouverture prend 1 ms, l'extraction de 815 à 4 351 fragments prend de 0,04 s
 à 0,98 s. C'est ce qui permet de lire dans la requête plutôt que dans un
 worker — la même frontière que pour le DXF.
@@ -73,7 +74,7 @@ CODE_MOT_DE_PASSE = 4
 TOLERANCE_DE_BORD = 1e-9
 
 #: Le plus grand côté de l'aperçu, en pixels. Même valeur que le rendu DXF :
-#: un plan A0 rendu à l'échelle 1 fait 3 370 × 2 591 points, et à l'échelle 2
+#: un plan de 1 189 × 914 mm rendu à l'échelle 1 fait 3 370 × 2 591 points, et à l'échelle 2
 #: il demande 3,5 s et 35 Mo — mesuré. On borne donc par la taille affichée,
 #: pas par un facteur d'échelle.
 COTE_AFFICHEE = 2000
