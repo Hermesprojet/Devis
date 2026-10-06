@@ -263,6 +263,13 @@ L'administrateur ainsi créé n'a aucun moyen d'entrer tant qu'il ne s'est pas
 connecté par le fournisseur sur cette adresse vérifiée. C'est voulu : ce que la
 commande crée, c'est **le droit d'entrer, pas un moyen d'entrer**.
 
+## Éprouver le parcours AVEC un fournisseur réel
+
+Tout ce qui suit éprouve notre moitié du protocole. Elle ne dit rien d'Auth0
+ni de Google : aucun test, nulle part, n'a jamais exercé ce parcours contre de
+vrais conteneurs ET un vrai fournisseur. La procédure manuelle qui le fait, et
+ce qu'il faut y observer, vivent dans `docs/CONTROLE_DE_CONNEXION.md`.
+
 ## Éprouver le parcours sans fournisseur réel
 
 `python -m metreo_api.dev_oidc_provider` monte un fournisseur OIDC minimal
