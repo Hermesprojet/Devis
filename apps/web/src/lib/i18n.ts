@@ -367,6 +367,14 @@ const fr: Dictionary = {
   'plan.pdf.montrer': 'Montrer sur le plan',
   'plan.pdf.confirmerMesure': 'Confirmer',
   'plan.pdf.corriger': 'Corriger',
+  // « Rejeter » et non « Supprimer » : la proposition de la machine reste en
+  // base avec sa citation. C'est la DÉCISION qui est enregistrée, pas un
+  // effacement — sans quoi le dossier cesserait d'être auditable.
+  'plan.pdf.rejeter': 'Rejeter',
+  'plan.pdf.aideRejeter':
+    'À utiliser quand la mesure ne veut rien dire — mauvais endroit, points mal '
+    + 'posés, échelle douteuse. La proposition reste consultable ; elle ne sera '
+    + 'simplement jamais reprise.',
   'plan.pdf.motifDecision': 'Motif',
   'plan.pdf.valeurCorrigee': 'Valeur retenue',
   'plan.pdf.corrigeeEn': 'corrigée en',

@@ -879,6 +879,26 @@ function LigneDeMesurePdf({
         >
           {t('plan.pdf.corriger')}
         </button>
+        {/*
+          Le rejet manquait, et son absence était un piège. `decider` l'accepte
+          depuis le début, la clé `plan.decision.rejected` existe, et la colonne
+          « Décision » sait l'afficher : l'écran annonçait donc un vocabulaire
+          qu'aucun bouton ne pouvait produire. Sans lui, une mesure visiblement
+          fausse ne laissait que deux issues — la confirmer, ou la « corriger »
+          vers une valeur que la personne ne connaît pas.
+
+          Comme les deux autres, il exige un motif : une décision sans raison
+          n'est pas une décision, et c'est elle qui sera relue dans six mois.
+        */}
+        <button
+          type="button"
+          data-testid="pdf-rejeter"
+          disabled={occupe || !motif.trim()}
+          onClick={() => decider('rejected')}
+          title={t('plan.pdf.aideRejeter')}
+        >
+          {t('plan.pdf.rejeter')}
+        </button>
       </td>
     </tr>
   )
