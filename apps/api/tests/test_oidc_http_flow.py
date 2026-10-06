@@ -91,6 +91,40 @@ def test_other_account_asks_provider_to_show_login_without_changing_oidc_securit
     assert params["state"] == [_etat_courant("state")]
     assert "client_secret" not in params
 
+    # `max_age=0` EXIGE ce que `prompt=login` se contente de demander.
+    #
+    # La documentation d'Auth0 est explicite : `prompt=login` ne garantit pas
+    # une nouvelle authentification lorsque l'identité vient d'un fournisseur
+    # amont comme Google. Les deux paramètres ne font donc pas la même chose —
+    # l'un demande un écran, l'autre une authentification — et aucun ne
+    # remplace l'autre.
+    #
+    # Envoyer `max_age` a une seconde conséquence, qui est celle qui compte :
+    # OpenID Connect exige alors la revendication `auth_time` dans le jeton
+    # d'identité. Metreo peut enfin CONSTATER ce qui s'est passé.
+    assert params["max_age"] == ["0"]
+    assert _etat_courant("reauthentication_requested") is True
+
+
+def test_an_ordinary_login_asks_for_no_reauthentication(oidc_client) -> None:
+    """Le contre-exemple, et il n'est pas décoratif.
+
+    Une connexion ordinaire ne doit PAS exiger de réauthentification : envoyer
+    `max_age=0` à chaque fois ferait resaisir son mot de passe à quelqu'un qui
+    revient simplement sur l'application. Et sans ce drapeau à faux, la
+    revendication `auth_time` serait relue au retour de toutes les connexions,
+    où une authentification antérieure est parfaitement normale — l'avis
+    s'afficherait partout, et cesserait d'être lu.
+    """
+    client, _ = oidc_client
+    reponse = client.get("/api/v1/auth/oidc/start")
+    assert reponse.status_code == 200, reponse.text
+    params = parse_qs(urlsplit(reponse.json()["authorization_url"]).query)
+
+    assert "max_age" not in params
+    assert "prompt" not in params
+    assert _etat_courant("reauthentication_requested") is False
+
 
 def test_start_refuses_an_external_return_to(oidc_client) -> None:
     """Pas de redirection ouverte : seul un chemin interne est accepté."""
