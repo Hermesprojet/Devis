@@ -73,7 +73,8 @@ des quatre révisions de l'ensemble de la fusion n'y figure.
 
 **Deux ensembles, qu'il faut distinguer, sans quoi la suite de ce document se
 lit comme une contradiction.** L'**ensemble de la fusion** compte **quatre**
-révisions — `d8e9fa010203`, `e2f3a4b50607`, `d1e2f3a40506`, `f3a4b5c60708` —,
+révisions — `d8e9fa010203`, `e2f3a4b50607`, `a4b5c6d70809`, `d1e2f3a40506`,
+`f3a4b5c60708` —,
 réparties sur trois branches. La **branche de travail `claude/mesures-pdf`**,
 elle, n'en porte que **deux** : `d8e9fa010203`
 (`20261002_0007_citation_de_plan_et_etapes_de_plan.py`, désormais `…0007…`,
@@ -355,7 +356,7 @@ ordre, c'est relire un diff dont la moitié du contexte manque.
 | 3 | **#80** | `claude/image-qui-lit-les-plans` → `parcours-plan-essayable` | Les extras de l'image (`infra/api.Dockerfile`, `[postgres,plans,pdf]`). Le commentaire du fichier nomme le défaut qu'il ferme : sans eux l'image « démarre, répond à tous les contrôles de santé, affiche l'écran "Lire le plan" » et échoue à l'analyse. |
 | 4 | **#85** | `claude/lecteur-pdf` → `image-qui-lit-les-plans` | Lecture et aperçu PDF, sans mesure. Vérifier que rien n'y mesure encore. |
 | 5 | **#87** | `claude/cotes-dans-les-blocs` → `lecteur-pdf` | Blocs DXF imbriqués : le risque de relecture est le **double comptage**. |
-| 6 | **#89** | `claude/mesures-pdf` → `cotes-dans-les-blocs` | **Porte `e2f3a4b50607`**, la mesure et la tuile. 42 fichiers. Trois points ci-dessous. |
+| 6 | **#89** | `claude/mesures-pdf` → `cotes-dans-les-blocs` | **Porte `e2f3a4b50607`**, la mesure et la tuile. 42 fichiers. Trois points ci-dessous. Depuis les corrections du 7 octobre, la tranche porte en plus `a4b5c6d70809`, qui en devient la tête. |
 
 **Les trois points de la #89 :**
 
@@ -485,7 +486,7 @@ manquent.
 | 1 | fusionner **#77** | `c7d8e9fa0102` (inchangée) |
 | 2 | fusionner **#78** | `d8e9fa010203` |
 | 3 | fusionner **#80**, **#85**, **#87** | inchangée |
-| 4 | fusionner **#89** | `e2f3a4b50607` |
+| 4 | fusionner **#89** | `a4b5c6d70809` |
 | 5 | fusionner `main` dans `codex/login-account-choice`, puis dans `claude/codes-de-connexion` | — |
 | 6 | **déplacer** `apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py` de `claude/candidat-complet` vers `claude/codes-de-connexion`, et l'y committer | — |
 | 7 | fusionner **#73** | inchangée |
