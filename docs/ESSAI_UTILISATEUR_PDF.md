@@ -51,6 +51,24 @@ Ils sont **quatre**, et non deux. Lu dans `apps/api/src/metreo_api/security/role
 n'ont que `DOCUMENT_READ`, et `viewer` n'a même pas `DOCUMENT_WRITE` — il ne
 peut donc ni déposer, ni analyser, ni mesurer.
 
+### L'écran a changé le 7 octobre 2026 — ce qui suit en tient compte
+
+Trois défauts de l'écran ont été corrigés après les premières captures, et ce
+guide a été relu en conséquence. Si vous reconnaissez l'ancien écran, c'est que
+la version déployée est antérieure au candidat corrigé.
+
+| Avant | Maintenant |
+| --- | --- |
+| Un bandeau « **Aucune mesure n'est exploitable** » en tête de chaque plan PDF, au-dessus de l'écran de mesure | Le constat DXF ne s'affiche plus que pour un DXF. L'introduction du PDF dit le geste : vous déclarez l'échelle, puis vous POINTEZ |
+| Rien ne disait où l'on en était dans le parcours | Un **fil d'état en trois étapes** — déclarer l'échelle, pointer et mesurer, décider — avec l'étape en cours mise en avant |
+| « 4180.6822810844 mm » à côté de « ± 26.3682553403 mm » | « **6 006,3 mm** » et « **± 2,3 mm** » : virgule belge, et la précision s'arrête où commence l'incertitude |
+| « 16.2046806767 m2 » | « **24,060 m²** » |
+| Une seule colonne de valeur | **Deux** : « Mesure calculée » et « Valeur retenue », qui ne sont pas la même chose |
+| Rien ne disait si une mesure pouvait servir | Chaque ligne dit « **peut alimenter un bordereau** » ou « **n'alimentera aucun bordereau** » |
+| La valeur corrigée était du texte libre | Elle est **validée comme une quantité**, porte son unité, et un refus nommé explique la frappe rejetée |
+| L'aperçu, puis la loupe, puis les formulaires, puis les résultats, sur une colonne | **Deux colonnes** : le plan reste visible à gauche pendant qu'on agit à droite |
+| Impossible de vérifier ce qui avait été pointé | « **Voir le tracé** » affiche la ligne ET ses sommets, sur le plan et dans la loupe |
+
 ### Trois choses à savoir avant de cliquer
 
 **1. Un PDF ne porte aucune unité.** Ses coordonnées sont des points PostScript
@@ -81,9 +99,17 @@ La garde est dans la migration elle-même
 et elle est voulue : « Les retirer ferait disparaître des mesures de plan, et
 les décisions humaines qui s'y rattachent. »
 
-**Conséquence pratique : dès la première mesure enregistrée, la seule sortie est
-la restauration de la sauvegarde prise avant le déploiement.** Prenez-la avant
-de commencer l'essai.
+**Conséquence pratique : dès la première mesure enregistrée, la descente du
+schéma est fermée.** Prenez la sauvegarde avant de commencer l'essai.
+
+**Mais ce n'est plus la seule sortie**, et c'est la bonne nouvelle de la
+vérification du 7 octobre. `scripts/epreuve_retour_arriere.py` fait tourner
+l'API d'avant la lecture de plans sur le schéma neuf, sans migration :
+**seize parcours métier sur dix-neuf fonctionnent**, la chaîne d'audit écrite
+par la version neuve reste valide, et **les mesures de votre essai restent en
+base, intactes**. Vous perdez l'écran de lecture de plans, et rien d'autre.
+Le détail est dans `docs/MISE_EN_LIGNE_LECTURE_DE_PLANS.md`, section « Ce que
+l'ancienne API fait VRAIMENT sur le schéma neuf ».
 
 Et le retour arrière par image ne remet pas l'API en service : éprouvé, une base
 migrée en `f3a4b5c60708` puis `alembic upgrade head` depuis l'arbre de `main`
@@ -272,11 +298,17 @@ exportez-le en DXF ou en PDF. » (`i18n.ts:211-216`)
 Un encadré « Lecture du plan en cours. Comptez une dizaine de secondes ; ne
 rechargez pas la page. » Puis une carte titrée « **Plan PDF** », avec :
 
-- un en-tête de trois informations : « **Pages** », « **Textes lus** » (un
-  nombre, ou « aucun — plan probablement scanné ») et « **Échelle déclarée** »
-  (`LecturePdf.tsx:441-467`) ;
+- un en-tête de trois informations : « **Pages** », « **Textes lus** » et
+  « **Échelle déclarée** » (`EnTetePdf`). « Textes lus » affiche le COMPTE ; si
+  ce compte est trop bas pour une extraction fiable, la réserve « plan
+  probablement scanné » est posée **à côté** du nombre, et non à sa place —
+  l'en-tête affichait « aucun » pendant que le bas de l'écran en comptait
+  quatre ;
 - sous « Échelle déclarée », un badge **ambre** : « **aucune : rien ne peut être
   mesuré** » — **c'est normal à ce stade** ;
+- **le fil d'état**, juste en dessous : « Déclarer l'échelle » est l'étape en
+  cours, mise en avant, avec ce qu'elle attend. Les deux suivantes — « Pointer
+  et mesurer », « Décider » — sont en attente ;
 - l'**aperçu de la page** ;
 - des rectangles de surlignage sur les textes lus ; au survol, le texte lu
   s'affiche en infobulle, parce que chaque rectangle porte un `<title>`
@@ -292,10 +324,10 @@ rechargez pas la page. » Puis une carte titrée « **Plan PDF** », avec :
 | « Ce plan dépasse 12 Mio, la limite de l'analyse immédiate. Il reste lisible hors ligne, par le traitement déporté. » | Fichier entre 12 et 25 Mio (`routers/documents.py:486-498`) |
 | « Seuls un plan DXF et un PDF sont lus aujourd'hui. Le fichier reste déposé et téléchargeable. » | Le fichier n'est ni DXF ni PDF (`lecture_de_plan.py:163-168`) |
 | « Lancer la lecture d'un plan demande le droit de déposer un document. » | Le bouton est **masqué** et remplacé par cette phrase (`LecturePlan.tsx:295-297`, texte à `i18n.ts:244-245`) |
-| « Ce plan avait déjà été lu. Le constat ci-dessous est celui de cette lecture ; rien n'a été relu. » | **Ce n'est pas une erreur** (`LecturePlan.tsx:268-272`) |
+| « Ce plan avait déjà été lu. Le constat ci-dessous est celui de cette lecture ; rien n'a été relu. » | **Ce n'est pas une erreur** (`LecturePlan`, bloc `dejaAnalyse`) |
 | « Cette page n'a pas d'aperçu. Le fichier reste déposé et téléchargeable. » | Seules les **10 premières pages** reçoivent un aperçu (`lecture_de_plan.py:99`). **Sans aperçu, cette page ne peut pas être mesurée** : il n'y a rien où placer la loupe |
 | « Les N premières pages sur M ont un aperçu. Les suivantes sont déposées et téléchargeables, mais elles ne s'affichent pas dans Metreo. » | Même cause, signalée dans les anomalies (`lecture_de_plan.py:635-647`) |
-| « Textes lus : aucun — plan probablement scanné » | **Ce n'est pas un échec** : la mesure géométrique reste possible, seuls les textes manquent |
+| « trop peu pour une extraction fiable — plan probablement scanné » | **Ce n'est pas un échec** : la mesure géométrique reste possible, seuls les textes manquent |
 
 ### Ce qu'il faut relever
 
@@ -634,41 +666,72 @@ l'incertitude du facteur. Une calibration qui donne 1 % sur une longueur donne
 
 ---
 
-## Étape 7 — Décider : confirmer ou corriger
+## Étape 7 — Décider : confirmer, corriger ou rejeter
 
 ### Le geste
 
-Sur la ligne de la mesure, dans la colonne « **Actions** », cinq commandes se
-suivent dans cet ordre (`LecturePdf.tsx:846-882`) :
+Sur la ligne de la mesure, dans la colonne « **Actions** », les commandes se
+suivent dans cet ordre (`LigneDeMesurePdf`) :
 
-1. Le bouton « **Montrer sur le plan** » — il ramène la page et la loupe sur
-   l'endroit mesuré (`LecturePdf.tsx:406-418`).
+1. « **Voir le tracé** » — il ramène la page et la loupe sur l'endroit mesuré,
+   **et dessine la mesure avec ses sommets** sur le plan comme dans la loupe.
+   Le bouton devient « Tracé affiché sur le plan » tant que c'est cette mesure
+   qu'on regarde. **Faites-le avant de décider** : un trait seul ne dit pas si
+   l'extrémité est posée sur l'angle du mur ou à trois pixels de lui.
 2. Le champ « **Motif** ».
-3. Le bouton « **Confirmer** » — grisé tant que le Motif est vide
-   (`LecturePdf.tsx:861`).
-4. Le champ « **Valeur retenue** ».
-5. Le bouton « **Corriger** » — grisé tant que le Motif **ou** la Valeur retenue
-   est vide (`LecturePdf.tsx:877`).
+3. « **Confirmer** » — grisé tant que le Motif est vide.
+4. Le champ « **Valeur retenue** », suivi de **l'unité de la mesure**, affichée
+   et non saisissable : on corrige un nombre, pas une dimension.
+5. « **Corriger** » — grisé tant que le Motif **ou** la Valeur retenue est vide.
+6. « **Rejeter** » — grisé tant que le Motif est vide. Il n'attend aucune
+   valeur : vous écartez la mesure sans avoir à inventer celle que vous ne
+   connaissez pas.
 
-Pour l'essai : remplir « **Motif** », puis « **Valeur retenue** », puis cliquer
-« **Corriger** ».
+Pour l'essai : faites les trois, sur trois mesures différentes.
 
 > **Une décision sans raison n'est pas enregistrable** : le motif est exigé des
 > deux côtés, par l'écran (boutons grisés) et par le serveur, qui refuse un
 > motif vide ou fait d'espaces, et le plafonne à 2 000 caractères
-> (`schemas.py:1138`).
+> (`ValidationDecisionCreate`).
+
+> **Si vous n'avez pas le droit de trancher**, les trois commandes sont
+> **masquées** — non grisées — et remplacées par la phrase qui dit ce qui
+> manque. Quatre rôles portent `document:validate` : `org_admin`,
+> `estimating_manager`, `estimator`, `project_manager`.
 
 ### Le résultat attendu
 
-- la colonne « **Décision** » affiche « **corrigée** » (`i18n.ts:341`) ;
-- la colonne « **Valeur** » affiche **toujours la valeur mesurée par Metreo**,
-  et **en dessous** un badge « **corrigée en ‹votre valeur›** »
-  (`LecturePdf.tsx:813-820`).
+La ligne porte **deux colonnes de nombres**, et c'est tout le propos :
+
+- « **Mesure calculée** » garde la valeur de Metreo, son incertitude, et la
+  mention « calculée par Metreo ». **Elle n'est jamais réécrite** ;
+- « **Valeur retenue** » porte ce que vous avez décidé : votre valeur si vous
+  avez corrigé, la mesure si vous avez confirmé, et « **rien à retenir** » si
+  vous avez rejeté ;
+- sous elle, **« peut alimenter un bordereau »** ou **« n'alimentera aucun
+  bordereau »**. Une mesure rejetée, et une mesure sur laquelle personne n'a
+  tranché, ne peuvent jamais alimenter un métré ;
+- la colonne « **Décision** » affiche « confirmée », « corrigée » ou
+  « rejetée », **et le motif juste en dessous** — dans six mois, « 3,80 m » ne
+  vaut que si l'on sait d'où ce nombre vient.
 
 **Les deux valeurs restent visibles côte à côte.** La proposition de la machine
-n'est jamais réécrite : c'est ce que le parcours automatisé vérifie en dernier
-(`suite-plan-pdf-mesures.spec.ts:221-228`), et c'est ce qui rend le dossier
-auditable.
+n'est jamais réécrite : c'est ce que le parcours automatisé vérifie en dernier,
+et c'est ce qui rend le dossier auditable.
+
+### Si votre correction est refusée
+
+Une valeur retenue doit être une **quantité**. Sept frappes plausibles sont
+refusées, chacune avec sa phrase :
+
+| Ce que vous tapez | Code du refus |
+| --- | --- |
+| « trois mille huit cents », « 3,8 m environ » | `valeur_retenue_non_numerique` |
+| rien, ou que des espaces | `valeur_retenue_absente` |
+| « 0 », « -120 » | `valeur_retenue_non_positive` — pour écarter une mesure, utilisez « Rejeter » |
+| une unité différente de celle de la mesure | `unite_retenue_differente` |
+
+**La virgule belge est acceptée** : « 3800,5 » passe, et part en base normalisé.
 
 ### Ce qui peut mal tourner
 
