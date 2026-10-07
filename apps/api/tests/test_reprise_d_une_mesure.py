@@ -736,6 +736,99 @@ def test_l_apercu_annonce_EXACTEMENT_le_nombre_que_la_ligne_portera(
     assert relue["quantity_lisible"] == annonce["quantite_lisible"]
 
 
+def test_une_quantite_a_dix_decimales_s_ecrit_pareil_de_l_apercu_au_pdf(
+    seeded_client: TestClient, chantier
+) -> None:
+    """Le cas trouvé sur un plan réel, figé : une écriture, quatre surfaces.
+
+    **Le défaut.** Une surface de balcon mesurée sur un plan d'exécution, puis
+    reprise, valait 6,3787950927 m². L'aperçu et le bordereau l'écrivaient
+    « 6,378795 », plafonnés à six décimales ; l'étude et le PDF du devis
+    l'écrivaient « 6,3787950927 ». La valeur était la même partout — le moteur
+    multiplie la quantité stockée —, mais l'aperçu annonçait un nombre que la
+    ligne ne portait pas, et le client lisait autre chose que l'écran.
+
+    **Ce que ce test n'exige pas** : que la quantité soit arrondie. Arrondir
+    une quantité reprise est une décision de chiffrage, ouverte dans
+    `docs/ARRONDI_DES_DOCUMENTS.md`. Il exige seulement que le nombre, quel
+    qu'il soit, s'écrive de la même façon partout où il passe.
+
+    La cote est corrigée en millimètres pour que la conversion en mètres porte
+    exactement dix décimales significatives.
+    """
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(
+        seeded_client,
+        entetes,
+        chantier["project_id"],
+        decision="corrected",
+        corrigee="6378.7950927",
+    )
+    ecriture = "6,3787950927"
+
+    annonce = _apercu(
+        seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], unite_cible="m"
+    ).json()
+    assert annonce["quantite_lisible"] == f"{ecriture} m"
+
+    prix = seeded_client.post(
+        f"/api/v1/price-books/versions/{chantier['price_book_version_id']}/items",
+        headers=entetes,
+        json={
+            "code": "DIX-DEC",
+            "label": "Poste au mètre",
+            "unit_code": "m",
+            "unit_price": "10.00",
+            "resource_kind": "subcontract",
+        },
+    )
+    assert prix.status_code == 201, prix.text
+    ligne = _reprendre(
+        seeded_client,
+        entetes,
+        chantier["boq_id"],
+        mesure["proposal_id"],
+        unite_cible="m",
+        position="70.20",
+        designation="Dix décimales, une seule écriture",
+    ).json()
+    assert ligne["quantity_lisible"] == f"{ecriture} m"
+    assert (
+        seeded_client.patch(
+            f"/api/v1/boq-items/{ligne['id']}",
+            headers=entetes,
+            json={"price_item_id": prix.json()["id"]},
+        ).status_code
+        == 200
+    )
+
+    estimation = seeded_client.get(
+        f"/api/v1/estimates/{chantier['estimate_id']}", headers=entetes
+    ).json()
+    version = seeded_client.get(
+        f"/api/v1/estimates/{chantier['estimate_id']}/versions", headers=entetes
+    ).json()[0]
+    calcul = seeded_client.get(
+        f"/api/v1/estimates/{chantier['estimate_id']}/versions/{version['id']}/computation",
+        headers=entetes,
+    ).json()
+    poste = next(p for p in calcul["result"]["lines"] if p["line_id"] == ligne["id"])
+    # L'étude écrit le texte du moteur, transcrit : c'est la même écriture.
+    assert lisible.nombre_francais_tel_quel(str(poste["quantity"])) == ecriture
+
+    emission.prix_manquant(seeded_client, entetes, estimation)
+    fiche = emission.fiche(seeded_client, entetes)
+    emission.rattacher(seeded_client, entetes, estimation["project_id"], fiche["id"])
+    emission.geler(seeded_client, entetes, estimation, version)
+    devis = emission.emettre(seeded_client, entetes, estimation, version)
+    assert devis.status_code == 201, devis.text
+    fichier = seeded_client.get(
+        f"/api/v1/issued-quotes/{devis.json()['id']}/document.pdf", headers=entetes
+    )
+    assert fichier.status_code == 200, fichier.text
+    assert ecriture in moteur_pdf.extraire_le_texte(fichier.content)
+
+
 def test_l_apercu_dit_d_ou_vient_le_nombre(seeded_client: TestClient, chantier) -> None:
     """Sans la provenance, « 3,80 m » est un nombre sans auteur."""
     entetes = chantier["entetes"]

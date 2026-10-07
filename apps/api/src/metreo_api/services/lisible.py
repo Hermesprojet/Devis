@@ -28,6 +28,8 @@ from __future__ import annotations
 import math
 from decimal import ROUND_HALF_UP, Decimal
 
+from metreo_domain.money import canonical_text
+
 #: Les codes d'unité dont l'écriture usuelle n'est pas le code.
 #:
 #: `units.py` connaît `m2` parce qu'un code d'unité doit rester tapable au
@@ -145,14 +147,6 @@ def nombre_francais_court(valeur: Decimal, decimales: int) -> str:
     return rendu.rstrip("0").rstrip(",")
 
 
-#: Le minimum de décimales d'un nombre de DOCUMENT.
-#:
-#: Deux, comme un montant. Un bordereau qui écrirait « 6 » là où la ligne
-#: porte 6,02 mentirait par omission ; un bordereau qui écrit « 1 250,50 » là
-#: où la ligne porte 1250,5 ne ment pas, il aligne.
-DECIMALES_DE_DOCUMENT = 2
-
-
 def nombre_francais_tel_quel(texte: str) -> str:
     """Un nombre **déjà décidé** par le moteur, réécrit à la belge sans y toucher.
 
@@ -200,43 +194,38 @@ def nombre_francais_tel_quel(texte: str) -> str:
     return f"{signe}{entiere},{fraction}" if fraction else f"{signe}{entiere}"
 
 
-def decimales_de_document(valeur: Decimal) -> int:
-    """Combien de décimales écrire pour une valeur de document.
-
-    Celles que la valeur porte réellement, avec un plancher à deux et le même
-    plafond que partout ailleurs. **Aucun arrondi n'est décidé ici** : une
-    valeur à trois décimales en garde trois, parce que les lui retirer
-    changerait le nombre.
-
-    >>> decimales_de_document(Decimal("6.0200000000"))
-    2
-    >>> decimales_de_document(Decimal("1250.5"))
-    2
-    >>> decimales_de_document(Decimal("0.125"))
-    3
-    """
-    exposant = valeur.normalize().as_tuple().exponent
-    portees = -int(exposant) if isinstance(exposant, int) and exposant < 0 else 0
-    return max(DECIMALES_DE_DOCUMENT, min(DECIMALES_MAXIMALES, portees))
-
-
 def quantite_de_document_lisible(valeur: Decimal, unite: str) -> str:
-    """La quantité d'une ligne de bordereau, écrite pour être lue.
+    """La quantité d'une ligne de bordereau, écrite comme le devis l'écrira.
 
     **Pourquoi ce n'est pas `quantite_lisible`.** Celle-ci sert le monde de la
     MESURE : son nombre de décimales vient de l'incertitude, et « 6,0200 m »
     dit jusqu'où la cote est connue. Une ligne de bordereau vit dans l'autre
     monde, celui du DOCUMENT : son nombre sera multiplié par un prix unitaire
-    et imprimé sur un devis, et il doit s'y écrire comme le devis l'écrira.
+    et imprimé sur un devis.
 
-    Les deux mondes se touchent à un seul endroit — l'aperçu d'une reprise,
-    qui annonce ce qu'une ligne portera. C'est pourquoi cet aperçu emploie
-    CETTE fonction-ci : montrer « 6,0200 m » puis écrire « 6,02 m » serait
-    annoncer autre chose que ce qu'on fait.
+    **La règle : le nombre canonique du moteur, transcrit, sans rien y ajouter
+    ni rien en retirer.** C'est exactement ce que l'étude de prix affiche et
+    ce que le PDF imprime, parce que les deux reçoivent ce même texte du
+    moteur (`canonical_text`). Une quantité s'écrit donc de la même façon sur
+    les quatre surfaces où elle passe : l'aperçu d'une reprise, le bordereau,
+    l'étude et le devis.
+
+    **Le défaut que cette règle ferme a été trouvé sur un plan réel.** Cette
+    fonction plafonnait à six décimales et complétait à deux. Une surface
+    mesurée sur un balcon, reprise au bordereau, s'écrivait « 6,378795 m² »
+    dans l'aperçu et au bordereau, et « 6,3787950927 » dans l'étude et sur le
+    PDF remis au client : la même valeur, deux écritures, et un aperçu qui
+    annonçait un nombre que la ligne ne portait pas. Arrondir cette quantité
+    est une décision de chiffrage, ouverte dans `docs/ARRONDI_DES_DOCUMENTS.md` ;
+    l'écrire de deux façons n'en était pas une.
 
     >>> quantite_de_document_lisible(Decimal("6.0200000000"), "m")
     '6,02 m'
-    >>> quantite_de_document_lisible(Decimal("23.9970000000"), "m2")
-    '23,997 m²'
+    >>> quantite_de_document_lisible(Decimal("1250.5"), "m3")
+    '1\u202f250,5 m³'
+    >>> quantite_de_document_lisible(Decimal("6.3787950927"), "m2")
+    '6,3787950927 m²'
+    >>> quantite_de_document_lisible(Decimal("120.0000000000"), "t")
+    '120 t'
     """
-    return f"{nombre_francais(valeur, decimales_de_document(valeur))} {unite_affichee(unite)}"
+    return f"{nombre_francais_tel_quel(canonical_text(valeur))} {unite_affichee(unite)}"

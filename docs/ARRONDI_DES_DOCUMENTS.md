@@ -274,8 +274,10 @@ diverger. Ce qui reste rendu par le serveur est tout ce qui se DÉCIDE :
 
 - le nombre de décimales d'une **mesure**, qui vient de son incertitude
   (`quantite_lisible`, `incertitude_lisible`) ;
-- le nombre de décimales d'une **quantité de bordereau**, qui a un plancher à
-  deux (`quantite_de_document_lisible`, champ `quantity_lisible`) ;
+- l'écriture d'une **quantité de bordereau** (`quantite_de_document_lisible`,
+  champ `quantity_lisible`) : le nombre canonique du moteur, transcrit, sans
+  zéro ajouté ni décimale retirée — c'est celui que l'étude affiche et que le
+  PDF imprime ;
 - le symbole d'une **unité** : « m² » là où le code dit « m2 ».
 
 ## Les deux mondes, et le seul endroit où ils se touchent
@@ -327,37 +329,51 @@ chaînes, et l'API les rend telles quelles.
 ## Ce qui reste ouvert, et qui est une décision de chiffrage
 
 **Une quantité reprise d'un plan porte dix décimales.** La mesure est quantisée
-à dix décimales à son calcul, la conversion de millimètres en mètres en produit
-autant, et la colonne `boq_items.quantity` les conserve. Pour une cote ronde —
-6 020 mm corrigée à la main — cela ne se voit pas : 6,02 m s'écrit avec deux
-décimales. Pour une cote **mesurée**, qui ne tombe jamais juste, cela se voit :
+à dix décimales à son calcul, la conversion d'unité en produit autant, et la
+colonne `boq_items.quantity` les conserve. Pour une cote ronde — 6 020 mm
+corrigée à la main — cela ne se voit pas. Pour une cote **mesurée**, qui ne
+tombe jamais juste, cela se voit.
 
-| Où | Ce qui s'affiche pour 4,180 682 281 1 m |
-| --- | --- |
-| La ligne du bordereau, à l'écran | `4,180682 m` — l'affichage plafonne à six décimales |
-| Le PDF du devis | `4,1806822811` — le moteur rend la valeur entière |
+**L'essai sur un plan réel l'a montré, et c'était le moment prévu pour le
+voir.** Sur le plan d'étage d'un immeuble, au 1/50, la dalle d'un balcon,
+pointée à ses quatre coins puis confirmée, a donné une ligne de bordereau de
+6,3787950927 m². Ce que chaque surface en écrivait :
 
-**Les deux nombres sont la même valeur**, et le total de la ligne est le même :
-le moteur multiplie la quantité stockée, jamais celle qui s'affiche. Mais le
-document et l'écran ne s'écrivent pas pareil, et c'est le défaut que cette passe
-avait pour objet de fermer.
+| Où | Avant la correction | Après |
+| --- | --- | --- |
+| La mesure, à l'écran de lecture | `6,379 m²` — décimales tirées du ± 0,041 m² | inchangé : c'est le monde de la mesure |
+| L'aperçu de la reprise, « quantité qui sera écrite » | `6,378795 m²` — plafonné à six décimales | `6,3787950927 m²` |
+| La ligne du bordereau | `6,378795 m²` | `6,3787950927 m²` |
+| L'étude de prix | `6,3787950927` | inchangé |
+| Le PDF remis au client | `6,3787950927` | inchangé |
 
-Trois sorties possibles, et **aucune n'est de la présentation** :
+**Ce qui a été corrigé, et ce qui ne l'a pas été.** L'aperçu annonçait un
+nombre que la ligne ne portait pas, et l'écran disait autre chose que le
+document. Ce n'était pas une question d'arrondi : l'écriture du bordereau
+plafonnait à six décimales et complétait à deux, quand l'étude et le PDF
+transcrivent le texte du moteur. Les quatre surfaces du document écrivent
+désormais le même texte — `test_une_quantite_a_dix_decimales_s_ecrit_pareil_de_l_apercu_au_pdf`.
+**Aucune valeur n'a changé** : ni la quantité stockée, ni le montant, ni
+l'empreinte d'un devis gelé.
+
+**La décision, elle, reste à prendre, et elle est maintenant visible avant
+l'émission** : un devis qui imprime « 6,3787950927 m2 » n'est pas présentable.
+Trois sorties, et aucune n'est de la présentation :
 
 1. **Quantiser la quantité au moment de la reprise**, à la précision que son
-   incertitude justifie — 4 180,68 mm ± 26 mm donne 4,18 m, et pas un chiffre
-   de plus. C'est la règle que `lisible.decimales_utiles` applique déjà à
-   l'affichage d'une mesure, portée à la valeur stockée. Défendable — *une
-   quantité n'est jamais connue mieux que son incertitude* — mais c'est une
-   décision de chiffrage : elle change le nombre qui chiffre le devis.
+   incertitude justifie — c'est-à-dire au nombre que la personne a vu et
+   confirmé : 6,379 m² ± 0,041. C'est la règle que `lisible.decimales_utiles`
+   applique déjà à l'affichage d'une mesure, portée à la valeur reprise.
+   Défendable — *une quantité n'est jamais connue mieux que son incertitude*,
+   et la provenance dit déjà « confirmée : 6,379 m² » — mais elle change le
+   nombre qui chiffre le devis.
 2. **Arrondir à l'impression**, comme on arrondit un montant. Il faudrait alors
    vérifier que le document s'additionne toujours de tête, ce qui est la raison
    d'être de tout ce qui précède.
-3. **Ne rien changer**, et afficher les dix décimales partout. Honnête, et
-   illisible : c'est le défaut A2 que la revue a fait corriger.
+3. **Laisser la personne trancher**, ce que le produit permet déjà sans
+   règle nouvelle : au lieu de *Confirmer*, *Corriger* la mesure en saisissant
+   la valeur retenue — 6,38 — avec son motif. La ligne porte alors ce nombre,
+   et le devis l'imprime tel quel.
 
-**Rien n'a été tranché ici.** Le plafond d'affichage à six décimales reste, et
-le PDF continue de porter la valeur entière. Le jour où un essai sur des plans
-réels produira une ligne de bordereau à six décimales significatives, la
-question se posera d'elle-même — et c'est le bon moment pour la trancher, avec
-un vrai métré sous les yeux.
+La troisième marche aujourd'hui, à la main, mesure par mesure. Les deux
+premières sont des règles, et une règle de chiffrage appartient à l'entreprise.
