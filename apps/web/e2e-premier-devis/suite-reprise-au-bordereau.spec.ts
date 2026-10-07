@@ -54,6 +54,21 @@ const PRIX = { code: 'ML-MUR', label: 'Mur au mètre linéaire', unite: 'm', uni
  */
 const QUANTITE_ATTENDUE = '6,02'
 
+/**
+ * La même quantité, telle que le PDF du devis l'écrit.
+ *
+ * **Avec un POINT**, et c'est un constat, pas un choix de ce scénario : le
+ * devis imprime « 6.02 », « 25.00 » et « 150.50 EUR ». L'écran, lui, écrit en
+ * français — « 6,02 m ». Les deux écritures coexistent dans le produit livré,
+ * et le parcours principal l'assertait déjà ainsi (`MONTANTS.totalHT` y vaut
+ * `'23080.10'`).
+ *
+ * Ce test ne tranche pas la question : il constate ce qui est imprimé. La
+ * trancher reviendrait à changer le document remis au client, et c'est une
+ * décision qui ne se prend pas dans un fichier de test.
+ */
+const QUANTITE_DANS_LE_PDF = '6.02'
+
 async function octets(telechargement: Download): Promise<Buffer> {
   const chemin = await telechargement.path()
   expect(chemin, 'le téléchargement doit avoir abouti sur un fichier').toBeTruthy()
@@ -271,7 +286,7 @@ test('une mesure corrigée sur un plan devient une ligne de bordereau, puis un m
   const pdf = await telechargerLeDevis(page)
   expect(pdf.subarray(0, 5).toString('latin1'), 'un PDF commence par %PDF-').toBe('%PDF-')
   const texte = texteDuPdf(pdf)
-  for (const attendu of [POSTE, DESIGNATION, QUANTITE_ATTENDUE]) {
+  for (const attendu of [POSTE, DESIGNATION, QUANTITE_DANS_LE_PDF, PRIX.unite]) {
     expect(texte, `le PDF doit imprimer « ${attendu} »`).toContain(attendu)
   }
   // La provenance, elle, n'y est PAS : un client n'a pas à lire nos décisions
