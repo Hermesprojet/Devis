@@ -154,9 +154,19 @@ jobs:
         # une table que `main` n'a pas — ou si un `down_revision` cite un
         # maillon au lieu d'une tête, ce qui laisse la base à deux têtes sans
         # que rien d'autre ne le voie.
+        #
+        # `--avec-donnees` écrit d'abord un chantier complet AVEC LE CODE DE
+        # `main` — organisation, administrateur, client, projet, bordereau,
+        # bibliothèque de prix et devis GELÉ — puis vérifie après la montée que
+        # rien n'a bougé, que le devis gelé rend le même total et la même
+        # empreinte sous le moteur du candidat, et que la chaîne d'audit se
+        # relit ET se continue. Sans données, aucune des quatre façons dont une
+        # migration perd quelque chose ne peut se manifester : une base vide ne
+        # perd rien.
         run: |
           python scripts/epreuve_montee_depuis_preproduction.py \
             --depuis origin/main \
+            --avec-donnees \
             --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
       - name: Aller-retour des migrations, dans une base créée par ce run
         # Le service PostgreSQL est éphémère — il meurt avec le job — mais

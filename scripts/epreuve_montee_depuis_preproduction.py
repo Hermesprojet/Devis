@@ -50,6 +50,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
+
+import jeu_d_essai_de_montee
 
 RACINE = Path(__file__).resolve().parents[1]
 API = RACINE / "apps" / "api"
@@ -117,6 +120,11 @@ def _revisions_appliquees(sortie: str) -> list[str]:
     return appliquees
 
 
+def _lignes(releve: dict[str, Any]) -> int:
+    """Combien de lignes métier porte un relevé, toutes tables confondues."""
+    return sum(len(v) for v in releve.values() if isinstance(v, list))
+
+
 def _arbre_de(revision: str, dossier: Path) -> None:
     subprocess.run(
         ["git", "worktree", "add", "--quiet", "--detach", str(dossier), revision],
@@ -153,7 +161,50 @@ def _detruire_la_base(admin_url: str, nom: str) -> None:
     moteur.dispose()
 
 
-def epreuve(depuis: str, admin_url: str | None) -> int:
+def _jeu_d_essai(
+    arbre: Path, geste: str, url: str, *options: str
+) -> subprocess.CompletedProcess[str]:
+    """Un geste du jeu d'essai, joué avec les fichiers d'UN arbre donné.
+
+    L'arbre décide tout : `creer` lancé sur l'arbre de la préproduction écrit
+    avec l'ANCIEN code — c'est ce qui fait de ces données des données
+    existantes, et non des données que le candidat vient de poser. `verifier`
+    lancé sur l'arbre courant relit avec le NEUF.
+
+    Le SCRIPT, lui, reste celui de l'arbre courant : c'est un outil, pas une
+    donnée. S'il appelait un jour une API que la préproduction n'a pas, il
+    échouerait bruyamment ici — ce qui est le bon endroit pour l'apprendre.
+    """
+    environnement = {
+        **os.environ,
+        **ENVIRONNEMENT,
+        "PYTHONPATH": os.pathsep.join(
+            str(arbre / chemin)
+            for chemin in (
+                "apps/api/src",
+                "packages/domain/src",
+                "packages/contracts/src",
+            )
+        ),
+    }
+    return subprocess.run(
+        [
+            sys.executable,
+            str(RACINE / "scripts" / "jeu_d_essai_de_montee.py"),
+            geste,
+            "--url",
+            url,
+            *options,
+        ],
+        cwd=RACINE,
+        env=environnement,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def epreuve(depuis: str, admin_url: str | None, avec_donnees: bool = False) -> int:
     brouillon = Path(tempfile.mkdtemp(prefix="metreo-montee-"))
     arbre_ancien = brouillon / "preproduction"
     base_postgres: str | None = None
@@ -182,6 +233,21 @@ def epreuve(depuis: str, admin_url: str | None) -> int:
         depart = depart.splitlines()[-1].split()[0] if depart else ""
         print(f"schéma en service : {depart}")
 
+        # 1 bis. Un chantier complet, écrit par l'ANCIEN code sur ce schéma.
+        #
+        # Sans lui, la montée se joue sur une base vide, et une base vide ne
+        # perd rien. Les quatre accidents qui coûtent cher — une colonne
+        # retypée qui tronque, une contrainte qui vide une clé étrangère, un
+        # `server_default` qui réécrit une ligne, un déclencheur qui refuse une
+        # écriture ultérieure — sont tous invisibles tant qu'il n'y a rien à
+        # abîmer.
+        avant: dict[str, Any] | None = None
+        if avec_donnees:
+            creation = _jeu_d_essai(arbre_ancien, "creer", url)
+            print(_exiger(creation, "création du jeu d'essai sous l'ancienne version"))
+            avant = jeu_d_essai_de_montee.relever(url)
+            print(f"jeu d'essai relevé avant la montée : {_lignes(avant)} ligne(s)")
+
         # 2. La montée du candidat, sur CETTE base.
         montee = _alembic(RACINE, "upgrade", "head", url=url)
         sortie = _exiger(montee, "montée du candidat")
@@ -207,6 +273,26 @@ def epreuve(depuis: str, admin_url: str | None) -> int:
 
         print(f"tête unique : {tetes[0]}")
         print(f"montée valide : {depart} → {arrivee}, {len(appliquees)} révision(s).")
+
+        # 4. Ce que les données sont devenues.
+        if avec_donnees and avant is not None:
+            apres = jeu_d_essai_de_montee.relever(url)
+            ecarts = jeu_d_essai_de_montee.comparer(avant, apres)
+            if ecarts:
+                print(
+                    f"ÉCHEC — la montée a changé {len(ecarts)} valeur(s) métier :",
+                    file=sys.stderr,
+                )
+                for ecart in ecarts:
+                    print(f"  · {ecart}", file=sys.stderr)
+                return 1
+            print(f"données conservées : {_lignes(apres)} ligne(s), aucune différence")
+
+            verification = _jeu_d_essai(RACINE, "verifier", url)
+            print(verification.stdout.rstrip())
+            if verification.returncode != 0:
+                print(verification.stderr, file=sys.stderr)
+                return 1
         return 0
     finally:
         subprocess.run(
@@ -233,8 +319,16 @@ def main() -> int:
         default=None,
         help="une URL PostgreSQL d'administration ; sans elle, l'épreuve se joue sur SQLite",
     )
+    analyseur.add_argument(
+        "--avec-donnees",
+        action="store_true",
+        help=(
+            "écrire un chantier complet sous l'ancienne version avant de monter, "
+            "et vérifier après ce qu'il est devenu"
+        ),
+    )
     arguments = analyseur.parse_args()
-    return epreuve(arguments.depuis, arguments.admin_url)
+    return epreuve(arguments.depuis, arguments.admin_url, arguments.avec_donnees)
 
 
 if __name__ == "__main__":
