@@ -12,7 +12,7 @@ dans `docs/MISE_EN_LIGNE_LECTURE_DE_PLANS.md` (procédure complète),
 | | |
 | --- | --- |
 | **Version de référence**, pour comparer | `daeb7f0d7c2a12d47e1b941c0d79932a1e20d464` — branche `claude/candidat-complet` (#90, **brouillon**). Inchangée |
-| **Candidat corrigé**, à déployer | branche `claude/candidat-corrige`, SHA `@@SHA@@` |
+| **Candidat corrigé**, à déployer | branche `claude/candidat-corrige`. Son SHA se lit par `git rev-parse origin/claude/candidat-corrige` — il n'est pas recopié ici, parce qu'un SHA écrit dans le commit qu'il désigne est impossible, et qu'un SHA recopié à la main se périme en silence |
 | **Les corrections seules** | branche `claude/corrections-du-candidat` |
 | **Ce qui sera réellement déployé** | `main`, **après** les onze fusions — pas une branche de candidat |
 
