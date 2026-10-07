@@ -1,7 +1,7 @@
 """Les deux tranches se rejoignent : une seule tête, et rien d'autre.
 
 Revision ID: f3a4b5c60708
-Revises: ('d1e2f3a40506', 'e2f3a4b50607')
+Revises: ('d1e2f3a40506', 'a4b5c6d70809')
 Create Date: 2026-10-06
 
 **Pourquoi cette migration existe, et pourquoi elle est vide.**
@@ -42,7 +42,15 @@ from __future__ import annotations
 revision = "f3a4b5c60708"
 #: Un TUPLE, et c'est toute la migration : il dit à Alembic que ces deux
 #: révisions se rejoignent ici, et que la suite de l'arbre part d'un seul point.
-down_revision = ("d1e2f3a40506", "e2f3a4b50607")
+#:
+#: **Le second parent a changé le 7 octobre 2026**, et il devait changer. La
+#: tranche des plans a reçu une révision de plus — `a4b5c6d70809`, qui ouvre à
+#: une purge autorisée la suppression d'une révision publiée. Elle descend de
+#: `e2f3a4b50607`, qui a donc cessé d'être une tête. Continuer à citer
+#: `e2f3a4b50607` ici aurait laissé `a4b5c6d70809` à part, et la base serait
+#: repartie à deux têtes — exactement ce que cette migration existe pour
+#: empêcher. On cite donc la tête de la tranche, pas un de ses maillons.
+down_revision = ("d1e2f3a40506", "a4b5c6d70809")
 branch_labels = None
 depends_on = None
 
