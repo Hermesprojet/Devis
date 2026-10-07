@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN } from './banc'
-import { seConnecter } from './parcours'
+import { enBelge, seConnecter } from './parcours'
 
 /**
  * Déposer un plan DXF, le voir, et trancher sur une mesure proposée.
@@ -158,7 +158,8 @@ test('un plan DXF déposé s’affiche, propose ses mesures, et une valeur corri
     .first()
   await expect(decidee).toBeVisible({ timeout: DELAI_ANALYSE })
   await expect(decidee.getByTestId('plan-valeur-proposee')).toHaveText(proposee)
-  await expect(decidee.getByTestId('plan-valeur-retenue')).toContainText('5250')
+  // Écrite à la belge, comme la valeur proposée : « 5 250,5 », jamais « 5250.5 ».
+  await expect(decidee.getByTestId('plan-valeur-retenue')).toContainText(enBelge('5250.5'))
   await expect(decidee.getByTestId('plan-badge-decision')).toHaveText('corrigée')
 
   // ---- 11. la mesure décidée ne propose plus ses commandes

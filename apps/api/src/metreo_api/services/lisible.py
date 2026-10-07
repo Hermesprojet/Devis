@@ -26,7 +26,7 @@ côté de sa version lisible. Ce module ne touche qu'à ce qui s'affiche.
 from __future__ import annotations
 
 import math
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from metreo_domain.money import canonical_text
 
@@ -229,3 +229,74 @@ def quantite_de_document_lisible(valeur: Decimal, unite: str) -> str:
     '120 t'
     """
     return f"{nombre_francais_tel_quel(canonical_text(valeur))} {unite_affichee(unite)}"
+
+
+#: Les deux unités d'une cotation angulaire. La cote stockée par un logiciel
+#: de dessin est en RADIANS — 1,431 rad, c'est 82° — ; le recalcul de la
+#: bibliothèque DXF rend des DEGRÉS. Voir `mesures_de_plan.unite_de_la_cote`.
+UNITE_D_ANGLE = "rad"
+UNITE_DE_DEGRE = "deg"
+
+#: Les décimales d'une cotation DXF abrégée. Trois, sans zéro inutile : une
+#: valeur recalculée depuis la géométrie n'est jamais ronde (« 629,9999999999999
+#: mm »), et un métreur ne lit pas seize décimales. La valeur exacte reste
+#: rendue à côté — l'abrégé ne la remplace jamais.
+DECIMALES_D_UNE_COTE = 3
+
+
+def _decimal_ou_rien(texte: str) -> Decimal | None:
+    try:
+        valeur = Decimal(texte)
+    except (InvalidOperation, ValueError):
+        return None
+    return valeur if valeur.is_finite() else None
+
+
+def cote_lisible(valeur: str, unite: str | None) -> str:
+    """Une cotation lue dans un DXF, abrégée pour être lue.
+
+    **Pourquoi le serveur l'écrit, et plus l'écran.** L'écran l'abrégeait avec
+    un flottant (`toFixed(3)`) et l'écrivait avec un point : « 1.431 cm ». Sur
+    un plan réel, cette ligne était un ANGLE de 82° — en radians, avec l'unité
+    de longueur du document. Le serveur sait la famille et l'unité ; c'est lui
+    qui écrit, comme pour une mesure PDF.
+
+    >>> cote_lisible("80.0086861176836", "cm")
+    '80,009 cm'
+    >>> cote_lisible("629.9999999999999", "mm")
+    '630 mm'
+    >>> cote_lisible("1.431163279536011", "rad")
+    '82°'
+    >>> cote_lisible("81.99961571151513", "deg")
+    '82°'
+    >>> cote_lisible("5000", None)
+    '5\u202f000'
+    """
+    nombre = _decimal_ou_rien(valeur)
+    if nombre is None:
+        return valeur
+    if unite == UNITE_D_ANGLE:
+        degres = nombre * Decimal(180) / Decimal(str(math.pi))
+        return f"{nombre_francais_court(degres, DECIMALES_D_UNE_COTE)}°"
+    if unite == UNITE_DE_DEGRE:
+        return f"{nombre_francais_court(nombre, DECIMALES_D_UNE_COTE)}°"
+    texte = nombre_francais_court(nombre, DECIMALES_D_UNE_COTE)
+    return f"{texte} {unite_affichee(unite)}" if unite else texte
+
+
+def cote_exacte(valeur: str, unite: str | None) -> str:
+    """La même cotation, ENTIÈRE : c'est elle qu'on recoupe avec le fichier.
+
+    Une transcription — virgule, milliers groupés —, sans rien arrondir.
+
+    >>> cote_exacte("80.0086861176836", "cm")
+    '80,0086861176836 cm'
+    >>> cote_exacte("1.431163279536011", "rad")
+    '1,431163279536011 rad'
+    >>> cote_exacte("81.99961571151513", "deg")
+    '81,99961571151513°'
+    """
+    texte = nombre_francais_tel_quel(valeur)
+    if unite == UNITE_DE_DEGRE:
+        return f"{texte}°"
+    return f"{texte} {unite_affichee(unite)}" if unite else texte

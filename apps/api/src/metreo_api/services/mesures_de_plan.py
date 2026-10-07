@@ -29,7 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import ExtractionProposal, SourceCitation, ValidationDecision
-from . import audit
+from . import audit, lisible
 from .lecture_dxf import Cotation, LecturePlan
 from .tenant import owned_query
 
@@ -92,6 +92,33 @@ class MesureEnregistree:
     object_ref: str
 
 
+#: Les familles dont la valeur est un ANGLE, et non une longueur.
+FAMILLES_ANGULAIRES: frozenset[str] = frozenset({"angulaire", "angulaire_3_points"})
+
+
+def unite_de_la_cote(
+    famille: str, unite_du_document: str | None, origine: str | None
+) -> str | None:
+    """L'unité dans laquelle une cotation est réellement exprimée.
+
+    **Le défaut que cette fonction ferme, trouvé sur un plan réel.** Chaque
+    cotation recevait l'unité de longueur du document. Une cotation angulaire
+    de 82° s'affichait donc « 1.431 cm ».
+
+    **Et l'unité d'un angle dépend de son ORIGINE**, mesuré sur ce même plan :
+    la cote stockée par le logiciel de dessin (groupe 42) est en radians, comme
+    le veut le format — 1,431163 ; le recalcul de la bibliothèque DXF rend des
+    degrés — 81,9996. Une valeur angulaire porte donc `rad` ou `deg` selon
+    d'où elle vient, et jamais une unité de longueur.
+
+    Appliquée aussi à la LECTURE, pour que les propositions déjà écrites avec
+    la mauvaise unité se lisent juste.
+    """
+    if famille in FAMILLES_ANGULAIRES:
+        return lisible.UNITE_D_ANGLE if origine == "cote_42" else lisible.UNITE_DE_DEGRE
+    return unite_du_document
+
+
 @dataclass(frozen=True)
 class MesureALire:
     """Une mesure telle que l'écran la montre, décision humaine comprise."""
@@ -125,7 +152,9 @@ def _valeur_de(cotation: Cotation, constat: LecturePlan) -> dict[str, object]:
         # quantise à dix décimales. Le nombre écrit doit être celui du
         # fichier, pas son arrondi de transport.
         "valeur_document": str(cotation.valeur),
-        "unite_document": constat.unite_source,
+        "unite_document": unite_de_la_cote(
+            cotation.famille, constat.unite_source, cotation.origine
+        ),
         "insunits": constat.insunits,
         "origine_de_la_mesure": cotation.origine,
         "texte_impose": cotation.texte_impose,
@@ -323,7 +352,11 @@ def lister(
                 proposal_id=proposition.id,
                 citation_id=citation.id,
                 valeur_document=str(valeur.get("valeur_document", "")),
-                unite_document=valeur.get("unite_document"),
+                unite_document=unite_de_la_cote(
+                    str(valeur.get("famille", "")),
+                    valeur.get("unite_document"),
+                    valeur.get("origine_de_la_mesure"),
+                ),
                 famille=str(valeur.get("famille", "")),
                 fiabilite=str(valeur.get("fiabilite", "")),
                 origine_de_la_mesure=str(valeur.get("origine_de_la_mesure", "")),

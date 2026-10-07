@@ -1067,6 +1067,14 @@ export interface PlanMesure {
   feuille: string | null
   /** Le handle DXF : la désignation stable de l'objet dans le fichier. */
   object_ref: string | null
+  /**
+   * La cotation abrégée à la belge, ÉCRITE PAR LE SERVEUR — un angle en
+   * degrés. L'écran ne l'abrège plus lui-même : il le faisait avec un flottant
+   * et un point décimal, et lisait un angle en radians comme des centimètres.
+   */
+  valeur_lisible: string
+  /** La cotation entière, transcrite sans arrondi : celle qu'on recoupe avec le fichier. */
+  valeur_exacte_lisible: string
   cadre: PlanCadre | null
   /** `null` tant qu'aucun humain ne s'est prononcé. */
   decision: 'accepted' | 'corrected' | 'rejected' | null

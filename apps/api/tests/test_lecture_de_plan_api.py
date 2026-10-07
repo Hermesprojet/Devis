@@ -374,6 +374,75 @@ def test_the_proposed_measurement_keeps_the_document_unit_and_no_converted_value
 # ---------------------------------------------------------------------------
 
 
+def test_an_angular_dimension_is_an_angle_and_every_value_is_written_by_the_server(
+    seeded_client: TestClient, tmp_path: Path
+) -> None:
+    """Trouvé sur un plan réel : un angle de 82° s'affichait « 1.431 cm ».
+
+    La bibliothèque DXF mesure une cotation angulaire en RADIANS, et le
+    lecteur lui donnait l'unité de longueur du document. L'écran, lui,
+    abrégeait la valeur avec un flottant et l'écrivait avec un point.
+
+    Désormais : l'angle porte `rad`, et le serveur rend pour CHAQUE cotation
+    une écriture abrégée à la belge — un angle en degrés — et l'écriture
+    entière, transcrite sans arrondi, qu'on recoupe avec le fichier.
+    """
+    import math
+
+    doc = ezdxf.new("R2013", setup=True)
+    doc.header["$INSUNITS"] = 4
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (5000, 0), dxfattribs={"layer": CALQUE})
+    msp.add_linear_dim(
+        base=(0, -1000), p1=(0, 0), p2=(5000, 0), dxfattribs={"layer": CALQUE}
+    ).render()
+    angle = math.radians(82)
+    for decalage, cote_du_logiciel in ((0.0, None), (20000.0, angle)):
+        cotation = msp.add_angular_dim_3p(
+            base=(decalage + 1500 * math.cos(angle / 2), 1500 * math.sin(angle / 2)),
+            center=(decalage, 0),
+            p1=(decalage + 1000, 0),
+            p2=(decalage + 1000 * math.cos(angle), 1000 * math.sin(angle)),
+            dxfattribs={"layer": CALQUE},
+        )
+        cotation.render()
+        if cote_du_logiciel is not None:
+            # Ce qu'écrit un logiciel de dessin, groupe 42 : des RADIANS.
+            cotation.dimension.dxf.actual_measurement = cote_du_logiciel
+    chemin = tmp_path / "angle.dxf"
+    doc.saveas(chemin)
+
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client, admin, "PLAN-ANGLE", contenu=chemin.read_bytes()
+    )
+    analyse = _analyser(seeded_client, admin, document, revision)
+    assert analyse.status_code == 200, analyse.text
+    rendues = analyse.json()["mesures"]
+    angles = {m["origine_de_la_mesure"]: m for m in rendues if m["famille"] == "angulaire_3_points"}
+
+    # La cote du logiciel est en radians, le recalcul en degrés : deux unités,
+    # UN angle, et la même écriture lisible.
+    assert angles["cote_42"]["unite_document"] == "rad", "un angle n'est pas une longueur"
+    assert angles["recalcul"]["unite_document"] == "deg"
+    for origine, angulaire in angles.items():
+        assert angulaire["valeur_lisible"] == "82°", origine
+        assert "," in angulaire["valeur_exacte_lisible"], "la virgule belge, pas le point"
+        assert any(r["code"] == "famille_non_lineaire" for r in angulaire["reserves"])
+
+    mesures = {m["famille"]: m for m in rendues}
+    lineaire = mesures["lineaire"]
+    assert lineaire["unite_document"] == "mm"
+    assert lineaire["valeur_lisible"] == "5\u202f000 mm"
+
+    # Relue après coup, la même écriture : la correction vaut aussi pour les
+    # propositions déjà enregistrées.
+    relue = {
+        m["famille"]: m for m in _relire(seeded_client, admin, document, revision).json()["mesures"]
+    }
+    assert relue["angulaire_3_points"]["valeur_lisible"] == "82°"
+
+
 def test_a_file_that_is_neither_dxf_nor_pdf_is_refused_by_name(
     seeded_client: TestClient,
 ) -> None:

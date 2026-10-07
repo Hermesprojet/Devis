@@ -935,6 +935,26 @@ class MesureDePlan(ApiModel):
     decision: str | None
     valeur_corrigee: str | None
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def valeur_lisible(self) -> str:
+        """La cotation abrégée, à la belge — un angle en degrés.
+
+        Rendue par le serveur : l'écran l'abrégeait avec un flottant et un
+        point décimal, et lisait un angle en radians comme des centimètres.
+        """
+        from .services import lisible
+
+        return lisible.cote_lisible(self.valeur_document, self.unite_document)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def valeur_exacte_lisible(self) -> str:
+        """La cotation entière, transcrite sans arrondi : celle du fichier."""
+        from .services import lisible
+
+        return lisible.cote_exacte(self.valeur_document, self.unite_document)
+
 
 class PlanLu(ApiModel):
     """Le constat d'un plan, et les mesures qu'on en a tirées.

@@ -527,6 +527,8 @@ const fr: Dictionary = {
   'plan.measures': 'Mesures proposées',
   'plan.measuresToCheck': 'Mesures à vérifier',
   'plan.measuresClean': 'Mesures sans réserve',
+  'plan.showMore': 'Afficher les {n} autres',
+  'plan.showFirst': '{n} premières affichées sur {total}.',
   'plan.measuresEmpty':
     'La lecture n’a proposé aucune mesure. Le fichier a bien été lu — il ne porte '
     + 'simplement aucune cote ni aucun objet mesurable que Metreo sache reprendre.',

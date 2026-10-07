@@ -12,6 +12,7 @@ import {
   type PlanMesure,
 } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { ecrireEnFrancais } from '@/lib/nombres'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
 
@@ -698,22 +699,16 @@ function MesuresDuPlan({
               <h3>
                 {t('plan.measuresToCheck')} ({aVerifier.length})
               </h3>
-              <div className="card" style={{ padding: 0 }}>
-                <ul className="plan-mesures" data-testid="plan-mesures-a-verifier">
-                  {aVerifier.map((mesure) => (
-                    <LigneDeMesure
-                      key={mesure.proposal_id}
-                      mesure={mesure}
-                      visee={mesure.proposal_id === visee}
-                      epinglee={mesure.proposal_id === epinglee}
-                      peutValider={peutValider}
-                      onSurvol={setSurvolee}
-                      onEpingler={setEpinglee}
-                      onDecide={onDecide}
-                    />
-                  ))}
-                </ul>
-              </div>
+              <ListeDeMesures
+                mesures={aVerifier}
+                testId="plan-mesures-a-verifier"
+                visee={visee}
+                epinglee={epinglee}
+                peutValider={peutValider}
+                onSurvol={setSurvolee}
+                onEpingler={setEpinglee}
+                onDecide={onDecide}
+              />
             </>
           )}
           {sansReserve.length > 0 && (
@@ -721,22 +716,16 @@ function MesuresDuPlan({
               <h3>
                 {t('plan.measuresClean')} ({sansReserve.length})
               </h3>
-              <div className="card" style={{ padding: 0 }}>
-                <ul className="plan-mesures" data-testid="plan-mesures-sans-reserve">
-                  {sansReserve.map((mesure) => (
-                    <LigneDeMesure
-                      key={mesure.proposal_id}
-                      mesure={mesure}
-                      visee={mesure.proposal_id === visee}
-                      epinglee={mesure.proposal_id === epinglee}
-                      peutValider={peutValider}
-                      onSurvol={setSurvolee}
-                      onEpingler={setEpinglee}
-                      onDecide={onDecide}
-                    />
-                  ))}
-                </ul>
-              </div>
+              <ListeDeMesures
+                mesures={sansReserve}
+                testId="plan-mesures-sans-reserve"
+                visee={visee}
+                epinglee={epinglee}
+                peutValider={peutValider}
+                onSurvol={setSurvolee}
+                onEpingler={setEpinglee}
+                onDecide={onDecide}
+              />
             </>
           )}
         </>
@@ -745,33 +734,87 @@ function MesuresDuPlan({
   )
 }
 
-/** Une mesure : ce qu'elle vaut, d'où elle vient, et ce qu'on en a décidé. */
 /**
- * Rend une mesure LISIBLE sans jamais perdre la valeur exacte.
- *
- * Une mesure recalculée depuis la géométrie n'est pas ronde. Mesuré sur deux
- * plans d'exécution réels, l'écran affichait `22902.791451627338 mm` et
- * `629.9999999999999 mm` : l'écart vient du dessin, pas du calcul, et le
- * lecteur n'arrondit RIEN à l'enregistrement — une quantité silencieusement
- * arrondie ne se recoupe plus avec le fichier.
- *
- * Mais un métreur ne lit pas seize décimales. L'abrégé en garde trois au
- * plus, sans zéro inutile, et il ne REMPLACE pas l'exacte : celle-ci reste en
- * clair à côté dès que les deux diffèrent, et en infobulle.
- *
- * Ce n'est donc pas un arrondi métier mais une convention d'affichage : rien
- * de ce qui part au serveur n'en dépend, et le champ de correction reste
- * VIDE — un nombre pré-rempli se lirait comme une valeur usuelle.
+ * Au-delà de ce nombre, une liste se replie. Mesuré sur un plan d'étage réel :
+ * 773 cotations faisaient une page de 131 000 pixels, quatre-vingts écrans de
+ * haut, où l'on ne retrouvait plus rien. Les premières restent affichées, dans
+ * l'ordre du serveur ; les autres sont à un clic, jamais masquées en silence.
  */
-function abreger(valeur: string): { texte: string; exacte: boolean } {
-  const nombre = Number(valeur)
-  if (!Number.isFinite(nombre)) return { texte: valeur, exacte: true }
-  // `toFixed` puis retrait des zéros de queue : « 630.000 » devient « 630 »,
-  // « 0.068 » reste « 0.068 ».
-  const court = nombre.toFixed(3).replace(/\.?0+$/, '')
-  return { texte: court === '' ? '0' : court, exacte: court === valeur }
+const MESURES_AFFICHEES_D_ABORD = 50
+
+/** Une liste de mesures, repliée au-delà du seuil — et qui dit qu'elle l'est. */
+function ListeDeMesures({
+  mesures,
+  testId,
+  visee,
+  epinglee,
+  peutValider,
+  onSurvol,
+  onEpingler,
+  onDecide,
+}: {
+  mesures: PlanMesure[]
+  testId: string
+  visee: string | null
+  epinglee: string | null
+  peutValider: boolean
+  onSurvol: (identifiant: string | null) => void
+  onEpingler: (identifiant: string | null) => void
+  onDecide: () => Promise<void>
+}) {
+  const [toutes, setToutes] = useState(false)
+  const repliee = !toutes && mesures.length > MESURES_AFFICHEES_D_ABORD
+  // Une mesure visée ou épinglée depuis l'image reste TOUJOURS dans la liste :
+  // la replier ferait disparaître la ligne qu'on vient de désigner.
+  const montrees = repliee
+    ? mesures.filter(
+        (mesure, rang) =>
+          rang < MESURES_AFFICHEES_D_ABORD ||
+          mesure.proposal_id === visee ||
+          mesure.proposal_id === epinglee,
+      )
+    : mesures
+  return (
+    <div className="card" style={{ padding: 0 }}>
+      <ul className="plan-mesures" data-testid={testId}>
+        {montrees.map((mesure) => (
+          <LigneDeMesure
+            key={mesure.proposal_id}
+            mesure={mesure}
+            visee={mesure.proposal_id === visee}
+            epinglee={mesure.proposal_id === epinglee}
+            peutValider={peutValider}
+            onSurvol={onSurvol}
+            onEpingler={onEpingler}
+            onDecide={onDecide}
+          />
+        ))}
+      </ul>
+      {repliee && (
+        <p className="plan-faits muted" style={{ padding: '0.5rem 1rem' }}>
+          {t('plan.showFirst')
+            .replace('{n}', String(MESURES_AFFICHEES_D_ABORD))
+            .replace('{total}', String(mesures.length))}{' '}
+          <button type="button" data-testid="plan-afficher-tout" onClick={() => setToutes(true)}>
+            {t('plan.showMore').replace('{n}', String(mesures.length - montrees.length))}
+          </button>
+        </p>
+      )}
+    </div>
+  )
 }
 
+/**
+ * Une mesure : ce qu'elle vaut, d'où elle vient, et ce qu'on en a décidé.
+ *
+ * Une mesure recalculée depuis la géométrie n'est pas ronde — mesuré sur des
+ * plans d'exécution réels : `22902.791451627338 mm`, `629.9999999999999 mm`.
+ * Le serveur rend donc deux écritures : l'abrégée, trois décimales au plus, et
+ * l'exacte, transcrite sans arrondi, qui reste en clair à côté dès que les deux
+ * diffèrent. L'écran n'abrège plus rien lui-même : il le faisait avec un
+ * flottant et un point décimal, et lisait un angle en radians comme des
+ * centimètres.
+ */
 function LigneDeMesure({
   mesure,
   visee,
@@ -791,7 +834,9 @@ function LigneDeMesure({
 }) {
   const unite = mesure.unite_document
   const lue = mesure.decision ? (DECISIONS_LUES[mesure.decision] ?? null) : null
-  const abregee = abreger(mesure.valeur_document)
+  // Les deux écritures viennent du serveur. L'exacte n'est montrée à côté que
+  // si elle dit autre chose que l'abrégée.
+  const memeEcriture = mesure.valeur_exacte_lisible === mesure.valeur_lisible
 
   return (
     <li
@@ -817,18 +862,17 @@ function LigneDeMesure({
         <span
           className="plan-valeur mono"
           data-testid="plan-valeur-proposee"
-          title={abregee.exacte ? undefined : `${t('plan.exactValue')} ${mesure.valeur_document}`}
+          title={memeEcriture ? undefined : `${t('plan.exactValue')} ${mesure.valeur_exacte_lisible}`}
         >
-          {abregee.texte}
-          {unite ? ` ${unite}` : ''}
+          {mesure.valeur_lisible}
         </span>{' '}
         {/* La valeur EXACTE ne disparaît jamais : elle reste en clair à côté
             de l'abrégé dès que les deux diffèrent. C'est elle qu'on recoupe
             avec le fichier, et c'est pour cela qu'elle n'est pas reléguée à
             une infobulle seule. */}
-        {!abregee.exacte && (
+        {!memeEcriture && (
           <span className="muted mono" data-testid="plan-valeur-exacte">
-            ({mesure.valeur_document})
+            ({mesure.valeur_exacte_lisible})
           </span>
         )}{' '}
         {!unite && <span className="badge warning">{t('plan.withoutUnit')}</span>}{' '}
@@ -841,7 +885,7 @@ function LigneDeMesure({
           <span>
             <span className="muted">→ {t('plan.retainedValue')} </span>
             <span className="plan-valeur mono" data-testid="plan-valeur-retenue">
-              {mesure.valeur_corrigee}
+              {ecrireEnFrancais(mesure.valeur_corrigee)}
               {unite ? ` ${unite}` : ''}
             </span>{' '}
           </span>
@@ -877,7 +921,8 @@ function LigneDeMesure({
           {t('plan.origin')} : {libelle(ORIGINES, mesure.origine_de_la_mesure)}
         </span>
         <span>
-          {t('plan.confidence')} : <span className="mono">{mesure.confiance}</span>
+          {t('plan.confidence')} :{' '}
+          <span className="mono">{ecrireEnFrancais(mesure.confiance)}</span>
         </span>
       </p>
 
