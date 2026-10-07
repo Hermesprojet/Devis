@@ -49,6 +49,8 @@ fichier, § « Ce qui n'est pas vérifié ici, et pourquoi ») :
 | `PAGE = (0.0, 0.0, 200.0, 100.0)` et `CENT_POINTS_POUR_CINQ_METRES` | **fabriquée**, en mémoire, valeurs rondes exprès ; `scripts/fabriquer_pdf_de_test.py` la commente à ses constantes `LARGEUR_REFERENCE` / `HAUTEUR_REFERENCE` (« Petite exprès — une page A0 rendrait le calcul d'inversion illisible ») | `apps/api/tests/test_mesures_pdf.py`, constantes de module `PAGE` et `CENT_POINTS_POUR_CINQ_METRES` |
 | La page de 300 × 220 points du parcours API | **fabriquée** par `scripts/fabriquer_pdf_de_test.py`, fonctions `page_avec_plusieurs_textes` et `plan_de_deux_pages` (paramètres par défaut `largeur = 300.0` / `hauteur = 220.0`) | `apps/api/tests/test_calibration_de_plan_api.py`, constantes de module de la page de référence |
 | `fixtures/plans/plan_cote.pdf` (parcours navigateur) | **fabriquée**, et non commitée (`.gitignore`, entrée `fixtures/plans/plan_cote.pdf`) | produite par `scripts/fabriquer_plans_de_test.py` |
+| `fixtures/plans/plan_batiment.pdf` — **une ligne de cote et une pièce fermée** | **fabriquée**, non commitée, et surtout : **ses dimensions sont connues sans passer par le lecteur**. La cote fait 5 000 mm, la pièce 6 000 × 4 000 mm, sa surface 24,00 m² — posés en points de papier dans `fabriquer_pdf_de_test`, convertis par une échelle déclarée, et écrits dans `plan_batiment.json` | `apps/api/tests/test_mesure_juste_sur_un_plan.py` et `apps/web/captures/parcours-pdf.spec.ts` |
+| Le même plan **en portrait** | **fabriquée**, en mémoire. Elle existe parce que les quatre plans du propriétaire sont tous en paysage, et qu'un défaut de résolution de pointage ne se voit que sur une page plus haute que large | `plan_de_batiment_en_portrait()` |
 | Les quatre plans du propriétaire | **réels, et hors du dépôt**, par la règle de `docs/PLANS_REELS.md` | constats datés reportés dans `docs/adr/0008-tuiles-de-detail-des-plans.md` |
 
 Ces quatre plans ne sont **pas des A0**. L'ADR 0008 les décrit comme des
@@ -70,6 +72,19 @@ quatre n'en est un. **Plusieurs commentaires du code disent pourtant « A0 »**
 > `git show origin/claude/cotes-de-reference:docs/COTES_DE_REFERENCE.md`.
 
 **Conséquence directe : aucun test du dépôt ne s'exécute sur un plan réel.**
+
+**Ce qui a changé le 7 octobre 2026**, et qui ne remplace pas vos plans : il
+existe désormais une fixture qui porte une GÉOMÉTRIE et non des textes isolés,
+et dont les dimensions sont connues d'avance. `test_mesure_juste_sur_un_plan.py`
+calibre sur sa ligne de cote, mesure la façade et le contour de la pièce, et
+**compare à 6 000 mm et 24,00 m²** — des nombres que Metreo n'a pas produits.
+Le parcours de navigateur fait le même trajet et relève **6 006,3 mm** et
+**24,060 m²**, soit 0,11 % et 0,25 % d'écart.
+
+Cela éprouve la chaîne complète — repère, calibration, calcul, affichage — sur
+une géométrie connue. Cela ne dit **toujours rien** de l'écart entre ce que
+Metreo rend et ce que portent VOS plans : cet écart-là est celui du pointage
+d'un humain sur un vrai dessin, et il se mesure sur de vraies cotes.
 
 ### 1.3 Les tests qui comparent une mesure à une valeur attendue
 
@@ -134,11 +149,11 @@ Toutes arithmétiques ou comportementales. Fixtures fabriquées dans tous les ca
 | **5 m et 5 000 mm donnent la même aire** — le facteur vers le m² sort de `units.py` | `test_the_same_shape_calibrated_in_metres_or_millimetres_has_the_same_area` |
 | Moins de 3 points, ou 3 points alignés : refus | `test_fewer_than_three_points_enclose_nothing` et `test_three_collinear_points_enclose_nothing_and_it_is_said` |
 | Un contour qui se recoupe est **signalé, pas corrigé** | `test_a_contour_that_crosses_itself_is_flagged_not_corrected` |
-| Un carré et un L ne sont **pas** signalés (contre-exemple) | `test_a_simple_contour_is_not_flagged_as_crossing_itself` |
+| Un carré et un L ne sont **pas** signalés comme se recoupant (contre-exemple) | `test_a_simple_contour_is_not_flagged_as_crossing_itself` — il nomme désormais la réserve au lieu d'exiger une liste vide : le L porte « incertitude_elevee », et c'est juste |
 | L'incertitude est rendue dans l'unité de la valeur, et concorde avec la relative | `test_the_uncertainty_is_given_in_the_same_unit_as_the_value` |
 | Pointer deux fois plus fin donne une incertitude deux fois moindre | `test_a_finer_pointing_gives_a_proportionally_smaller_uncertainty` |
 | Calibrer sur 20 points plutôt que 200 : **même valeur**, incertitude plus grande | `test_calibrating_on_a_short_span_poisons_every_measurement` |
-| Une aire est **exactement deux fois** plus incertaine que la longueur dont elle vient | `test_an_area_is_twice_as_uncertain_as_the_length_it_comes_from` |
+| Le FACTEUR pèse exactement deux fois plus sur une aire que sur une longueur | `test_an_area_is_twice_as_uncertain_as_the_length_it_comes_from` — sur un carré, les deux termes de tracé sont eux aussi dans un rapport de 2, et l'égalité est donc exacte. Elle ne l'est pas sur une forme quelconque, et ne doit pas l'être |
 | Au-delà du seuil la mesure est **conservée** et réservée ; en deçà elle ne porte **aucune** réserve | `test_an_uncertain_measurement_stays_to_be_verified_and_names_why` et `test_a_well_pointed_measurement_carries_no_reserve` |
 | Une résolution de pointage non déclarée vaut `RESOLUTION_PAR_DEFAUT_EN_POINTS` et bascule en « à confirmer » | `test_an_undeclared_pointing_resolution_is_treated_pessimistically` — ses **deux** assertions : `resolution_du_pointage == RESOLUTION_PAR_DEFAUT_EN_POINTS`, puis `mesure.fiabilite == "a_confirmer"` |
 
@@ -227,14 +242,40 @@ Dans `mesures_pdf.py`, fonction `longueur` :
 valeur = k * Decimal(str(total_en_points))
 …
 du_facteur = _incertitude_relative_du_facteur(calibration)
-du_trace = Decimal(str(math.sqrt(2) * calibration.resolution_du_pointage / total_en_points))
+du_trace = Decimal(
+    str(
+        _sensibilite_d_une_longueur(points)
+        * calibration.resolution_du_pointage
+        / total_en_points
+    )
+)
 relative = Decimal(str(math.sqrt(float(du_facteur) ** 2 + float(du_trace) ** 2)))
 ```
 
-> **σ_L / L = √[ (√2·ε/d)² + (√2·ε/L_pts)² ]**
+> **σ_L / L = √[ (√2·ε/d)² + (S_L·ε/L_pts)² ]**, où
+> **S_L = √( Σᵢ |û(i−1) − û(i)|² )**
 
-`L_pts` est la longueur tracée en points (somme des segments, calculée dans la
-même fonction).
+`L_pts` est la longueur tracée en points, et `S_L` la **sensibilité du tracé** :
+la racine de la somme des carrés des gradients, sommet par sommet, où `û(i)`
+est le vecteur unitaire du segment `i`.
+
+**Cette forme a remplacé un `√2` constant**, et le changement n'est pas
+cosmétique. L'ancien terme était celui d'un segment à DEUX extrémités, appliqué
+tel quel à une polyligne de vingt sommets : un relevé de façade en vingt clics
+était annoncé aussi sûr qu'un segment droit de même longueur, alors qu'il porte
+vingt erreurs de pointage. `S_L` dit trois choses qu'un `√N` forfaitaire ne
+dirait pas :
+
+- **deux points** : les deux gradients valent 1, la somme vaut 2, et on retrouve
+  exactement `√2`. L'ancienne formule était juste dans ce cas, et le reste ;
+- **des points ALIGNÉS** : les deux vecteurs d'un sommet intérieur sont égaux,
+  leur différence est nulle, et le sommet n'ajoute rien. C'est physiquement
+  vrai — glisser un point le long d'une droite ne change pas la longueur ;
+- **un tracé anguleux** : à angle droit chaque sommet intérieur apporte `√2`, et
+  la somme croît bien avec le nombre de sommets.
+
+Un `√N` forfaitaire aurait puni un tracé lisse — celui qui suit une courbe, où
+les sommets se compensent presque — pour une erreur qu'il ne commet pas.
 
 ### 2.5 Une aire
 
@@ -245,15 +286,34 @@ aire_en_points = abs(double_aire) / 2.0
 …
 du_facteur = _incertitude_relative_du_facteur(calibration)
 du_trace = Decimal(
-    str(math.sqrt(2) * calibration.resolution_du_pointage / max(perimetre, 1e-9))
+    str(
+        _sensibilite_d_une_aire(points)
+        * calibration.resolution_du_pointage
+        / aire_en_points
+    )
 )
-relative = Decimal(str(2 * math.sqrt(float(du_facteur) ** 2 + float(du_trace) ** 2)))
+relative = Decimal(str(math.hypot(2 * float(du_facteur), float(du_trace))))
 …
 facteur_en_metres = distance_en_metres / Decimal(str(calibration.ecart_en_points))
 en_metres_carres = (facteur_en_metres * facteur_en_metres) * Decimal(str(aire_en_points))
 ```
 
-> **σ_A / A = 2 · √[ (√2·ε/d)² + (√2·ε/P_pts)² ]**, `P_pts` = périmètre en points.
+> **σ_A / A = √[ (2·√2·ε/d)² + (S_A·ε/A_pts)² ]**, où
+> **S_A = √( Σᵢ |∂A/∂Pᵢ|² )** et **∂A/∂Pᵢ = ½·( v(i+1) − v(i−1), u(i−1) − u(i+1) )**
+
+**Les deux termes ne se doublent pas de la même façon, et c'est le correctif.**
+
+Le **facteur** est bien doublé : une aire vaut `k²·A`, donc une erreur relative
+de 1 % sur `k` en fait 2 % sur l'aire. Le **tracé**, non : son erreur se propage
+par la dérivée de la formule du lacet, sommet par sommet, et non par le
+périmètre. L'approximation par le périmètre valait pour un carré et se trompait
+sur tout le reste — mesuré, sur une forme en L de 2 000 points carrés pointée à
+un demi-point près, elle annonçait **0,3 %** là où la propagation exacte donne
+**1,9 %**.
+
+La dérivée ne dépend que des deux VOISINS d'un sommet : un sommet dont les
+voisins sont proches pèse peu sur l'aire, un sommet qui sépare deux côtés longs
+pèse beaucoup. C'est ce que le périmètre ne savait pas dire.
 
 ### 2.6 Le verdict
 
@@ -383,7 +443,7 @@ Chacune est **codée implicitement** et **non vérifiée sur un plan réel**.
 | **H5** | La tuile est pointée à sa **taille native** de 512 pixels | `resolutionDeLaLoupe` divise par 512 ; le CSS impose `width: 100%` (`globals.css`, règle `.pdf-loupe-image img`) : l'image est étirée ou réduite à la largeur du conteneur | sur un écran où l'image fait **moins** de 512 px CSS, ε est sous-estimé et l'incertitude est optimiste ; au-delà de 512 px, elle est pessimiste | mesurer la largeur CSS réelle du rendu et la passer dans le calcul, puis un test unitaire sur `resolutionDeLaLoupe` — **il n'en existe aucun** : `apps/web` ne contient aucun fichier `*.test.ts*` (voir § 5.3 point 1 pour ce que cela demande d'abord) |
 | **H6** | La fenêtre de la loupe fait bien **5 %** de la page | l'écran la **rogne** aux bords (`LecturePdf.tsx`, calcul de la zone de loupe et handler de clic : `Math.max(0, …)`, `Math.min(1, …)`) sans corriger ε | près d'un bord la fenêtre est plus petite, donc le rendu plus fin : ε déclaré est alors **pessimiste**. Le sens est favorable, mais le lien n'est garanti par aucun test | faire calculer ε depuis la fenêtre effectivement demandée, et non depuis `TAILLE_DE_LA_LOUPE` |
 | **H7** | L'erreur de pointage est **aléatoire**, non systématique | la somme en quadrature (dans `longueur` et dans `aire`) ne vaut que pour des erreurs indépendantes et centrées | un biais constant — cliquer toujours le bord extérieur d'un trait épais — **ne s'annule pas** et n'apparaît nulle part dans le nombre rendu | mesurer la même cote 5 à 10 fois et comparer la dispersion observée à l'incertitude annoncée. Un biais se voit à la moyenne, pas à l'écart-type |
-| **H8** | L'erreur de tracé vaut √2·ε **quel que soit le nombre de sommets** | dans `longueur` et dans `aire`, `du_trace` ne dépend que de la longueur totale (ou du périmètre), jamais du nombre de points | exact pour un segment à 2 points ; **optimiste pour une ligne brisée ou un contour à n sommets**, où n pointages indépendants interviennent | comparer, sur une même forme, un tracé à 2 points et un tracé à 20 points de même longueur |
+| **H8** | ~~L'erreur de tracé vaut √2·ε quel que soit le nombre de sommets~~ — **levée le 7 octobre 2026** | `du_trace` est désormais calculée sommet par sommet : `_sensibilite_d_une_longueur` et `_sensibilite_d_une_aire` | l'hypothèse était exacte pour un segment à 2 points et **optimiste d'un facteur allant jusqu'à 10** sur un tracé anguleux à 50 sommets. L'expérience prescrite ici a été jouée, et elle a confirmé le défaut | `test_l_incertitude_de_trace_croit_avec_le_nombre_de_sommets` (2, 5, 20, 50 sommets) et `test_la_croissance_suit_la_racine_du_nombre_de_sommets` |
 | **H9** | La mesure est pointée **à la même finesse** que la calibration | `schemas.MesureCreate` ne porte **aucune** résolution ; `calibration_de_plan._en_calibration` réutilise celle de la calibration | vrai dans l'écran livré, où les deux gestes se font dans la loupe. **Faux pour tout autre client de l'API**, qui obtiendrait une incertitude sous-estimée | ajouter `resolution_du_pointage` à `MesureCreate`, ou écrire le contrat |
 | **H10** | Une page ne porte **qu'une seule échelle** | `calibration_de_plan._contient` : une calibration **sans zone** s'applique à toute la page | une page portant un plan au 1:50 **et** un détail au 1:20 donne une mesure fausse d'un facteur 2,5, **sans réserve** | éprouver sur un plan réel à deux échelles. Le mécanisme de zone existe et est testé (`test_calibration_de_plan_api.py`, test du refus hors zone), mais **rien n'oblige** à l'utiliser |
 | **H11** | Les incertitudes de deux mesures sont **indépendantes** | non codée, mais supposée par quiconque additionne deux mesures | le terme `du_facteur` est **le même** pour toutes les mesures d'une page : il est totalement **corrélé**. Un total de 20 murs n'a pas une incertitude en √20, mais en 20 | à traiter quand les mesures remonteront dans un métré. Le module ne fait aucune agrégation aujourd'hui |
@@ -512,12 +572,12 @@ la réserve est le fait, le nombre n'en est que le rang. »
 | **Une aire est 2× plus incertaine qu'une longueur** | Oui | Le facteur 2 s'applique aussi au terme de tracé : **choix de modélisation, non éprouvé** |
 | **Le seuil de 2 % bascule en « à confirmer »** | Oui, avec contre-exemple | **2 % n'est pas votre tolérance.** Le code le dit (commentaire de `SEUIL_D_INCERTITUDE`) ; la fiche § 5.3 attend votre réponse |
 | **Pointage non déclaré → pessimisme** | Oui (`test_an_undeclared_pointing_resolution_is_treated_pessimistically`) | Rien d'inconnu |
-| **La tuile rend exactement la zone demandée** | Oui, sur les deux axes, à un point près (`test_a_tile_renders_exactly_the_zone_it_was_asked_for`) | Éprouvé sur **une** page en paysage de 300 × 220 points ; ni portrait, ni plafond d'agrandissement (H4) |
-| **ε = largeur × 0,05 ÷ 512** | **Non. Aucun test.** `apps/web` ne contient aucun `*.test.ts*` | Trois écarts possibles, tous non mesurés : page en portrait (H4), image étirée par `width: 100%` (H5), fenêtre rognée au bord (H6) |
+| **La tuile rend exactement la zone demandée** | Oui, sur les deux axes, à un point près (`test_a_tile_renders_exactly_the_zone_it_was_asked_for`) | Le plafond d'agrandissement reste non éprouvé ; le **portrait l'est désormais** (`test_le_portrait_n_annonce_pas_une_mesure_plus_sure_que_le_paysage`) |
+| **ε = PLUS GRAND CÔTÉ × 0,05 ÷ 512** | La règle est éprouvée côté serveur (`test_mesure_juste_sur_un_plan.py`), et le parcours de captures la joue dans un vrai navigateur | **Corrigée le 7 octobre 2026** : elle portait sur la LARGEUR, et sous-estimait l'incertitude de 1,41 sur toute page en portrait (H4 levée). Restent l'image étirée par `width: 100%` (H5) et la fenêtre rognée au bord (H6) |
 | **Isotropie des deux axes** | **Non testable sur fixture** — la fixture est isotrope par construction | **Entièrement ouvert.** Levé par la cote oblique (H3) |
 | **Page non déformée** | **Non testable sur fixture** | **Entièrement ouvert.** Levé par la cote longue (H2) |
 | **Erreur aléatoire et non systématique** | **Non** — la quadrature la suppose | **Entièrement ouvert.** Un biais de pointage n'apparaît nulle part (H7) |
-| **Erreur indépendante du nombre de sommets** | **Non** — codée ainsi dans `longueur` et `aire` | **Optimiste pour un tracé à n points** (H8) |
+| **Erreur indépendante du nombre de sommets** | **Levée.** La sensibilité est calculée sommet par sommet, et quatre tracés (2, 5, 20, 50 sommets) l'éprouvent | Reste la question du BIAIS, qui n'est pas celle du nombre (H7) |
 | **Calibration et mesure au même zoom** | **Non** — `MesureCreate` ne porte pas de résolution | Vrai dans l'écran livré, **faux pour tout autre client** (H9) |
 | **Une seule échelle par page** | Le **refus hors zone** est testé (`test_calibration_de_plan_api.py`) | Rien n'oblige à poser une zone : une page à deux échelles donne une mesure fausse **sans réserve** (H10) |
 | **Indépendance entre deux mesures** | **Non** — jamais agrégées | Le terme du facteur est **totalement corrélé** sur une page (H11) |
@@ -568,7 +628,7 @@ des fragments) sont dans le même cas.
 | H12 le nombre est une cote | **Non**, et la fiche le dit en § 8 |
 | H4, H5, H6 ε déclaré = ε réel | **Non** — cela demande des tests d'écran, pas un plan |
 | H7 biais de pointage | **Non** — cela demande 5 à 10 répétitions de la même cote |
-| H8 nombre de sommets | **Non** — cela demande deux tracés de même longueur et de densité différente |
+| H8 nombre de sommets | **Déjà faite**, et sans vos plans : deux tracés de même longueur et de densité différente suffisaient, et le défaut est corrigé |
 | H9, H10, H11 | **Non** — ce sont des décisions de contrat et de produit, pas des mesures |
 
 ### 5.3 Ce qui est à faire dans le dépôt, indépendamment de vos plans

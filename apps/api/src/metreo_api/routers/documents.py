@@ -324,12 +324,24 @@ def create_validation_decision(
     context: TenantContext = Depends(require(Permission.DOCUMENT_VALIDATE)),
     session: Session = Depends(session_scope),
 ) -> ValidationDecision:
-    return documents.record_validation_decision(
-        session,
-        context=context,
-        proposal_id=proposal_id,
-        payload=payload,
-    )
+    """Enregistre une décision, et refuse une correction qui n'en est pas une.
+
+    Le 422 porte un code stable et une phrase que l'écran affiche telle quelle :
+    « 3,8 m environ » n'est pas une quantité, et le dire au moment de la saisie
+    vaut mieux que le découvrir le jour où cette valeur alimentera un métré.
+    """
+    try:
+        return documents.record_validation_decision(
+            session,
+            context=context,
+            proposal_id=proposal_id,
+            payload=payload,
+        )
+    except calibration_de_plan.ValeurRetenueRefusee as refus:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": refus.code, "message": refus.message},
+        ) from refus
 
 
 # ---------------------------------------------------------------------------
@@ -969,7 +981,14 @@ def _mesure_de_pdf(mesure: calibration_de_plan.MesureALire) -> MesureDePdf:
         ),
         calibration=mesure.calibration,
         decision=mesure.decision,
+        motif_de_la_decision=mesure.motif_de_la_decision,
         valeur_corrigee=mesure.valeur_corrigee,
+        valeur_lisible=mesure.valeur_lisible,
+        incertitude_lisible=mesure.incertitude_lisible,
+        valeur_retenue_lisible=mesure.valeur_retenue_lisible,
+        unite_retenue=mesure.unite_retenue,
+        valeur_retenue=mesure.valeur_retenue,
+        reprenable=mesure.reprenable,
     )
 
 

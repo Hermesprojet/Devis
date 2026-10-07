@@ -496,6 +496,11 @@ manquent.
 « **Une seule tête à chaque étape.** `main` n'est jamais rouge. »
 (`docs/FUSION_DES_MIGRATIONS.md:108`)
 
+Les **commandes exactes de l'étape 6** — le transfert effectif du fichier vers
+la branche de la #81, et le contrôle `alembic heads` qui dit s'il a réussi —
+sont dans `docs/FUSION_DES_MIGRATIONS.md`, section « Les commandes de
+l'étape 6 — le transfert effectif ».
+
 ### Où placer la #88, et pourquoi en tête
 
 La #88 **n'apporte qu'un seul fichier** : `docs/COTES_DE_REFERENCE.md`, ajouté,
@@ -914,6 +919,46 @@ configuration dégradée, front ou routage.
 - **Perd** : rien en base, rien sur le volume.
 - **Irréversible** : rien, à ceci près que l'état obtenu n'est pas celui que la
   commande documentée reproduit.
+
+#### Ce que l'ancienne API fait VRAIMENT sur le schéma neuf — mesuré
+
+La voie A était classée « la plus réversible, et la plus rapide » sur un
+raisonnement : rien ne disait que l'ancien code TOURNE sur un schéma qu'il ne
+connaît pas, et une API qui démarre ne prouve rien de ce qui compte.
+
+`scripts/epreuve_retour_arriere.py` le joue maintenant pour de bon : il monte le
+schéma neuf, y dépose un plan, le calibre, le mesure, tranche — puis fait jouer
+**l'API de `origin/main` (39ad8d0)** sur cette même base, **sans toucher aux
+migrations**. Relevé le 7 octobre 2026 :
+
+| Parcours | Résultat |
+| --- | --- |
+| Se connecter, lire son profil | **OK** |
+| Lister chantiers, clients, bibliothèque | **OK** |
+| Ouvrir le chantier créé par la version neuve | **OK** |
+| Lister ses documents, relire une révision | **OK** |
+| **Télécharger l'original du plan déposé pendant l'essai** | **OK** |
+| Lire le journal d'audit, vérifier la chaîne par l'API | **OK** |
+| Créer un client, créer un chantier, déposer un document | **OK** |
+| Vérifier la chaîne d'audit en base | **OK** — `valid: True`, 12 maillons |
+| **Les mesures de l'essai sont-elles encore là ?** | **OUI** — 1 proposition, 1 calibration, 1 décision |
+| `GET …/plan` et `…/plan/mesures` | **404** — ces routes n'existent pas dans l'ancienne version. C'est le comportement correct, pas une panne |
+| **Relancer les migrations (voie A manquée)** | **code 255** — `Can't locate revision identified by 'a4b5c6d70809'` |
+
+**Seize parcours sur dix-neuf fonctionnent**, et les trois autres sont ceux
+qu'on attend : deux routes absentes, et le refus de migrer qui est précisément
+la raison d'être de cette voie.
+
+**Ce que la mesure change à la procédure** : rien, elle la confirme — mais elle
+la confirme. L'écran de lecture de plans disparaît, les mesures prises pendant
+l'essai **restent en base, intactes et invisibles**, et tout le reste du
+produit fonctionne. Le seul geste qui compte est de monter `api` **sans**
+`migrate`, et la dernière ligne du tableau dit ce qu'il en coûte de l'oublier.
+
+**Ce que cette épreuve ne couvre pas** : elle fait tourner du code Python
+contre un schéma SQLite. Elle ne dit rien des déclencheurs PostgreSQL — qui ne
+sont pas les mêmes — ni du comportement de `docker compose`, mesuré ailleurs
+dans ce document.
 
 ### Cas B — « il démarre, mais les plans ne se lisent pas »
 

@@ -233,6 +233,158 @@ def plan_de_deux_pages(
     )
 
 
+# ---------------------------------------------------------------------------
+# Le plan de bâtiment : une géométrie dont on connaît les dimensions
+# ---------------------------------------------------------------------------
+#
+# **Pourquoi cette fixture existe, alors que `plan_de_deux_pages` existe déjà.**
+#
+# L'autre porte des TEXTES isolés. Elle éprouve les interactions — le texte est
+# situé, la loupe agrandit, le clic retombe au bon endroit — et c'est tout ce
+# qu'elle peut éprouver : il n'y a rien à mesurer sur un mot. Une démonstration
+# faite dessus agrandit « 00 » et mesure un fragment de « Coupe A-A ». Les
+# gestes sont les bons et le résultat ne veut rien dire.
+#
+# Celle-ci porte une GÉOMÉTRIE, et surtout une géométrie dont **les dimensions
+# sont connues sans passer par le lecteur** : elles sont posées ici, en points
+# PostScript, et converties en millimètres par une échelle déclarée juste
+# en dessous. Un test peut donc dire « la façade mesure 6 000 mm » sans l'avoir
+# demandé à Metreo, et comparer.
+#
+# C'est la différence entre « le parcours aboutit » et « le nombre est juste ».
+
+#: Combien de millimètres d'ouvrage vaut UN point de papier, sur ce plan.
+#:
+#: Vingt-cinq, c'est-à-dire une échelle d'environ 1:71. Le nombre n'a pas été
+#: choisi pour être réaliste mais pour que **toutes les dimensions tombent
+#: rondes** : 200 points font exactement 5 000 mm, 240 en font 6 000. Un test
+#: qui attend 5 000 et lit 4 999,97 dit quelque chose ; un test qui attend
+#: 4 987,3 ne dit plus rien à personne.
+MILLIMETRES_PAR_POINT = 25.0
+
+#: La ligne de cote de référence, en points, dans le repère du PDF.
+#:
+#: Horizontale, à extrémités matérialisées par des traits de rappel : c'est sur
+#: ELLE qu'on calibre, et son existence physique sur le dessin est le point.
+#: Une calibration posée sur deux coins de papier choisis au hasard n'est pas
+#: le geste d'un métreur ; poser les deux points sur les extrémités d'une cote
+#: écrite par le dessinateur, si.
+COTE_X0, COTE_X1, COTE_Y = 60.0, 260.0, 40.0
+
+#: Ce que cette cote déclare, et ce qu'elle mesure vraiment. Les deux doivent
+#: coïncider : c'est la fixture qui garantit que le texte écrit sur le dessin
+#: dit la vérité sur la géométrie dessinée.
+LONGUEUR_DE_LA_COTE_EN_MM = (COTE_X1 - COTE_X0) * MILLIMETRES_PAR_POINT  # 5 000
+
+#: La pièce fermée, en points : coin bas gauche et coin haut droit.
+#:
+#: Un rectangle, et pas une forme complexe : ce qui est éprouvé est que l'aire
+#: calculée par la formule du lacet retombe sur l'aire géométrique, pas la
+#: capacité du lecteur à suivre un contour tordu. Une pièce en L ferait un
+#: second test, pas un meilleur premier.
+PIECE_X0, PIECE_Y0, PIECE_X1, PIECE_Y1 = 60.0, 80.0, 300.0, 240.0
+
+#: Les trois nombres qu'un test compare à ce que Metreo rend.
+LARGEUR_DE_LA_PIECE_EN_MM = (PIECE_X1 - PIECE_X0) * MILLIMETRES_PAR_POINT  # 6 000
+PROFONDEUR_DE_LA_PIECE_EN_MM = (PIECE_Y1 - PIECE_Y0) * MILLIMETRES_PAR_POINT  # 4 000
+SURFACE_DE_LA_PIECE_EN_M2 = (
+    LARGEUR_DE_LA_PIECE_EN_MM * PROFONDEUR_DE_LA_PIECE_EN_MM
+) / 1_000_000.0  # 24,00
+
+#: La page. Assez grande pour que la pièce et la cote tiennent avec des marges,
+#: assez petite pour qu'un test qui se trompe d'axe produise un écart visible.
+LARGEUR_DU_PLAN = 420.0
+HAUTEUR_DU_PLAN = 320.0
+
+#: La demi-longueur d'un trait de rappel, de part et d'autre de la ligne de cote.
+#:
+#: Ce qui fait qu'une extrémité est POINTABLE : sans trait de rappel, les deux
+#: bouts d'une ligne horizontale sont deux pixels indiscernables du reste du
+#: trait, et « cliquez les deux extrémités » n'est plus une consigne exécutable.
+DEMI_TRAIT_DE_RAPPEL = 6.0
+
+
+def _trait(x0: float, y0: float, x1: float, y1: float, epaisseur: float = 1.0) -> bytes:
+    return f"{epaisseur:g} w {x0:g} {y0:g} m {x1:g} {y1:g} l S\n".encode("ascii")
+
+
+def _rectangle(x0: float, y0: float, x1: float, y1: float, epaisseur: float = 2.0) -> bytes:
+    """Un contour FERMÉ, par l'opérateur `re` puis `S`.
+
+    Fermé par le format lui-même et non par quatre traits : une pièce dessinée
+    en quatre segments séparés laisserait quatre micro-ouvertures aux angles,
+    et le contour qu'on demande à l'utilisateur de suivre ne serait pas
+    exactement celui que la fixture déclare.
+    """
+    return f"{epaisseur:g} w {x0:g} {y0:g} {x1 - x0:g} {y1 - y0:g} re S\n".encode("ascii")
+
+
+def plan_de_batiment(
+    *, largeur: float = LARGEUR_DU_PLAN, hauteur: float = HAUTEUR_DU_PLAN
+) -> bytes:
+    """Un plan portant une ligne de cote et une pièce fermée, aux dimensions connues.
+
+    Ce que le dessin contient, et pourquoi chaque élément y est :
+
+    - **une ligne de cote horizontale** de `COTE_X0` à `COTE_X1`, avec ses deux
+      traits de rappel et le texte « 5000 » au-dessus. C'est la cote sur
+      laquelle on calibre, et ses extrémités sont pointables ;
+    - **une pièce rectangulaire fermée**, dont la largeur, la profondeur et
+      l'aire sont calculées ici — jamais écrites sur le dessin. Les écrire
+      permettrait à une démonstration de « retrouver » un nombre qu'elle n'a
+      fait que lire ;
+    - **un cartouche** minimal : le nom de la pièce et une mention d'échelle,
+      pour que l'écran ait du texte à situer comme sur un vrai plan.
+
+    Le nom de la pièce est posé À L'INTÉRIEUR du contour. C'est délibéré : un
+    texte dans la pièce donne un repère visuel dans la loupe quand on en suit
+    les angles, et il éprouve au passage que le lecteur situe un fragment au
+    milieu du dessin et pas seulement en marge.
+    """
+    milieu_de_la_cote = (COTE_X0 + COTE_X1) / 2.0
+    contenu = b"".join(
+        (
+            # La ligne de cote, et ses deux traits de rappel.
+            _trait(COTE_X0, COTE_Y, COTE_X1, COTE_Y),
+            _trait(COTE_X0, COTE_Y - DEMI_TRAIT_DE_RAPPEL, COTE_X0, COTE_Y + DEMI_TRAIT_DE_RAPPEL),
+            _trait(COTE_X1, COTE_Y - DEMI_TRAIT_DE_RAPPEL, COTE_X1, COTE_Y + DEMI_TRAIT_DE_RAPPEL),
+            _contenu_texte("5000", milieu_de_la_cote - 12.0, COTE_Y + 8.0, corps=10.0),
+            # La pièce.
+            _rectangle(PIECE_X0, PIECE_Y0, PIECE_X1, PIECE_Y1),
+            _contenu_texte("SEJOUR", PIECE_X0 + 90.0, PIECE_Y0 + 76.0, corps=12.0),
+            # Le cartouche.
+            _contenu_texte("PLAN RDC", 320.0, 290.0, corps=10.0),
+            _contenu_texte("Ech. 1:71", 320.0, 275.0, corps=8.0),
+        )
+    )
+    return assembler(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {largeur:g} {hauteur:g}] "
+            f"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>".encode("ascii"),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            _flux(contenu),
+        ],
+        racine=1,
+    )
+
+
+def plan_de_batiment_en_portrait() -> bytes:
+    """Le même plan, sur une page PLUS HAUTE QUE LARGE.
+
+    Il existe pour un défaut précis, mesuré et corrigé : l'écran déclarait sa
+    résolution de pointage depuis la LARGEUR de la page, tandis que la tuile
+    ajuste son facteur sur le plus grand côté de la zone. Les deux coïncident
+    en paysage et divergent de 1,41 sur un A4 portrait — dans le mauvais sens,
+    celui qui annonce une mesure plus sûre qu'elle ne l'est.
+
+    Les quatre plans du propriétaire sont tous en paysage : sans cette fixture,
+    le cas ne serait éprouvé par rien.
+    """
+    return plan_de_batiment(largeur=HAUTEUR_DU_PLAN, hauteur=LARGEUR_DU_PLAN)
+
+
 def deux_pages_de_tailles_differentes() -> bytes:
     """Deux pages, deux formats, un texte identifiable sur chacune.
 
@@ -522,6 +674,8 @@ def main() -> int:
     for nom, octets in (
         ("une_page_avec_texte", une_page_avec_texte()),
         ("page_avec_plusieurs_textes", page_avec_plusieurs_textes()),
+        ("plan_de_batiment", plan_de_batiment()),
+        ("plan_de_batiment_en_portrait", plan_de_batiment_en_portrait()),
         ("deux_pages_de_tailles_differentes", deux_pages_de_tailles_differentes()),
         ("page_avec_boite_decalee", page_avec_boite_decalee()),
         ("page_tournee(90)", page_tournee(90)),

@@ -259,8 +259,19 @@ export function LecturePlan({
 
   return (
     <div data-testid="plan-lecture">
-      <p className="muted">
-        {t('plan.intro')}{' '}
+      {/*
+        Deux introductions, parce que les deux formats ne proposent pas le même
+        geste — et parce que la phrase unique disait faux pour l'un des deux.
+
+        « Aucune valeur n'est convertie : elles sont affichées dans l'unité du
+        document » décrit un DXF, qui porte son unité de dessin. Un PDF n'en
+        porte aucune : il n'y a rien à convertir ni à ne pas convertir, et
+        l'unité affichée est celle que la personne a déclarée en calibrant.
+        Resservir la phrase du DXF laissait croire que l'unité venait du
+        fichier.
+      */}
+      <p className="muted" data-testid="plan-introduction">
+        {t(plan?.format === 'pdf' ? 'plan.intro.pdf' : 'plan.intro.dxf')}{' '}
         {nomDuFichier ? <span className="mono">{nomDuFichier}</span> : null}
       </p>
       <ErrorNotice error={erreur} />
@@ -304,7 +315,26 @@ export function LecturePlan({
         </div>
       ) : plan ? (
         <>
-          <ConstatDuPlan plan={plan} />
+          {/*
+            **Le constat DXF ne s'affiche QUE pour un DXF**, et c'est le
+            correctif d'un défaut qui se voyait sur chaque capture : rendu sans
+            condition, il posait sur tout plan PDF un bandeau annonçant
+            « Aucune mesure n'est exploitable : le plan ne déclare pas son
+            unité de dessin » — au-dessus d'un écran dont mesurer est l'unique
+            objet, et d'un tableau de mesures marquées « mesurable ».
+
+            Le serveur n'a jamais menti : `mesurable` vaut faux pour un PDF
+            parce qu'un PDF ne porte aucune unité de dessin, et c'est exact.
+            C'était sa TRADUCTION à l'écran qui était fausse, parce qu'elle
+            avait été écrite pour un DXF sans `$INSUNITS`, où elle est juste.
+
+            Les quatre champs qui l'accompagnent — `$INSUNITS`, version DXF,
+            feuilles, entités par type — n'ont pas davantage de sens sur un
+            PDF : ils s'affichaient en tirets. L'écran PDF porte son propre
+            en-tête, qui dit ce qu'un PDF a vraiment : des pages, du texte, et
+            une échelle à déclarer.
+          */}
+          {plan.format !== 'pdf' && <ConstatDuPlan plan={plan} />}
           {/*
             Deux écrans, parce que deux formats ne demandent pas le même geste.
             Un DXF porte ses cotations et son unité : on les LIT, et l'écran
@@ -317,6 +347,7 @@ export function LecturePlan({
               documentId={documentId}
               revisionId={revisionId}
               plan={plan}
+              peutValider={peutValider}
               onRelire={charger}
             />
           ) : (

@@ -51,3 +51,42 @@ l'épreuve qui tourne dans l'image, pour qu'il n'y ait pas deux vérités sur ce
 que contient la fixture.
 
     python3 scripts/fabriquer_plans_de_test.py
+
+## `plan_batiment.pdf` — une géométrie dont on connaît les dimensions
+
+**Pourquoi un second plan PDF, alors que `plan_cote.pdf` existe.** Celui-ci
+porte des TEXTES isolés. Il éprouve les interactions — le texte est situé, la
+loupe agrandit, le clic retombe au bon endroit — et c'est tout ce qu'il peut
+éprouver : il n'y a rien à mesurer sur un mot. Une démonstration faite dessus
+agrandit « 00 » et mesure un fragment de « Coupe A-A ». Les gestes sont les
+bons, le résultat ne veut rien dire.
+
+`plan_batiment.pdf` porte, sur 420 × 320 points :
+
+- **une ligne de cote horizontale** de 200 points, avec ses deux traits de
+  rappel et le texte « 5000 ». C'est sur elle qu'on calibre, et ses extrémités
+  sont POINTABLES — sans traits de rappel, les deux bouts d'une ligne sont deux
+  pixels indiscernables du reste, et « cliquez les deux extrémités » cesse
+  d'être une consigne exécutable ;
+- **une pièce rectangulaire fermée** de 240 × 160 points, tracée par un seul
+  contour fermé et non par quatre segments — quatre segments laisseraient
+  quatre micro-ouvertures aux angles ;
+- un cartouche minimal, pour que l'écran ait du texte à situer.
+
+**L'échelle du dessin est déclarée dans la fabrique** : un point de papier vaut
+25 mm d'ouvrage. La cote fait donc 5 000 mm, la pièce 6 000 × 4 000 mm, et sa
+surface **24,00 m²** — trois nombres calculés depuis la géométrie posée, jamais
+écrits sur le dessin et jamais lus par le lecteur.
+
+`plan_batiment.json`, écrit à côté du PDF par la même fabrique, porte ces
+nombres et les coordonnées des points à cliquer. C'est la **seule** passerelle
+vers le TypeScript : un parcours de navigateur ne peut pas importer du Python,
+et recopier les chiffres ferait deux sources dont la seconde finirait par
+mentir.
+
+Il existe aussi en **portrait** — `plan_de_batiment_en_portrait()`, non écrit
+sur le disque — parce que les quatre plans du propriétaire sont tous en
+paysage, et qu'un défaut de résolution de pointage ne se voit que sur une page
+plus haute que large.
+
+    python3 scripts/fabriquer_plans_de_test.py

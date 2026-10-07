@@ -28,6 +28,7 @@ puisqu'on ne saurait plus si le refus vient de l'en-tête ou de la suite.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -50,7 +51,14 @@ REMPLISSAGE = bytes((i * 7 + 13) % 256 for i in range(256))
 
 
 #: Ce que la ligne de commande doit AVOIR produit pour rendre 0.
-ATTENDUS: tuple[str, ...] = ("binaire.dxf", "faux.dwg", "mur_cote.dxf", "plan_cote.pdf")
+ATTENDUS: tuple[str, ...] = (
+    "binaire.dxf",
+    "faux.dwg",
+    "mur_cote.dxf",
+    "plan_cote.pdf",
+    "plan_batiment.pdf",
+    "plan_batiment.json",
+)
 
 
 def fabriquer() -> list[Path]:
@@ -72,6 +80,7 @@ def fabriquer() -> list[Path]:
         ecrits.append(cote)
 
     ecrits.append(_plan_pdf())
+    ecrits.append(_plan_de_batiment())
 
     return ecrits
 
@@ -96,6 +105,58 @@ def _plan_pdf() -> Path:
 
     chemin = SORTIE / "plan_cote.pdf"
     chemin.write_bytes(fabriquer_pdf_de_test.plan_de_deux_pages())
+    return chemin
+
+
+def _plan_de_batiment() -> Path:
+    """Un plan portant une GÉOMÉTRIE dont les dimensions sont connues d'avance.
+
+    La différence avec `plan_cote.pdf`, et c'est toute la raison d'être de ce
+    second fichier : l'autre porte des textes isolés, sur lesquels un parcours
+    peut éprouver les gestes mais rien mesurer de vérifiable. Celui-ci porte une
+    ligne de cote à extrémités pointables et une pièce fermée, dont la longueur
+    et l'aire sont posées dans `fabriquer_pdf_de_test` en points de papier et
+    converties par une échelle déclarée — jamais lues sur le dessin.
+
+    Un parcours peut donc calibrer sur la cote, mesurer la façade et le contour
+    de la pièce, et **comparer à une vérité qui ne vient pas de Metreo**.
+    """
+    sys.path.insert(0, str(RACINE / "scripts"))
+    import fabriquer_pdf_de_test
+
+    chemin = SORTIE / "plan_batiment.pdf"
+    chemin.write_bytes(fabriquer_pdf_de_test.plan_de_batiment())
+
+    # La VÉRITÉ du dessin, écrite à côté de lui.
+    #
+    # Elle est posée dans `fabriquer_pdf_de_test` en points de papier ; un
+    # parcours de navigateur, lui, raisonne en fractions d'écran et ne peut pas
+    # importer du Python. Recopier les chiffres dans le TypeScript ferait deux
+    # sources, et la seconde finirait par mentir. Ce fichier est donc la seule
+    # passerelle, et il est fabriqué par celui qui dessine.
+    verite = {
+        "millimetres_par_point": fabriquer_pdf_de_test.MILLIMETRES_PAR_POINT,
+        "page": [fabriquer_pdf_de_test.LARGEUR_DU_PLAN, fabriquer_pdf_de_test.HAUTEUR_DU_PLAN],
+        "cote": {
+            "premier": [fabriquer_pdf_de_test.COTE_X0, fabriquer_pdf_de_test.COTE_Y],
+            "second": [fabriquer_pdf_de_test.COTE_X1, fabriquer_pdf_de_test.COTE_Y],
+            "longueur_mm": fabriquer_pdf_de_test.LONGUEUR_DE_LA_COTE_EN_MM,
+        },
+        "piece": {
+            "coins": [
+                [fabriquer_pdf_de_test.PIECE_X0, fabriquer_pdf_de_test.PIECE_Y0],
+                [fabriquer_pdf_de_test.PIECE_X1, fabriquer_pdf_de_test.PIECE_Y0],
+                [fabriquer_pdf_de_test.PIECE_X1, fabriquer_pdf_de_test.PIECE_Y1],
+                [fabriquer_pdf_de_test.PIECE_X0, fabriquer_pdf_de_test.PIECE_Y1],
+            ],
+            "largeur_mm": fabriquer_pdf_de_test.LARGEUR_DE_LA_PIECE_EN_MM,
+            "profondeur_mm": fabriquer_pdf_de_test.PROFONDEUR_DE_LA_PIECE_EN_MM,
+            "surface_m2": fabriquer_pdf_de_test.SURFACE_DE_LA_PIECE_EN_M2,
+        },
+    }
+    (SORTIE / "plan_batiment.json").write_text(
+        json.dumps(verite, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return chemin
 
 

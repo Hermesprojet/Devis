@@ -395,3 +395,104 @@ main.public h2 {
 .pdf-mesures strong { font-variant-numeric: tabular-nums; }
 .pdf-mesures input { width: 100%; margin-top: 4px; }
 .pdf-mesures button { margin-top: 4px; }
+
+/* ===========================================================================
+   L'espace de mesure : le plan, les commandes et la mesure vérifiée ensemble
+   ===========================================================================
+
+   Le défaut corrigé, visible sur les captures du parcours : un aperçu, puis
+   une très grande loupe EN DESSOUS, puis les formulaires, puis le tableau des
+   résultats encore plus bas. Nommer une mesure obligeait à quitter le dessin
+   des yeux ; vérifier un tracé obligeait à remonter.
+
+   Deux colonnes, et la gauche COLLANTE : le plan reste à l'écran pendant qu'on
+   agit à droite et pendant qu'on relit la liste en dessous. */
+.pdf-espace {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 12px;
+}
+.pdf-colonne-plan {
+  position: sticky;
+  top: 12px;
+  min-width: 0;
+}
+.pdf-colonne-action {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+/* Une seule colonne sous 960 px : côte à côte, chacune deviendrait trop
+   étroite pour qu'on y pointe quoi que ce soit, et une loupe de 200 pixels ne
+   remplit plus son office. Le collant est retiré avec : sur un écran étroit,
+   une colonne collante mange la hauteur utile. */
+@media (max-width: 960px) {
+  .pdf-espace { grid-template-columns: minmax(0, 1fr); }
+  .pdf-colonne-plan { position: static; }
+}
+
+/* Le fil d'état : quatre étapes, celle en cours mise en avant. */
+.pdf-fil {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.pdf-fil li {
+  flex: 1 1 200px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 2px;
+}
+.pdf-fil li strong { font-size: 14px; }
+.pdf-fil li span { font-size: 12px; }
+/* L'étape en cours porte une bordure franche ET un fond : la couleur seule ne
+   suffit pas, et un liseré seul se perd sur un écran mal réglé. */
+.pdf-fil li[data-etat='en-cours'] {
+  border-color: var(--accent);
+  border-width: 2px;
+  background: var(--accent-soft, rgba(0, 0, 0, 0.03));
+}
+.pdf-fil li[data-etat='faite'] strong::before { content: '✓ '; }
+.pdf-fil li[data-etat='a-faire'] { opacity: 0.65; }
+
+/* La mesure qu'on vérifie, posée à côté du dessin. */
+.pdf-regardee {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+/* Le tracé de la mesure VÉRIFIÉE, et ses sommets.
+
+   Plus épais et opaque, là où les autres mesures restent discrètes : si tous
+   les tracés se valaient, « montrer sur le plan » ne montrerait rien. Les
+   sommets sont ce qui permet de dire « ce point-là n'est pas sur l'angle du
+   mur » — un trait seul ne le dit pas. */
+.pdf-mesure.selectionnee {
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: none;
+}
+.pdf-sommet {
+  fill: var(--accent);
+  stroke: #fff;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* La ligne du tableau qu'on est en train de vérifier. */
+.pdf-mesures tr[data-selectionnee='oui'] { background: var(--accent-soft, rgba(0, 0, 0, 0.04)); }
+
+/* La valeur corrigée et son unité, sur une seule ligne : l'unité n'est pas
+   saisissable — on corrige un nombre, pas une dimension. */
+.pdf-correction { display: flex; gap: 6px; align-items: baseline; }
+.pdf-correction input { flex: 1 1 auto; }
