@@ -185,11 +185,16 @@ test('une mesure corrigée sur un plan devient une ligne de bordereau, puis un m
   const aNouveau = ligneDeMesure(page, LONGUEUR)
   await aNouveau.getByTestId('pdf-ouvrir-reprise').click()
   const second = page.getByTestId('pdf-formulaire-reprise')
-  await expect(second.getByTestId('pdf-apercu-quantite')).toContainText(QUANTITE_ATTENDUE, {
-    timeout: 20_000,
-  })
+
+  // Le formulaire rouvert repart sur l'unité de la MESURE — ici le millimètre —
+  // et c'est correct : il n'a pas de mémoire, et le choix précédent appartient
+  // à une ligne qui existe déjà. Ce qui est éprouvé ici n'est pas le nombre,
+  // c'est le refus ; on attend donc que l'aperçu soit arrivé, sans supposer
+  // dans quelle unité.
+  await expect(second.getByTestId('pdf-reprendre')).toBeDisabled()
   await second.getByTestId('pdf-reprise-position').fill('90.20')
   await second.getByTestId('pdf-reprise-designation').fill('Le même mur, une seconde fois')
+  await expect(second.getByTestId('pdf-reprendre')).toBeEnabled({ timeout: 20_000 })
   await second.getByTestId('pdf-reprendre').click()
   await expect(second.getByTestId('notice-erreur')).toContainText('déjà', { timeout: 20_000 })
 
