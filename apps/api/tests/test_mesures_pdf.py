@@ -337,9 +337,22 @@ def test_a_contour_that_crosses_itself_is_flagged_not_corrected() -> None:
 
 
 def test_a_simple_contour_is_not_flagged_as_crossing_itself() -> None:
-    """Le contre-exemple : sans lui, un détecteur qui dit « oui » à tout passe."""
+    """Le contre-exemple : sans lui, un détecteur qui dit « oui » à tout passe.
+
+    **Pourquoi ce test nomme désormais la réserve au lieu d'exiger une liste
+    vide.** Il en exigeait une, ce qui lui faisait vérifier deux choses à la
+    fois : qu'aucun croisement n'est signalé, et que l'incertitude reste sous
+    le seuil. La seconde n'est pas son sujet, et elle a changé de réponse le
+    jour où l'erreur de pointage d'une aire a cessé d'être approximée par le
+    périmètre : sur ce L, un demi-point d'erreur sur un sommet déplace l'aire
+    de 1,9 % — l'ancienne approximation annonçait 0,3 %. La mesure porte donc
+    maintenant « incertitude_elevee », et c'est juste.
+    """
     carre = [Point(0.0, 0.0), Point(50.0, 0.0), Point(50.0, 50.0), Point(0.0, 50.0)]
-    assert mesures_pdf.aire(carre, CENT_POINTS_POUR_CINQ_METRES).reserves == ()
+    assert (
+        "contour_qui_se_recoupe"
+        not in mesures_pdf.aire(carre, CENT_POINTS_POUR_CINQ_METRES).reserves
+    )
 
     # Et une forme concave non plus : un L se trace sans se croiser.
     forme_en_l = [
@@ -350,7 +363,10 @@ def test_a_simple_contour_is_not_flagged_as_crossing_itself() -> None:
         Point(20.0, 60.0),
         Point(0.0, 60.0),
     ]
-    assert mesures_pdf.aire(forme_en_l, CENT_POINTS_POUR_CINQ_METRES).reserves == ()
+    assert (
+        "contour_qui_se_recoupe"
+        not in mesures_pdf.aire(forme_en_l, CENT_POINTS_POUR_CINQ_METRES).reserves
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -201,8 +201,22 @@ test('un plan PDF déposé montre ses textes, se calibre par deux points, se mes
   const valeur = (await premiere.getByTestId('pdf-valeur').innerText()).trim()
   expect(valeur, 'la mesure doit porter une valeur et son unité').toMatch(/\d/)
   expect(valeur).toContain('mm')
+  // Écrite en français, et arrondie au rang de son incertitude. Le chiffre de
+  // trop est ce que la capture du parcours avait rendu visible :
+  // « 4180.6822810844 mm » à côté de « ± 26,4 mm ».
+  expect(valeur, 'un nombre français : virgule ou espace insécable').toMatch(/[,\u202f]/)
+  expect(valeur, 'plus de trois décimales annoncent une précision absente').not.toMatch(
+    /[,.]\d{4}/,
+  )
+  await expect(premiere.getByTestId('pdf-incertitude')).toContainText('±')
   await expect(premiere.getByTestId('pdf-fiabilite')).not.toBeEmpty()
   await expect(premiere.getByTestId('pdf-decision')).toHaveText('—')
+  // Tant que personne n'a tranché, RIEN ne peut alimenter un bordereau — et
+  // l'écran le dit au lieu de le laisser deviner.
+  await expect(premiere.getByTestId('pdf-reprenable')).toHaveAttribute(
+    'data-reprenable',
+    'non',
+  )
 
   // ---- 11. la correction humaine. Le motif est exigé AVANT : le bouton reste
   //          inerte sans lui, parce qu'une décision sans raison n'est pas une
@@ -220,10 +234,18 @@ test('un plan PDF déposé montre ses textes, se calibre par deux points, se mes
   // ce que le programme avait proposé.
   const decidee = page
     .getByTestId('pdf-mesure')
-    .filter({ has: page.getByTestId('pdf-valeur-retenue') })
+    .filter({ hasText: 'corrigée' })
     .first()
   await expect(decidee).toBeVisible({ timeout: DELAI_ANALYSE })
   await expect(decidee.getByTestId('pdf-valeur')).toHaveText(valeur)
-  await expect(decidee.getByTestId('pdf-valeur-retenue')).toContainText('3800')
-  await expect(decidee.getByTestId('pdf-decision')).toHaveText('corrigée')
+  // « 3 800,50 mm » : l'espace est insécable, donc on cherche les deux
+  // morceaux plutôt que « 3800 », qui n'existe plus à l'écran.
+  await expect(decidee.getByTestId('pdf-valeur-retenue')).toContainText('800,50 mm')
+  await expect(decidee.getByTestId('pdf-decision')).toContainText('corrigée')
+  // La décision porte sa raison, et la mesure devient reprenable.
+  await expect(decidee.getByTestId('pdf-motif-retenu')).toContainText('Relevé sur place')
+  await expect(decidee.getByTestId('pdf-reprenable')).toHaveAttribute(
+    'data-reprenable',
+    'oui',
+  )
 })

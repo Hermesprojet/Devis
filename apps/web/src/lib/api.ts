@@ -1057,7 +1057,30 @@ export type MesureDePdf = {
   cadre: PlanCadre | null
   calibration: Record<string, unknown>
   decision: string | null
+  /** Pourquoi la personne a tranché ainsi. Une décision sans sa raison n'est
+      pas auditable : dans six mois, « 3,80 m » ne vaut que si l'on sait d'où
+      ce nombre vient. */
+  motif_de_la_decision: string | null
   valeur_corrigee: string | null
+  /**
+   * Les mêmes nombres, écrits pour être LUS — « 4 181 mm », « ± 26 mm ».
+   *
+   * Rendus par le SERVEUR, et l'écran ne refait pas l'arrondi : deux règles
+   * d'affichage, une en Python et une ici, finiraient par diverger d'un
+   * chiffre, et c'est l'écart qu'on ne voit jamais venir. La valeur exacte
+   * reste au-dessus, et c'est elle qu'on reprendrait pour calculer.
+   */
+  valeur_lisible: string
+  incertitude_lisible: string
+  valeur_retenue_lisible: string | null
+  unite_retenue: string | null
+  /** Ce qui compte une fois la décision prise : la valeur retenue si la
+      personne a corrigé, la mesure si elle a confirmé, `null` si elle a rejeté
+      ou n'a pas encore tranché. */
+  valeur_retenue: string | null
+  /** Vrai quand cette mesure peut alimenter un bordereau. Faux pour une mesure
+      rejetée, et faux tant que personne n'a tranché. */
+  reprenable: boolean
 }
 
 export type MesuresDePdf = {

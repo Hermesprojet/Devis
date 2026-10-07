@@ -1122,7 +1122,27 @@ class MesureDePdf(ApiModel):
     #: D'où vient l'échelle qui a produit ce nombre.
     calibration: dict[str, Any]
     decision: str | None
+    #: **Pourquoi** la personne a tranché ainsi — affiché à côté de la décision.
+    #: Une décision sans sa raison n'est pas auditable.
+    motif_de_la_decision: str | None
     valeur_corrigee: str | None
+    #: Les mêmes nombres, écrits pour être LUS — « 4 181 mm », « ± 26 mm ».
+    #:
+    #: Rendus par le serveur et non recalculés par l'écran, comme
+    #: `facteur_lisible` : deux arrondis finiraient par diverger d'un chiffre,
+    #: et c'est l'écart qu'on ne voit jamais venir. La valeur exacte reste
+    #: au-dessus, et c'est elle qu'on reprend pour calculer.
+    valeur_lisible: str
+    incertitude_lisible: str
+    valeur_retenue_lisible: str | None
+    unite_retenue: str | None
+    #: **Ce qui compte une fois la décision prise** : la valeur retenue si la
+    #: personne a corrigé, la mesure si elle a confirmé, `null` si elle a
+    #: rejeté ou n'a pas encore tranché.
+    valeur_retenue: str | None
+    #: Vrai quand cette mesure peut alimenter un bordereau. Faux pour une
+    #: mesure rejetée, et faux tant que personne n'a tranché.
+    reprenable: bool
 
 
 class MesuresDePdf(ApiModel):

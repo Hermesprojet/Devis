@@ -263,12 +263,18 @@ def documents_a_detruire(
     serait devenu une purge en échec sur des PNG inexistants ; l'intention
     documentée est donc désormais celle du code.
 
-    **Ce que cette fonction n'inscrit TOUJOURS PAS, et qu'il faut savoir :**
-    les ORIGINAUX des documents, c'est-à-dire `document_revisions.storage_key`.
-    Ils survivent donc à une purge d'organisation. Ce défaut est antérieur à la
-    lecture de plans et n'est pas corrigé ici : il touche le registre d'une
-    purge auditée, et mérite sa propre tranche avec ses propres tests. Il est
-    signalé plutôt que tu.
+    **Les ORIGINAUX sont désormais inscrits, et ce ne l'était pas.**
+
+    `document_revisions.storage_key` manquait au registre. Comme `executer`
+    supprime la ligne de la révision, la clé disparaissait avec elle, et le
+    fichier restait sur le volume sans qu'aucune ligne ne le désigne plus. Le
+    défaut est antérieur à la lecture de plans ; ce qui a changé est ce que ces
+    fichiers CONTIENNENT. Un import de prix orphelin est un déchet ; un plan
+    d'exécution client orphelin est une fuite.
+
+    Chaque révision apporte donc son original PUIS ses dérivés, dans cet ordre :
+    `executer` supprime dans l'ordre du registre, et une interruption en cours
+    de route doit laisser des dérivés sans original plutôt que l'inverse.
 
     Les inscrire tous n'est pas une précaution : c'est la condition pour que le
     registre dise la vérité. `executer` supprime la ligne `organizations`, donc
@@ -344,6 +350,32 @@ def documents_a_detruire(
             if stockage is not None
             else []
         )
+        # **L'ORIGINAL d'abord**, et avant ses dérivés.
+        #
+        # Il manquait, et c'était le défaut le plus lourd de cette fonction :
+        # `executer` supprime la ligne `document_revisions`, donc
+        # `storage_key` disparaît avec elle — et le fichier restait sur le
+        # volume sans qu'AUCUNE ligne ne le désigne plus. Tant que Metreo ne
+        # stockait que des imports de prix, c'était un déchet ; depuis qu'il
+        # reçoit des plans d'exécution, c'est le plan d'un client qui survit à
+        # la destruction de son organisation.
+        #
+        # Il est inscrit AVANT les dérivés parce que `executer` supprime dans
+        # l'ordre du registre, et qu'un original détruit avant ses dérivés
+        # laisserait, en cas d'interruption, des aperçus sans source — l'état
+        # exactement inverse de celui qu'on veut.
+        if revision.storage_key and (stockage is None or stockage.taille(revision.storage_key)):
+            fichiers.append(
+                Document(
+                    quote_id=revision.id,
+                    number=f"révision {revision.revision_number} (original)",
+                    storage_key=revision.storage_key,
+                    # Celle-ci, on la connaît : c'est l'empreinte calculée au
+                    # dépôt, et elle fait du registre un écrit vérifiable.
+                    sha256=revision.sha256 or "",
+                )
+            )
+
         for cle, quoi in derives:
             if stockage is not None and stockage.taille(cle) is None:
                 continue

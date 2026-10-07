@@ -669,6 +669,20 @@ def record_validation_decision(
         proposal_id,
         label="Proposition",
     )
+
+    # Une mesure de plan corrigée doit porter une QUANTITÉ, et non le texte
+    # qu'une personne a bien voulu taper. La règle vit dans le module qui
+    # connaît la forme de ces propositions ; elle est appliquée ICI parce que
+    # c'est le seul endroit par lequel une décision passe.
+    #
+    # Import différé, et c'est le seul du fichier : `calibration_de_plan` tire
+    # tout le lecteur de plans — PDFium compris — et ce module-ci doit rester
+    # importable dans une installation sans l'extra `pdf`.
+    if proposal.schema_name == "mesure_pdf" and payload.decision == "corrected":
+        from . import calibration_de_plan
+
+        calibration_de_plan.verifier_la_valeur_retenue(proposal, payload.after_value)
+
     decision = ValidationDecision(
         organization_id=context.organization_id,
         proposal_id=proposal.id,

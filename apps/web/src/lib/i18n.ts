@@ -222,11 +222,23 @@ const fr: Dictionary = {
   // les recomposer ici reviendrait à tenir deux textes d'accord.
   'plan.title': 'Lecture du plan',
   'plan.backToProject': 'Retour au chantier',
-  'plan.intro':
+  // Deux introductions, parce que les deux formats ne proposent pas le même
+  // geste. La phrase unique d'avant décrivait un DXF — « aucune valeur n'est
+  // convertie : elles sont affichées dans l'unité du document » — et était
+  // resservie telle quelle à un PDF, qui ne porte AUCUNE unité. Elle laissait
+  // donc croire que l'unité d'une mesure PDF venait du fichier, alors qu'elle
+  // vient de la personne qui a calibré.
+  'plan.intro.dxf':
     'Ce que Metreo a LU dans le fichier, et les mesures qu’il en propose. '
     + 'Rien n’est repris dans un bordereau tant qu’une personne n’a pas '
     + 'tranché, mesure par mesure. Aucune valeur n’est convertie : elles sont '
     + 'affichées dans l’unité du document.',
+  'plan.intro.pdf':
+    'Un PDF ne porte aucune unité de dessin : Metreo ne peut rien y mesurer '
+    + 'seul. Vous déclarez l’échelle sur une cote que vous connaissez, puis '
+    + 'vous POINTEZ ce qu’il faut mesurer — Metreo calcule, avec son '
+    + 'incertitude. Rien n’est repris dans un bordereau tant que vous n’avez '
+    + 'pas tranché, mesure par mesure.',
   'plan.notAnalysed':
     'Ce plan n’a pas encore été lu. Lancer la lecture ne modifie pas le fichier '
     + 'déposé : elle produit un rendu consultable et une liste de mesures proposées, '
@@ -280,6 +292,54 @@ const fr: Dictionary = {
   // Un PDF n'a pas d'unité : tout ce vocabulaire tourne autour de ce fait.
   // « Échelle » y désigne une DÉCLARATION humaine, jamais une lecture.
   'plan.pdf.titre': 'Plan PDF',
+
+  // ---- Le fil d'état -------------------------------------------------------
+  //
+  // Quatre étapes, affichées en permanence, celle en cours mise en avant. Elles
+  // existent parce que l'écran ne disait nulle part OÙ l'on en était : il
+  // affichait des outils, un badge « aucune échelle », et laissait deviner que
+  // l'un conditionnait l'autre. Un parcours en quatre gestes se montre.
+  'plan.pdf.fil': 'Où vous en êtes',
+  'plan.pdf.etape.echelle': 'Déclarer l’échelle',
+  'plan.pdf.etape.echelleAide':
+    'Ouvrez la loupe sur une cote que vous connaissez, cliquez ses deux '
+    + 'extrémités, et saisissez la distance réelle.',
+  'plan.pdf.etape.echelleFaite': 'Échelle confirmée',
+  'plan.pdf.etape.mesurer': 'Pointer et mesurer',
+  'plan.pdf.etape.mesurerAide':
+    'Choisissez « longueur » ou « surface », puis cliquez dans la loupe les '
+    + 'points de ce que vous mesurez. Metreo calcule — il ne devine rien.',
+  'plan.pdf.etape.mesurerFaite': '{nombre} mesure(s) calculée(s)',
+  'plan.pdf.etape.decider': 'Décider',
+  'plan.pdf.etape.deciderAide':
+    'Confirmez, corrigez ou rejetez chaque mesure, avec un motif. Tant que '
+    + 'vous n’avez pas tranché, rien ne peut alimenter un bordereau.',
+  'plan.pdf.etape.deciderFaite': '{tranchees} tranchée(s) sur {total}',
+  'plan.pdf.etape.enCours': 'en cours',
+  'plan.pdf.etape.aFaire': 'à faire',
+  'plan.pdf.etape.faite': 'fait',
+
+  // ---- Ce que l'écran explique avant qu'on clique --------------------------
+  'plan.pdf.commentPointer':
+    'L’aperçu sert à TROUVER la zone ; la loupe sert à POINTER. Un pixel de '
+    + 'l’aperçu vaut plusieurs centimètres d’ouvrage sur un plan de grand '
+    + 'format — c’est pourquoi les points se posent dans la loupe.',
+  'plan.pdf.loupeDeplacable':
+    'La loupe se déplace sans perdre les points déjà posés : cliquez ailleurs '
+    + 'sur l’aperçu pour atteindre l’autre extrémité d’une longue cote.',
+
+  // ---- La mesure, sa décision, et ce qui les distingue ---------------------
+  'plan.pdf.colMesuree': 'Mesure calculée',
+  'plan.pdf.colRetenue': 'Valeur retenue',
+  'plan.pdf.calculeePar': 'calculée par Metreo',
+  'plan.pdf.pasEncoreTranchee': 'pas encore tranchée',
+  'plan.pdf.rienARetenir': 'rien à retenir',
+  'plan.pdf.reprenable': 'peut alimenter un bordereau',
+  'plan.pdf.nonReprenable': 'n’alimentera aucun bordereau',
+  'plan.pdf.motifRetenu': 'Motif : {motif}',
+  'plan.pdf.voirLeTrace': 'Voir le tracé',
+  'plan.pdf.traceAffiche': 'Tracé affiché sur le plan',
+
   'plan.pdf.pages': 'Pages',
   'plan.pdf.pagesLabel': 'Pages',
   'plan.pdf.pageSur': 'Page {page} sur {total}',
@@ -287,6 +347,12 @@ const fr: Dictionary = {
   'plan.pdf.outils': 'Outils',
   'plan.pdf.texteLabel': 'Textes lus',
   'plan.pdf.sansTexte': 'aucun — plan probablement scanné',
+  // Dit à CÔTÉ du compte, et non à sa place. L'en-tête affichait « aucun »
+  // alors que le bas de l'écran annonçait « 4 textes affichés sur 4 lus » :
+  // deux phrases contradictoires sur la même page, parce que l'une parlait du
+  // SEUIL d'extraction et l'autre du nombre réellement lu.
+  'plan.pdf.texteMaigre':
+    'trop peu pour une extraction fiable — plan probablement scanné',
   'plan.pdf.echelleLabel': 'Échelle déclarée',
   'plan.pdf.sansEchelle': 'aucune : rien ne peut être mesuré',
   'plan.pdf.sansApercu':

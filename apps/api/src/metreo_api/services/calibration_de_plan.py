@@ -28,15 +28,16 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import ExtractionProposal, PlanCalibration, SourceCitation, ValidationDecision
-from . import audit, lecture_de_plan, mesures_pdf
+from . import audit, lecture_de_plan, lisible, mesures_pdf
 from .document_storage import StockageLocal
 from .mesures_pdf import Calibration, Point
 from .tenant import owned_query
@@ -523,7 +524,38 @@ class MesureALire:
     cadre: tuple[str, str, str, str] | None
     calibration: dict[str, Any]
     decision: str | None
+    #: **Pourquoi** la personne a tranché ainsi. Conservé et rendu, parce
+    #: qu'une décision sans sa raison n'est pas auditable : dans six mois, « ce
+    #: poste est à 3,80 m » ne vaut que si l'on sait d'où vient ce 3,80.
+    motif_de_la_decision: str | None
     valeur_corrigee: str | None
+    #: Les trois mêmes nombres, écrits pour être LUS — jamais pour être relus.
+    #:
+    #: Rendus par le serveur et non calculés par l'écran, comme
+    #: `facteur_lisible` : deux arrondis, un en Python et un en TypeScript,
+    #: finiraient par diverger d'un chiffre. La valeur exacte reste au-dessus.
+    valeur_lisible: str
+    incertitude_lisible: str
+    valeur_retenue_lisible: str | None
+    #: L'unité dans laquelle la personne a exprimé sa correction. Toujours
+    #: celle de la mesure : corriger une surface en millimètres n'aurait pas
+    #: de sens, et le serveur le refuse.
+    unite_retenue: str | None
+    #: **La valeur qui compte**, une fois la décision prise : celle que la
+    #: personne a retenue si elle a corrigé, la mesure si elle a confirmé,
+    #: et RIEN si elle a rejeté ou n'a pas encore tranché.
+    #:
+    #: Calculée ici plutôt que par chaque appelant, parce que c'est ici qu'on
+    #: connaît la règle : une proposition machine n'est pas une quantité, et
+    #: seule une décision humaine en fait une.
+    valeur_retenue: str | None
+    #: Vrai quand cette mesure peut alimenter un bordereau.
+    #:
+    #: Une mesure **rejetée ne le peut jamais**, et une mesure sur laquelle
+    #: personne n'a tranché non plus. C'est la règle que `reprenables()`
+    #: applique, exposée ligne par ligne pour que l'écran puisse la dire au
+    #: lieu de la laisser deviner.
+    reprenable: bool
 
 
 def lister(session: Session, *, organization_id: str, revision_id: str) -> list[MesureALire]:
@@ -570,6 +602,17 @@ def lister(session: Session, *, organization_id: str, revision_id: str) -> list[
         cadre = None
         if citation.x0 is not None:
             cadre = (str(citation.x0), str(citation.y0), str(citation.x1), str(citation.y1))
+
+        unite = str(valeur.get("unite", ""))
+        brute = _en_decimal(valeur.get("valeur"))
+        incertitude = _en_decimal(valeur.get("incertitude"))
+        corrigee = _en_decimal(apres.get("valeur")) if isinstance(apres, dict) else None
+        unite_retenue = (
+            str(apres.get("unite")) if isinstance(apres, dict) and apres.get("unite") else None
+        )
+        decision = derniere.decision if derniere is not None else None
+        retenue = _valeur_retenue(decision, brute, corrigee)
+
         mesures.append(
             MesureALire(
                 proposal_id=proposition.id,
@@ -590,11 +633,178 @@ def lister(session: Session, *, organization_id: str, revision_id: str) -> list[
                 ),
                 cadre=cadre,
                 calibration=dict(valeur.get("calibration") or {}),
-                decision=derniere.decision if derniere is not None else None,
+                decision=decision,
+                motif_de_la_decision=(derniere.reason if derniere is not None else None),
                 valeur_corrigee=(str(apres.get("valeur")) if isinstance(apres, dict) else None),
+                valeur_lisible=(
+                    lisible.quantite_lisible(brute, unite, incertitude=incertitude)
+                    if brute is not None
+                    else ""
+                ),
+                incertitude_lisible=(
+                    lisible.incertitude_lisible(incertitude, unite)
+                    if incertitude is not None
+                    else ""
+                ),
+                valeur_retenue_lisible=(
+                    lisible.quantite_lisible(corrigee, unite_retenue or unite)
+                    if corrigee is not None
+                    else None
+                ),
+                unite_retenue=unite_retenue,
+                valeur_retenue=(str(retenue) if retenue is not None else None),
+                reprenable=retenue is not None,
             )
         )
     return mesures
+
+
+def _en_decimal(valeur: Any) -> Decimal | None:
+    """Un nombre, ou rien — jamais une exception à l'affichage.
+
+    Les valeurs d'une proposition sont des chaînes décimales, et elles le sont
+    depuis que la table existe. Mais `value` est du JSON : rien en base ne
+    garantit qu'une ligne écrite par une version future, ou corrigée à la main,
+    reste lisible. Une liste de mesures qui tombe en 500 parce qu'une ligne est
+    bizarre serait pire que la ligne bizarre.
+    """
+    if valeur in (None, ""):
+        return None
+    try:
+        return Decimal(str(valeur))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+#: Les décisions qui font d'une proposition une quantité.
+#:
+#: Deux, et c'est délibérément court. « confirmée » retient la mesure telle
+#: quelle ; « corrigée » retient la valeur de la personne. **« rejetée » ne
+#: retient RIEN**, et une mesure sur laquelle personne n'a tranché non plus :
+#: une proposition machine n'est pas une quantité tant qu'un humain ne l'a pas
+#: faite sienne.
+DECISIONS_QUI_RETIENNENT: frozenset[str] = frozenset({"accepted", "corrected"})
+
+
+def _valeur_retenue(
+    decision: str | None, mesuree: Decimal | None, corrigee: Decimal | None
+) -> Decimal | None:
+    """Ce qu'il faudrait reprendre dans un bordereau — ou rien.
+
+    **Rien, c'est le cas le plus fréquent**, et c'est voulu : tant qu'aucune
+    personne n'a tranché, il n'y a pas de quantité. Le produit tient à cette
+    règle depuis le début ; cette fonction est l'endroit où elle devient
+    exécutable au lieu d'être une phrase dans un guide.
+    """
+    if decision not in DECISIONS_QUI_RETIENNENT:
+        return None
+    if decision == "corrected":
+        # Une correction sans valeur chiffrée ne retient rien : c'est un refus
+        # déguisé, et le reprendre reviendrait à reprendre la proposition que
+        # la personne venait justement d'écarter.
+        return corrigee
+    return mesuree
+
+
+class ValeurRetenueRefusee(Exception):
+    """La valeur retenue par la personne n'en est pas une, et on dit pourquoi."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def verifier_la_valeur_retenue(proposition: ExtractionProposal, apres: Any) -> None:
+    """Une correction doit être une QUANTITÉ : un nombre, et son unité.
+
+    **Le défaut que cette fonction ferme.** `after_value` est un
+    `dict[str, Any]`, et il l'est pour une bonne raison — il sert à toutes les
+    propositions d'extraction, dont la forme varie. Mais pour une mesure de
+    plan, cela voulait dire que « 3,8 m environ », « quatre mètres » ou une
+    chaîne vide étaient acceptés, stockés et réaffichés tels quels. Le jour où
+    une mesure validée alimentera un bordereau, ce champ sera lu comme un
+    nombre, et il est trop tard pour le découvrir ce jour-là.
+
+    Trois refus, et aucun n'est cosmétique :
+
+    1. **une valeur absente ou non numérique** : la décision « corrigée »
+       n'aurait alors rien corrigé, et la ligne afficherait un texte à la place
+       d'une quantité ;
+    2. **une valeur négative ou nulle** : aucune longueur ni surface d'ouvrage
+       ne l'est, et une quantité négative dans un métré est une erreur de
+       saisie, jamais une intention ;
+    3. **une unité différente de celle de la mesure** : corriger une surface en
+       millimètres mélangerait deux dimensions. L'unité est donc imposée, et
+       non proposée — la personne corrige un NOMBRE, pas une unité.
+
+    La virgule décimale française est acceptée et normalisée : refuser
+    « 3800,5 » à un utilisateur belge serait lui reprocher d'écrire sa langue.
+    """
+    unite_attendue = str(dict(proposition.value).get("unite") or "")
+    if not isinstance(apres, dict):
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_absente",
+            "Corriger une mesure demande la valeur retenue, avec son unité.",
+        )
+
+    brute = apres.get("valeur")
+    if brute is None or str(brute).strip() == "":
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_absente",
+            "Corriger une mesure demande la valeur retenue, avec son unité.",
+        )
+
+    try:
+        valeur = Decimal(str(brute).strip().replace(",", ".").replace(" ", ""))
+    except (InvalidOperation, ValueError) as erreur:
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_non_numerique",
+            f"« {brute} » n'est pas une quantité. Saisissez un nombre, "
+            f"en {lisible.unite_affichee(unite_attendue)}.",
+        ) from erreur
+
+    if valeur <= 0:
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_non_positive",
+            "Une quantité d'ouvrage est strictement positive. Pour écarter "
+            "cette mesure, utilisez « Rejeter » plutôt qu'une valeur nulle.",
+        )
+
+    unite = apres.get("unite")
+    if unite is not None and str(unite) != unite_attendue:
+        raise ValeurRetenueRefusee(
+            "unite_retenue_differente",
+            f"Cette mesure est en {lisible.unite_affichee(unite_attendue)} ; "
+            f"la valeur retenue ne peut pas être en {lisible.unite_affichee(str(unite))}.",
+        )
+
+    # Normalisée EN PLACE : ce qui part en base est le nombre, pas la frappe.
+    # Conserver « 3800,5 » obligerait chaque lecteur à refaire la conversion,
+    # et le premier qui l'oublierait lirait zéro.
+    apres["valeur"] = str(valeur)
+    apres["unite"] = unite_attendue
+
+
+def reprenables(session: Session, *, organization_id: str, revision_id: str) -> list[MesureALire]:
+    """Les seules mesures qu'un bordereau a le droit de reprendre.
+
+    **La garantie que cette fonction porte** : une mesure REJETÉE n'y figure
+    jamais, ni une mesure sur laquelle personne n'a tranché. Elle existe pour
+    qu'il n'y ait qu'un seul endroit où cette règle est écrite, et pour qu'un
+    test puisse la tenir — plutôt que de compter sur chaque futur appelant pour
+    refaire le filtre, et sur chacun pour le refaire juste.
+
+    Aucun code ne reprend encore de mesure dans un bordereau : cette fonction
+    est donc en avance sur son appelant, et c'est assumé. La règle qu'elle
+    porte est une promesse du produit, et une promesse sans point d'application
+    se perd au premier développeur qui ne l'a pas lue.
+    """
+    return [
+        mesure
+        for mesure in lister(session, organization_id=organization_id, revision_id=revision_id)
+        if mesure.reprenable
+    ]
 
 
 def lister_les_calibrations(
@@ -618,7 +828,30 @@ def facteur_lisible(calibration: PlanCalibration) -> str:
     les deux finiraient par diverger.
     """
     facteur = mesures_pdf.facteur(_en_calibration(calibration))
-    return f"{_sans_zeros_inutiles(facteur)} {calibration.unite} par point"
+    # Quatre chiffres significatifs, écrits en français.
+    #
+    # `_sans_zeros_inutiles` ne retirait que les zéros TERMINAUX : un facteur
+    # de 25,0221108491 n'en a aucun, et s'affichait donc en entier. Dix
+    # décimales sur un rapport d'échelle n'apprennent rien — le quatrième
+    # chiffre vaut déjà le micromètre d'ouvrage — et elles donnaient à cet
+    # en-tête l'allure d'une mesure de laboratoire.
+    return (
+        f"{lisible.nombre_francais_court(facteur, _decimales_du_facteur(facteur))} "
+        f"{lisible.unite_affichee(calibration.unite)} par point"
+    )
+
+
+def _decimales_du_facteur(facteur: Decimal) -> int:
+    """Quatre chiffres significatifs, jamais plus de six décimales.
+
+    Un facteur peut valoir 0,0004 (un plan au 1:2000 coté en mètres) comme
+    500 (un détail coté en millimètres) : un nombre fixe de décimales rendrait
+    l'un illisible et l'autre creux. On compte donc en chiffres SIGNIFICATIFS.
+    """
+    if facteur <= 0:
+        return 2
+    rang = math.floor(math.log10(float(facteur)))
+    return max(0, min(6, 3 - rang))
 
 
 def _sans_zeros_inutiles(valeur: Decimal) -> str:

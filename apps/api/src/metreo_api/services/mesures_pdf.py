@@ -252,6 +252,84 @@ def facteur(calibration: Calibration) -> Decimal:
     )
 
 
+def _sensibilite_d_une_longueur(points: list[Point]) -> float:
+    """De combien la longueur totale bouge quand chaque sommet bouge de un.
+
+    **Le défaut que cette fonction corrige.** Le terme de tracé valait
+    `√2·ε / L` : la formule d'un segment à DEUX extrémités, appliquée telle
+    quelle à une polyligne de vingt sommets. Un relevé de façade en vingt
+    clics était donc annoncé aussi sûr qu'un segment droit de même longueur,
+    alors qu'il porte vingt erreurs de pointage et non deux.
+
+    **Le calcul, et pourquoi il n'est pas « √N ».** La longueur totale vaut
+    `Σ |P(i+1) − P(i)|`. Sa dérivée par rapport à un sommet est la différence
+    des deux vecteurs unitaires qui en partent — `û(i-1) − û(i)` — et des
+    erreurs indépendantes s'ajoutent en quadrature. D'où
+
+        σ(L) = ε · √( Σ |û(i-1) − û(i)|² )
+
+    et c'est ce que rend cette fonction, sans le `ε`.
+
+    Ce que cette forme dit, et qu'un `√N` ne dirait pas :
+
+    - **deux points** : les deux gradients valent 1, la somme vaut 2, et on
+      retrouve exactement `√2` — l'ancienne formule était juste dans ce cas,
+      et elle le reste ;
+    - **des points ALIGNÉS** : les deux vecteurs unitaires d'un sommet
+      intérieur sont égaux, leur différence est nulle, et le sommet n'ajoute
+      rien. C'est physiquement vrai : glisser un point le long d'une droite ne
+      change pas la longueur ;
+    - **un tracé anguleux** : à angle droit, chaque sommet intérieur apporte
+      `√2`, et la somme croît bien comme le nombre de sommets.
+
+    Un `√N` forfaitaire aurait puni un tracé lisse — celui qui suit une
+    courbe, où les sommets se compensent presque — pour une erreur qu'il ne
+    commet pas.
+    """
+    directions: list[tuple[float, float]] = []
+    for courant, suivant in itertools.pairwise(points):
+        dx, dy = suivant.u - courant.u, suivant.v - courant.v
+        norme = math.hypot(dx, dy)
+        # Deux points confondus ne définissent aucune direction. Les compter
+        # comme un vecteur nul est le choix prudent : le sommet apporte alors
+        # la sensibilité d'une extrémité, et non zéro.
+        directions.append((dx / norme, dy / norme) if norme > 0 else (0.0, 0.0))
+
+    somme = 0.0
+    for index in range(len(points)):
+        avant = directions[index - 1] if index > 0 else (0.0, 0.0)
+        apres = directions[index] if index < len(directions) else (0.0, 0.0)
+        somme += (avant[0] - apres[0]) ** 2 + (avant[1] - apres[1]) ** 2
+    return math.sqrt(somme)
+
+
+def _sensibilite_d_une_aire(points: list[Point]) -> float:
+    """De combien l'aire bouge quand chaque sommet bouge de un.
+
+    Le pendant exact de `_sensibilite_d_une_longueur`, pour la formule du
+    lacet. La dérivée de l'aire par rapport au sommet `i` ne dépend que de ses
+    DEUX VOISINS :
+
+        ∂A/∂P(i) = ½ · ( v(i+1) − v(i-1) , u(i-1) − u(i+1) )
+
+    — c'est-à-dire la moitié de la diagonale qui les joint, tournée d'un quart
+    de tour. Un sommet dont les voisins sont proches l'un de l'autre pèse donc
+    peu sur l'aire, et un sommet qui sépare deux côtés longs pèse beaucoup.
+    C'est ce que l'approximation par le périmètre ne savait pas dire.
+
+    Rend `√( Σ |∂A/∂P(i)|² )`, en points de page au carré par point de page.
+    """
+    nombre = len(points)
+    somme = 0.0
+    for index in range(nombre):
+        avant = points[index - 1]
+        apres = points[(index + 1) % nombre]
+        gradient_u = (apres.v - avant.v) / 2.0
+        gradient_v = (avant.u - apres.u) / 2.0
+        somme += gradient_u**2 + gradient_v**2
+    return math.sqrt(somme)
+
+
 def _incertitude_relative_du_facteur(calibration: Calibration) -> Decimal:
     """De combien le facteur peut être faux, en relatif.
 
@@ -324,8 +402,18 @@ def longueur(
 
     # La propagation : l'erreur du facteur ET celle du pointage de la mesure
     # elle-même, qui sont indépendantes et s'ajoutent donc en quadrature.
+    #
+    # La sensibilité du tracé est CALCULÉE sur les points posés, et non
+    # supposée égale à celle d'un segment droit : voir
+    # `_sensibilite_d_une_longueur`.
     du_facteur = _incertitude_relative_du_facteur(calibration)
-    du_trace = Decimal(str(math.sqrt(2) * calibration.resolution_du_pointage / total_en_points))
+    du_trace = Decimal(
+        str(
+            _sensibilite_d_une_longueur(points)
+            * calibration.resolution_du_pointage
+            / total_en_points
+        )
+    )
     relative = Decimal(str(math.sqrt(float(du_facteur) ** 2 + float(du_trace) ** 2)))
 
     mesure = _verdict(valeur, relative, list(reserves))
@@ -396,14 +484,24 @@ def aire(
     if _se_recoupe(points):
         toutes_les_reserves.append("contour_qui_se_recoupe")
 
-    # L'aire va comme le CARRÉ de la longueur : son incertitude relative est
-    # donc le double de celle d'une longueur. L'oublier annoncerait une surface
-    # deux fois plus sûre qu'elle ne l'est.
+    # Deux termes, et ils ne se doublent pas de la même façon.
+    #
+    # **Le facteur, lui, est bien doublé** : l'aire vaut `k² × A`, donc une
+    # erreur relative de 1 % sur `k` en fait 2 % sur l'aire. L'oublier
+    # annoncerait une surface deux fois plus sûre qu'elle ne l'est, et une
+    # surface entre directement dans un métré.
+    #
+    # **Le tracé, non.** L'erreur de pointage se propage par la dérivée de la
+    # formule du lacet, sommet par sommet — `_sensibilite_d_une_aire` — et non
+    # par le périmètre. L'approximation par le périmètre valait pour un carré
+    # et se trompait sur tout le reste : un contour très allongé, ou un contour
+    # à sommets rapprochés, n'ont pas la même sensibilité qu'un carré de même
+    # périmètre.
     du_facteur = _incertitude_relative_du_facteur(calibration)
     du_trace = Decimal(
-        str(math.sqrt(2) * calibration.resolution_du_pointage / max(perimetre, 1e-9))
+        str(_sensibilite_d_une_aire(points) * calibration.resolution_du_pointage / aire_en_points)
     )
-    relative = Decimal(str(2 * math.sqrt(float(du_facteur) ** 2 + float(du_trace) ** 2)))
+    relative = Decimal(str(math.hypot(2 * float(du_facteur), float(du_trace))))
 
     # L'aire se calcule à partir d'un facteur exprimé en MÈTRES par point, et
     # non du facteur dans l'unité de la calibration élevé au carré.
