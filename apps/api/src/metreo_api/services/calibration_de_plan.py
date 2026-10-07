@@ -610,8 +610,13 @@ def lister(session: Session, *, organization_id: str, revision_id: str) -> list[
         unite_retenue = (
             str(apres.get("unite")) if isinstance(apres, dict) and apres.get("unite") else None
         )
-        decision = derniere.decision if derniere is not None else None
-        retenue = _valeur_retenue(decision, brute, corrigee)
+        # Nommée `tranchee` et non `decision` : plus haut dans cette fonction,
+        # une boucle lie déjà `decision` à une `ValidationDecision`. Réutiliser
+        # le nom ici masquait un objet par une chaîne, sans conséquence à
+        # l'exécution — la première boucle est close — mais c'est le genre de
+        # chevauchement qu'on relit trois fois avant de s'en convaincre.
+        tranchee = derniere.decision if derniere is not None else None
+        retenue = _valeur_retenue(tranchee, brute, corrigee)
 
         mesures.append(
             MesureALire(
@@ -633,7 +638,7 @@ def lister(session: Session, *, organization_id: str, revision_id: str) -> list[
                 ),
                 cadre=cadre,
                 calibration=dict(valeur.get("calibration") or {}),
-                decision=decision,
+                decision=tranchee,
                 motif_de_la_decision=(derniere.reason if derniere is not None else None),
                 valeur_corrigee=(str(apres.get("valeur")) if isinstance(apres, dict) else None),
                 valeur_lisible=(
