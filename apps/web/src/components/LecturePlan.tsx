@@ -180,16 +180,29 @@ function useRenduDuPlan(
 export function LecturePlan({
   documentId,
   revisionId,
+  projectId,
   nomDuFichier,
 }: {
   documentId: string
   revisionId: string
+  /**
+   * Le chantier auquel ce plan appartient.
+   *
+   * Nécessaire depuis que l'écran PDF propose de reprendre une mesure dans un
+   * bordereau : les bordereaux appartiennent au projet, pas au document. Le
+   * chemin de la page le porte déjà, et le redemander à l'API pour le
+   * retrouver serait un appel pour une information qu'on a sous la main.
+   */
+  projectId: string
   /** Le nom du fichier déposé, pour que l'écran dise de QUOI il parle. */
   nomDuFichier?: string
 }) {
   const permissions = usePermissions()
   const peutAnalyser = can(permissions, PERMISSIONS.documentWrite)
   const peutValider = can(permissions, PERMISSIONS.documentValidate)
+  // Trancher sur une mesure et remplir un bordereau sont deux gestes, et deux
+  // permissions. Un valideur documentaire peut n'avoir que le premier.
+  const peutReprendre = can(permissions, PERMISSIONS.boqWrite)
 
   const [plan, setPlan] = useState<PlanLu | null>(null)
   const [jamaisAnalyse, setJamaisAnalyse] = useState(false)
@@ -346,8 +359,10 @@ export function LecturePlan({
             <LecturePdf
               documentId={documentId}
               revisionId={revisionId}
+              projectId={projectId}
               plan={plan}
               peutValider={peutValider}
+              peutReprendre={peutReprendre}
               onRelire={charger}
             />
           ) : (

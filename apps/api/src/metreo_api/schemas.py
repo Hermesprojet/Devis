@@ -1634,6 +1634,45 @@ class BoqItemOut(DecimalOut):
     source_mesure: dict[str, Any] | None = None
 
 
+class ApercuDeRepriseCreate(BaseModel):
+    """Ce qu'il faut pour CALCULER une reprise sans l'écrire.
+
+    La position et la désignation n'y sont pas : elles ne changent pas la
+    quantité, et les demander avant de montrer le nombre obligerait à saisir
+    avant de savoir ce qu'on saisit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: str
+    unite_cible: str | None = Field(default=None, max_length=12)
+
+
+class ApercuDeReprise(DecimalOut):
+    """La quantité qu'une reprise écrirait, et d'où elle vient.
+
+    **Pourquoi cette route existe, alors que la conversion tient en un facteur
+    mille.** Parce que ce facteur serait alors écrit DEUX fois : une en Python,
+    une en TypeScript. Les deux finiraient par diverger — c'est la règle que le
+    dépôt applique déjà au facteur d'échelle, aux valeurs lisibles et aux
+    totaux d'un devis. L'écran doit pouvoir montrer le nombre avant de l'écrire
+    sans le calculer lui-même.
+
+    Et le patron est celui du dépôt depuis l'import de prix : **prévisualiser,
+    puis confirmer.** Rien n'est écrit tant que la personne n'a pas vu.
+    """
+
+    #: La quantité exacte, dans `unite`. C'est elle qui serait écrite.
+    quantite: Decimal
+    #: Le code d'unité canonique de la quantité.
+    unite: str
+    #: La même quantité, écrite pour être LUE, arrondie à la décimale que
+    #: l'incertitude de la mesure autorise.
+    quantite_lisible: str
+    #: Une phrase qui dit d'où vient le nombre : page, décision, valeur retenue.
+    provenance_lisible: str
+
+
 class RepriseDeMesureCreate(BaseModel):
     """Reprendre une mesure tranchée dans une ligne de bordereau.
 

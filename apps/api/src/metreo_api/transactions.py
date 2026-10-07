@@ -112,6 +112,11 @@ _classer(
     # ni audit, ni devis, ni fichier. Une simulation qui laisserait une trace
     # cesserait d'être une simulation, et c'est ce classement qui l'interdit.
     "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/scenarios",
+    # Calcule ce qu'une reprise de mesure écrirait dans un bordereau, et
+    # n'écrit rien. POST pour la même raison que les deux lignes au-dessus :
+    # elle reçoit un corps structuré. Ce classement est ce qui interdit
+    # qu'elle se mette un jour à écrire sans que personne ne le voie.
+    "POST /api/v1/boqs/{boq_id}/reprises-de-mesure/apercu",
 )
 
 # -- Écritures accompagnées d'un événement d'audit ---------------------------

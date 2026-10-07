@@ -402,6 +402,26 @@ const fr: Dictionary = {
   'plan.pdf.sansTexteMaisVectoriel':
     'aucun texte extrait, mais la page porte du dessin vectoriel : '
     + 'ce n’est pas un scan, c’est un plan exporté sans texte.',
+  // La reprise d'une mesure dans un bordereau.
+  //
+  // Le vocabulaire est celui du métré, pas celui de la base : on « reprend »
+  // une mesure dans un « bordereau », on ne « crée » pas une « ligne depuis une
+  // proposition d'extraction ».
+  'plan.pdf.reprendre': 'Reprendre dans un bordereau',
+  'plan.pdf.reprendreTitre': 'Reprendre cette mesure dans un bordereau',
+  'plan.pdf.reprendreAide':
+    'La quantité n’est pas saisie : elle vient de la mesure et de la décision que vous avez prise. '
+    + 'Choisissez où l’écrire et dans quelle unité, vérifiez le nombre, puis confirmez.',
+  'plan.pdf.bordereau': 'Bordereau',
+  'plan.pdf.uniteCible': 'Unité du poste',
+  'plan.pdf.quantiteReprise': 'Quantité qui sera écrite',
+  'plan.pdf.provenance': 'Provenance',
+  'plan.pdf.reprendreConfirmer': 'Reprendre',
+  'plan.pdf.repriseFaite': 'Reprise au poste {poste} du bordereau « {bordereau} ».',
+  'plan.pdf.voirLeBordereau': 'Voir le bordereau',
+  // Côté bordereau : d'où vient la quantité d'une ligne.
+  'boq.venuDunPlan': 'mesure de plan',
+  'boq.venuDunPlanDetail': 'Page {page}, mesure {decision} : {valeur}',
   'plan.pdf.echelleLabel': 'Échelle déclarée',
   'plan.pdf.sansEchelle': 'aucune : rien ne peut être mesuré',
   'plan.pdf.sansApercu':

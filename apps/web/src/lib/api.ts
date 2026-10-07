@@ -575,6 +575,36 @@ export const api = {
   createBoqItem: (boqId: string, body: Record<string, unknown>) =>
     request<BoqItem>(`/boqs/${boqId}/items`, { method: 'POST', body }),
 
+  /** Les unités que le moteur reconnaît, avec leur dimension. */
+  unites: () => request<UniteConnue[]>('/units'),
+
+  /**
+   * Ce qu'une reprise écrirait — sans rien écrire.
+   *
+   * **Le nombre vient du serveur**, et l'écran ne le recalcule pas. Une
+   * conversion de millimètres en mètres tient en un facteur mille, et c'est
+   * précisément le genre de facteur qu'on finit par écrire deux fois : une en
+   * Python, une ici. Les deux divergent au premier arrondi.
+   */
+  apercuDeReprise: (boqId: string, body: { proposal_id: string; unite_cible?: string }) =>
+    request<ApercuDeReprise>(`/boqs/${boqId}/reprises-de-mesure/apercu`, {
+      method: 'POST',
+      body,
+    }),
+
+  /** Écrit la ligne. La quantité n'est PAS déclarée ici : elle est lue de la
+      mesure et de la décision humaine qui l'a retenue. */
+  reprendreUneMesure: (
+    boqId: string,
+    body: {
+      proposal_id: string
+      position: string
+      designation: string
+      unite_cible?: string
+      notes?: string
+    },
+  ) => request<BoqItem>(`/boqs/${boqId}/items:depuis-une-mesure`, { method: 'POST', body }),
+
   priceBooks: () => request<PriceBook[]>('/price-books'),
   createPriceBook: (body: Record<string, unknown>) =>
     request<PriceBook>('/price-books', { method: 'POST', body }),
@@ -929,6 +959,31 @@ export type BoqItem = {
   formula: string | null
   price_item_id: string | null
   composite_price_id: string | null
+  /** La mesure de plan reprise, s'il y en a une. `null` sur une ligne saisie
+      à la main, ce qui est le cas courant. */
+  source_proposal_id: string | null
+  /** L'empreinte figée de cette mesure : page, décision, valeur retenue,
+      incertitude, motif. Elle dit d'où vient la quantité même si le lien
+      ci-dessus est un jour dénoué. */
+  source_mesure: Record<string, unknown> | null
+}
+
+/** Ce qu'une reprise écrirait, calculé par le serveur et jamais par l'écran. */
+export type ApercuDeReprise = {
+  quantite: string
+  unite: string
+  quantite_lisible: string
+  provenance_lisible: string
+}
+
+/** Une unité reconnue par le moteur, avec sa dimension. */
+export type UniteConnue = {
+  code: string
+  dimension: string
+  dimension_label: string
+  label: string
+  factor_to_base: string
+  aliases: string[]
 }
 
 export type DocumentSummary = {

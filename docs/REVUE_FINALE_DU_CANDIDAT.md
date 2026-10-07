@@ -485,6 +485,54 @@ quantité de la mesure jusqu'au **calcul du devis** — la ligne y figure avec s
 quantité, son unité et son déboursé — puis jusqu'au **PDF remis au client**,
 où sa désignation est retrouvée dans le texte du fichier.
 
+### F6. Le parcours, à l'écran — et non seulement dans l'API
+
+**Ce qui manquait à la section précédente.** Une route, un service et vingt
+tests ne font pas un parcours : rien, à l'écran, ne permettait de reprendre une
+mesure. Une avancée qu'on ne peut pas suivre est invérifiable par la personne
+qui chiffre.
+
+**Les six gestes, dans l'ordre où on les fait.**
+
+1. sur une mesure **tranchée dans le bon sens**, une commande « Reprendre dans
+   un bordereau » — et **rien du tout** sur une mesure rejetée. Pas un bouton
+   grisé : un bouton désactivé laisse chercher ce qu'il faudrait faire pour
+   l'activer, alors que la réponse est « rien » ;
+2. un formulaire déplié **sous** la mesure, qui demande le bordereau, l'unité
+   du poste, la position et la désignation — et **jamais la quantité** ;
+3. les unités offertes sont celles de la **même dimension**, lues de
+   `GET /units`. Proposer un mètre linéaire pour une surface afficherait un
+   choix que le serveur refuse ensuite, et une erreur de dimension ne se voit
+   pas sur le nombre : elle se voit sur le total, des semaines plus tard ;
+4. **la quantité est montrée avant d'être écrite**, avec sa provenance — la
+   page, la décision prise, la valeur retenue. Le nombre vient du serveur
+   (`POST …/reprises-de-mesure/apercu`, classée LECTURE), arrondi à la décimale
+   que l'incertitude autorise ;
+5. après la reprise, l'écran dit **où** la mesure est partie et offre d'y
+   aller ;
+6. au bordereau, la ligne porte un badge **« mesure de plan »**, dont le survol
+   donne la page, la décision et la valeur retenue.
+
+**Pourquoi une route d'aperçu pour une conversion qui tient en un facteur
+mille.** Parce que ce facteur serait sinon écrit deux fois — une en Python, une
+en TypeScript — et que les deux finiraient par diverger. C'est la règle que le
+dépôt applique déjà au facteur d'échelle, aux valeurs lisibles et aux totaux
+d'un devis. Et c'est le patron « prévisualiser puis confirmer » de l'import de
+prix : rien n'est écrit tant que la personne n'a pas vu.
+
+**Éprouvé par le navigateur, à chaque livraison** :
+`apps/web/e2e-premier-devis/suite-reprise-au-bordereau.spec.ts` dépose le plan,
+déclare l'échelle, mesure, corrige une longueur, rejette une surface, constate
+que la rejetée **n'offre rien**, reprend la corrigée en mètres, vérifie
+l'aperçu et sa provenance, retrouve la ligne et son badge au bordereau, la
+chiffre, gèle, émet, et **ouvre le PDF** pour y lire le poste, sa désignation et
+sa quantité. Il vérifie aussi que la **même mesure refuse d'être reprise deux
+fois** dans le même bordereau.
+
+Le chantier de ce scénario est **le sien**, et non celui du parcours principal :
+ajouter une ligne au bordereau de `PREM-001` changerait les totaux que trois
+autres scénarios vérifient.
+
 ---
 
 ## G. Ce qui est validé, et par quoi — les trois niveaux séparés

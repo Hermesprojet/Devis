@@ -611,3 +611,129 @@ def test_la_ligne_reprise_porte_son_empreinte_en_plus_du_lien(
     assert empreinte["motif_de_la_decision"]
     assert empreinte["motif_de_la_calibration"]
     assert empreinte["reprise_le"]
+
+
+# ---------------------------------------------------------------------------
+# 6. L'aperçu : voir le nombre avant de l'écrire
+# ---------------------------------------------------------------------------
+#
+# **Pourquoi une route pour une conversion qui tient en un facteur mille.**
+# Parce que ce facteur serait sinon écrit DEUX fois : une en Python, une en
+# TypeScript. Les deux finiraient par diverger — c'est la règle que le dépôt
+# applique déjà au facteur d'échelle, aux valeurs lisibles et aux totaux d'un
+# devis, et chaque fois pour la même raison.
+#
+# Et le patron est celui du dépôt depuis l'import de prix : prévisualiser, puis
+# confirmer. Rien n'est écrit tant que la personne n'a pas vu.
+
+
+def _apercu(
+    client: TestClient,
+    entetes: dict[str, str],
+    boq_id: str,
+    proposal_id: str,
+    *,
+    unite_cible: str | None = None,
+):
+    corps: dict[str, object] = {"proposal_id": proposal_id}
+    if unite_cible is not None:
+        corps["unite_cible"] = unite_cible
+    return client.post(
+        f"/api/v1/boqs/{boq_id}/reprises-de-mesure/apercu", headers=entetes, json=corps
+    )
+
+
+def test_l_apercu_rend_la_quantite_sans_rien_ecrire(seeded_client: TestClient, chantier) -> None:
+    """La propriété centrale : le nombre est rendu, et le bordereau ne bouge pas."""
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(seeded_client, entetes, chantier["project_id"], decision="accepted")
+
+    avant = seeded_client.get(f"/api/v1/boqs/{chantier['boq_id']}/items", headers=entetes).json()
+    reponse = _apercu(seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"])
+    assert reponse.status_code == 200, reponse.text
+    apercu = reponse.json()
+
+    assert Decimal(apercu["quantite"]) == Decimal(mesure["valeur_retenue"])
+    assert apercu["unite"] == mesure["unite"]
+    # Rien n'a été écrit : c'est toute la différence avec la route voisine.
+    apres = seeded_client.get(f"/api/v1/boqs/{chantier['boq_id']}/items", headers=entetes).json()
+    assert len(apres) == len(avant)
+
+
+def test_l_apercu_rend_la_quantite_convertie_et_son_ecriture_lisible(
+    seeded_client: TestClient, chantier
+) -> None:
+    """Le nombre exact ET sa lecture, arrondie à ce que l'incertitude autorise.
+
+    Dix décimales annonceraient une précision que la mesure vient elle-même de
+    déclarer absente. C'est la règle de `lisible.decimales_utiles`, et elle
+    s'applique ici comme sur la mesure.
+    """
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(seeded_client, entetes, chantier["project_id"], decision="accepted")
+
+    apercu = _apercu(
+        seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], unite_cible="m"
+    ).json()
+
+    assert apercu["unite"] == "m"
+    assert Decimal(apercu["quantite"]) == Decimal(mesure["valeur_retenue"]) / Decimal(1000)
+    assert apercu["quantite_lisible"].endswith(" m")
+    assert len(apercu["quantite_lisible"].split(",")[-1].rstrip(" m")) <= 4, (
+        f"trop de décimales pour une mesure incertaine : {apercu['quantite_lisible']}"
+    )
+
+
+def test_l_apercu_dit_d_ou_vient_le_nombre(seeded_client: TestClient, chantier) -> None:
+    """Sans la provenance, « 3,80 m » est un nombre sans auteur."""
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(
+        seeded_client,
+        entetes,
+        chantier["project_id"],
+        decision="corrected",
+        corrigee="3800.50",
+    )
+
+    apercu = _apercu(seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"]).json()
+
+    assert f"page {mesure['page']}" in apercu["provenance_lisible"]
+    assert "corrigée" in apercu["provenance_lisible"]
+    # Et c'est bien la valeur de la PERSONNE, pas la proposition de la machine.
+    assert Decimal(apercu["quantite"]) == Decimal("3800.50")
+
+
+def test_l_apercu_refuse_une_mesure_rejetee_avant_toute_saisie(
+    seeded_client: TestClient, chantier
+) -> None:
+    """Le refus arrive AU MOMENT où on désigne la mesure.
+
+    C'est l'intérêt de l'aperçu au-delà du nombre : une mesure rejetée se dit
+    rejetée avant qu'on ait tapé une position et une désignation, pas après.
+    """
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(seeded_client, entetes, chantier["project_id"], decision="rejected")
+
+    reponse = _apercu(seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"])
+    assert reponse.status_code == 422, reponse.text
+    assert reponse.json()["detail"]["code"] == "mesure_sans_decision_retenue"
+    assert "rejetée" in reponse.json()["detail"]["message"]
+
+
+def test_l_apercu_est_offert_a_qui_lit_un_bordereau_sans_pouvoir_y_ecrire(
+    seeded_client: TestClient, chantier
+) -> None:
+    """`BOQ_READ` suffit : savoir ce qu'une reprise écrirait n'écrit rien.
+
+    Un lecteur ne peut pas reprendre la mesure — la route voisine le refuse —
+    mais il peut voir ce que la reprise mettrait dans le bordereau.
+    """
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(seeded_client, entetes, chantier["project_id"], decision="accepted")
+
+    lecteur = login(seeded_client, "lecteur@dubois.demo")
+    reponse = _apercu(seeded_client, lecteur, chantier["boq_id"], mesure["proposal_id"])
+    assert reponse.status_code == 200, reponse.text
+
+    refus = _reprendre(seeded_client, lecteur, chantier["boq_id"], mesure["proposal_id"])
+    assert refus.status_code == 403, refus.text

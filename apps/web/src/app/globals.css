@@ -492,6 +492,30 @@ main.public h2 {
 /* La ligne du tableau qu'on est en train de vérifier. */
 .pdf-mesures tr[data-selectionnee='oui'] { background: var(--accent-soft, rgba(0, 0, 0, 0.04)); }
 
+/* La reprise d'une mesure dans un bordereau : une SECONDE ligne du tableau,
+   dépliée sous la mesure concernée. Elle porte quatre champs et un aperçu, ce
+   qui ne tient pas dans la colonne des actions — et la mesure doit rester
+   lisible pendant qu'on remplit le formulaire, puisque c'est elle qu'on
+   reprend. */
+.pdf-reprise { padding: 12px 4px; }
+.pdf-reprise h4 { margin: 0 0 4px; }
+.pdf-reprise .row { align-items: flex-end; }
+.pdf-reprise input, .pdf-reprise select { width: 100%; }
+
+/* L'aperçu : ce qui sera écrit, avant de l'écrire. Encadré pour qu'on le
+   distingue des champs — c'est une RÉPONSE du serveur, pas une saisie. */
+.pdf-apercu-reprise {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+}
+.pdf-apercu-reprise dt { font-size: 12px; opacity: 0.75; }
+.pdf-apercu-reprise dd { margin: 2px 0 0; font-variant-numeric: tabular-nums; }
+
 /* La valeur corrigée et son unité, sur une seule ligne : l'unité n'est pas
    saisissable — on corrige un nombre, pas une dimension. */
 .pdf-correction { display: flex; gap: 6px; align-items: baseline; }

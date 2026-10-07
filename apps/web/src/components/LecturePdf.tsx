@@ -26,8 +26,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import Link from 'next/link'
+
 import {
   api,
+  type ApercuDeReprise,
+  type Boq,
+  type BoqItem,
   type CalibrationDePlan,
   type FragmentDeTexte,
   type MesureDePdf,
@@ -35,6 +40,7 @@ import {
   type PlanLu,
   type PointDEcran,
   type TextesDePlan,
+  type UniteConnue,
 } from '@/lib/api'
 import { t } from '@/lib/i18n'
 import { ErrorNotice } from '@/components/Feedback'
@@ -242,12 +248,22 @@ function fractionDansLImage(
 export function LecturePdf({
   documentId,
   revisionId,
+  projectId,
   plan,
   peutValider,
+  peutReprendre,
   onRelire,
 }: {
   documentId: string
   revisionId: string
+  /**
+   * Le chantier, et non seulement le document.
+   *
+   * Il est nécessaire depuis que l'écran propose de reprendre une mesure dans
+   * un bordereau : les bordereaux appartiennent au PROJET, et l'API les sert
+   * sous `/projects/{id}/boqs`. Le chemin de cette page le porte déjà.
+   */
+  projectId: string
   plan: PlanLu
   /**
    * Le porteur du jeton peut-il TRANCHER sur une mesure ?
@@ -258,6 +274,16 @@ export function LecturePdf({
    * drapeau évite de proposer un geste qui ne peut pas aboutir.
    */
   peutValider: boolean
+  /**
+   * Le porteur du jeton peut-il écrire dans un bordereau ?
+   *
+   * Distinct de `peutValider` : trancher sur une mesure est un geste de
+   * lecture de plan (`DOCUMENT_VALIDATE`), remplir un bordereau en est un de
+   * métré (`BOQ_WRITE`). Un métreur a les deux ; un valideur documentaire peut
+   * n'avoir que le premier. Proposer une commande que le serveur refusera par
+   * un 403 n'apprend rien à personne.
+   */
+  peutReprendre: boolean
   onRelire: () => void
 }) {
   const [page, setPage] = useState(1)
@@ -323,6 +349,30 @@ export function LecturePdf({
   }, [documentId, revisionId])
 
   useEffect(rechargerLeTravail, [rechargerLeTravail])
+
+  // **Les bordereaux du chantier et les unités du moteur**, chargés une fois.
+  //
+  // Une fois, et non par ligne de mesure : une page de plan en porte des
+  // dizaines, et autant d'appels identiques. Un échec n'est pas relayé — sans
+  // bordereau, la commande de reprise ne s'affiche simplement pas, ce qui est
+  // le bon comportement quand le chantier n'en a aucun.
+  const [bordereaux, setBordereaux] = useState<Boq[]>([])
+  const [unites, setUnites] = useState<UniteConnue[]>([])
+  useEffect(() => {
+    if (!peutReprendre) return
+    let abandonne = false
+    api
+      .boqs(projectId)
+      .then((lus) => !abandonne && setBordereaux(lus))
+      .catch(() => undefined)
+    api
+      .unites()
+      .then((lues) => !abandonne && setUnites(lues))
+      .catch(() => undefined)
+    return () => {
+      abandonne = true
+    }
+  }, [projectId, peutReprendre])
 
   /** Les deux dimensions de la page courante, en points PostScript. */
   const largeurDeLaPage = plan.dimensions_des_pages[page - 1]?.[0] ?? 0
@@ -623,6 +673,9 @@ export function LecturePdf({
         mesures={travail?.mesures ?? []}
         selectionnee={mesureVisee}
         peutValider={peutValider}
+        projectId={projectId}
+        bordereaux={peutReprendre ? bordereaux : []}
+        unites={unites}
         onDecidee={() => {
           rechargerLeTravail()
           onRelire()
@@ -1184,12 +1237,21 @@ function ListeDesMesures({
   mesures,
   selectionnee,
   peutValider,
+  projectId,
+  bordereaux,
+  unites,
   onDecidee,
   onMontrer,
 }: {
   mesures: MesureDePdf[]
   selectionnee: string | null
   peutValider: boolean
+  projectId: string
+  /** Vide quand le compte ne peut pas écrire dans un bordereau, ou quand le
+      chantier n'en porte aucun. Dans les deux cas, aucune commande de reprise
+      n'est offerte — proposer un geste qui ne peut pas aboutir n'apprend rien. */
+  bordereaux: Boq[]
+  unites: UniteConnue[]
   onDecidee: () => void
   onMontrer: (mesure: MesureDePdf) => void
 }) {
@@ -1223,6 +1285,9 @@ function ListeDesMesures({
             mesure={mesure}
             selectionnee={mesure.proposal_id === selectionnee}
             peutValider={peutValider}
+            projectId={projectId}
+            bordereaux={bordereaux}
+            unites={unites}
             onDecidee={onDecidee}
             onMontrer={() => onMontrer(mesure)}
           />
@@ -1249,12 +1314,18 @@ function LigneDeMesurePdf({
   mesure,
   selectionnee,
   peutValider,
+  projectId,
+  bordereaux,
+  unites,
   onDecidee,
   onMontrer,
 }: {
   mesure: MesureDePdf
   selectionnee: boolean
   peutValider: boolean
+  projectId: string
+  bordereaux: Boq[]
+  unites: UniteConnue[]
   onDecidee: () => void
   onMontrer: () => void
 }) {
@@ -1262,6 +1333,16 @@ function LigneDeMesurePdf({
   const [motif, setMotif] = useState('')
   const [occupe, setOccupe] = useState(false)
   const [erreur, setErreur] = useState<unknown>(null)
+  // Le formulaire de reprise est REPLIÉ par défaut. Déplié, il occupe une
+  // seconde ligne du tableau : une mesure en porte déjà deux colonnes de
+  // nombres et six commandes, et y glisser quatre champs de plus rendrait la
+  // ligne illisible pour un geste qu'on ne fait qu'une fois par mesure.
+  const [reprise, setReprise] = useState(false)
+  // Ce que la reprise a écrit, quand elle a eu lieu. Gardé ICI plutôt que
+  // relu du serveur : l'écran de plan ne liste pas les bordereaux, et
+  // recharger tout un chantier pour afficher une phrase coûterait plus que de
+  // garder ce que la réponse vient de rendre.
+  const [repriseFaite, setRepriseFaite] = useState<{ ligne: BoqItem; bordereau: Boq } | null>(null)
 
   async function decider(decision: 'accepted' | 'corrected' | 'rejected') {
     setOccupe(true)
@@ -1292,7 +1373,10 @@ function LigneDeMesurePdf({
     }
   }
 
+  const peutEtreReprise = mesure.reprenable && bordereaux.length > 0 && repriseFaite === null
+
   return (
+    <>
     <tr data-testid="pdf-mesure" data-selectionnee={selectionnee ? 'oui' : undefined}>
       <td data-testid="pdf-libelle">
         {mesure.libelle}
@@ -1453,7 +1537,253 @@ function LigneDeMesurePdf({
             {t('plan.decide.notAllowed')}
           </p>
         )}
+
+        {/*
+          **La reprise dans un bordereau** — proposée seulement quand elle peut
+          aboutir : il faut une mesure tranchée dans le bon sens, un bordereau
+          où écrire, et le droit d'y écrire. Un bouton grisé n'expliquerait pas
+          lequel des trois manque ; la colonne « retenue » le dit déjà, ligne
+          par ligne.
+        */}
+        {peutEtreReprise && !reprise && (
+          <button
+            type="button"
+            data-testid="pdf-ouvrir-reprise"
+            onClick={() => setReprise(true)}
+          >
+            {t('plan.pdf.reprendre')}
+          </button>
+        )}
+        {repriseFaite && (
+          <p className="muted" data-testid="pdf-reprise-faite">
+            {t('plan.pdf.repriseFaite')
+              .replace('{poste}', repriseFaite.ligne.position)
+              .replace('{bordereau}', repriseFaite.bordereau.name)}{' '}
+            <Link href={`/projets/${projectId}`} data-testid="pdf-voir-le-bordereau">
+              {t('plan.pdf.voirLeBordereau')}
+            </Link>
+          </p>
+        )}
       </td>
     </tr>
+
+    {reprise && (
+      <tr data-testid="pdf-ligne-de-reprise">
+        <td colSpan={6}>
+          <FormulaireDeReprise
+            mesure={mesure}
+            bordereaux={bordereaux}
+            unites={unites}
+            onAnnuler={() => setReprise(false)}
+            onReprise={(ligne, bordereau) => {
+              setReprise(false)
+              setRepriseFaite({ ligne, bordereau })
+            }}
+          />
+        </td>
+      </tr>
+    )}
+    </>
+  )
+}
+
+/**
+ * Reprendre une mesure tranchée dans une ligne de bordereau.
+ *
+ * **Ce que ce formulaire ne demande PAS, et c'est l'essentiel : la quantité.**
+ * Elle est lue de la mesure et de la décision humaine qui l'a retenue. La
+ * laisser saisir ici rendrait possible une ligne qui annonce une provenance et
+ * porte un autre nombre — pire qu'une ligne sans provenance, parce qu'elle a
+ * l'air sourcée.
+ *
+ * **Le nombre est MONTRÉ avant d'être écrit**, et c'est le serveur qui le
+ * calcule : `POST …/reprises-de-mesure/apercu` n'écrit rien et rend la
+ * quantité, son écriture lisible et sa provenance. Refaire la conversion ici —
+ * un facteur mille entre millimètres et mètres — poserait un second calcul en
+ * TypeScript, qui divergerait du premier au premier arrondi. C'est le patron
+ * « prévisualiser puis confirmer » que le dépôt applique déjà à l'import de
+ * prix et aux sous-détails.
+ *
+ * **Les unités offertes sont celles de la MÊME dimension.** Une longueur se
+ * reprend en millimètres, centimètres ou mètres ; une surface en mètres carrés
+ * ou en ares. Proposer un mètre linéaire pour une surface afficherait un choix
+ * que le serveur refuse ensuite, et la dimension est précisément l'erreur qui
+ * ne se voit pas sur le nombre — elle se voit sur le total, des semaines plus
+ * tard.
+ */
+function FormulaireDeReprise({
+  mesure,
+  bordereaux,
+  unites,
+  onAnnuler,
+  onReprise,
+}: {
+  mesure: MesureDePdf
+  bordereaux: Boq[]
+  unites: UniteConnue[]
+  onAnnuler: () => void
+  onReprise: (ligne: BoqItem, bordereau: Boq) => void
+}) {
+  const [bordereauId, setBordereauId] = useState(bordereaux[0]?.id ?? '')
+  const [uniteCible, setUniteCible] = useState(mesure.unite_retenue ?? mesure.unite)
+  const [position, setPosition] = useState('')
+  const [designation, setDesignation] = useState(mesure.libelle)
+  const [apercu, setApercu] = useState<ApercuDeReprise | null>(null)
+  const [occupe, setOccupe] = useState(false)
+  const [erreur, setErreur] = useState<unknown>(null)
+
+  const uniteDeLaMesure = mesure.unite_retenue ?? mesure.unite
+  const dimension = useMemo(
+    () => unites.find((u) => u.code === uniteDeLaMesure)?.dimension ?? null,
+    [unites, uniteDeLaMesure],
+  )
+  const unitesCompatibles = useMemo(
+    () => (dimension ? unites.filter((u) => u.dimension === dimension) : []),
+    [unites, dimension],
+  )
+
+  // L'aperçu se redemande à chaque changement de bordereau ou d'unité, et une
+  // réponse en retard ne remplace jamais une plus récente : deux clics rapides
+  // sur le sélecteur d'unité afficheraient sinon la quantité de l'avant-dernier
+  // choix, en se croyant à jour. Même règle que pour les tuiles de plan.
+  useEffect(() => {
+    if (!bordereauId) return
+    let abandonne = false
+    setApercu(null)
+    setErreur(null)
+    api
+      .apercuDeReprise(bordereauId, {
+        proposal_id: mesure.proposal_id,
+        unite_cible: uniteCible,
+      })
+      .then((lu) => !abandonne && setApercu(lu))
+      .catch((cause) => !abandonne && setErreur(cause))
+    return () => {
+      abandonne = true
+    }
+  }, [bordereauId, uniteCible, mesure.proposal_id])
+
+  async function reprendre(evenement: React.FormEvent) {
+    evenement.preventDefault()
+    const bordereau = bordereaux.find((b) => b.id === bordereauId)
+    if (!bordereau) return
+    setOccupe(true)
+    setErreur(null)
+    try {
+      const ligne = await api.reprendreUneMesure(bordereau.id, {
+        proposal_id: mesure.proposal_id,
+        position: position.trim(),
+        designation: designation.trim(),
+        unite_cible: uniteCible,
+      })
+      onReprise(ligne, bordereau)
+    } catch (cause) {
+      setErreur(cause)
+    } finally {
+      setOccupe(false)
+    }
+  }
+
+  return (
+    <form className="pdf-reprise" data-testid="pdf-formulaire-reprise" onSubmit={reprendre}>
+      <h4>{t('plan.pdf.reprendreTitre')}</h4>
+      <p className="muted">{t('plan.pdf.reprendreAide')}</p>
+      <ErrorNotice error={erreur} />
+
+      <div className="row">
+        <div className="field">
+          <label htmlFor={`reprise-boq-${mesure.proposal_id}`}>{t('plan.pdf.bordereau')}</label>
+          <select
+            id={`reprise-boq-${mesure.proposal_id}`}
+            data-testid="pdf-reprise-bordereau"
+            value={bordereauId}
+            onChange={(e) => setBordereauId(e.target.value)}
+          >
+            {bordereaux.map((bordereau) => (
+              <option key={bordereau.id} value={bordereau.id}>
+                {bordereau.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor={`reprise-unite-${mesure.proposal_id}`}>{t('plan.pdf.uniteCible')}</label>
+          <select
+            id={`reprise-unite-${mesure.proposal_id}`}
+            data-testid="pdf-reprise-unite"
+            value={uniteCible}
+            onChange={(e) => setUniteCible(e.target.value)}
+          >
+            {(unitesCompatibles.length > 0
+              ? unitesCompatibles
+              : [{ code: uniteDeLaMesure, label: uniteDeLaMesure } as UniteConnue]
+            ).map((unite) => (
+              <option key={unite.code} value={unite.code}>
+                {unite.label} ({unite.code})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor={`reprise-position-${mesure.proposal_id}`}>{t('boq.position')}</label>
+          <input
+            id={`reprise-position-${mesure.proposal_id}`}
+            data-testid="pdf-reprise-position"
+            value={position}
+            onChange={(e) => setPosition(e.target.value)}
+            required
+          />
+        </div>
+        <div className="field" style={{ flex: '3 1 260px' }}>
+          <label htmlFor={`reprise-designation-${mesure.proposal_id}`}>
+            {t('boq.designation')}
+          </label>
+          <input
+            id={`reprise-designation-${mesure.proposal_id}`}
+            data-testid="pdf-reprise-designation"
+            value={designation}
+            onChange={(e) => setDesignation(e.target.value)}
+            required
+          />
+        </div>
+      </div>
+
+      {/*
+        **Ce qui sera écrit, avant de l'écrire.** Le nombre vient du serveur,
+        arrondi à la décimale que l'incertitude de la mesure autorise — pas une
+        de plus. La phrase de provenance dit d'où il vient : la page, la
+        décision prise, et la valeur retenue.
+      */}
+      <dl className="pdf-apercu-reprise" data-testid="pdf-apercu-reprise">
+        <div>
+          <dt>{t('plan.pdf.quantiteReprise')}</dt>
+          <dd data-testid="pdf-apercu-quantite">
+            {apercu ? (
+              <strong>{apercu.quantite_lisible}</strong>
+            ) : (
+              <span className="muted">{t('common.loading')}</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>{t('plan.pdf.provenance')}</dt>
+          <dd className="muted" data-testid="pdf-apercu-provenance">
+            {apercu?.provenance_lisible ?? '—'}
+          </dd>
+        </div>
+      </dl>
+
+      <button
+        className="primary"
+        type="submit"
+        data-testid="pdf-reprendre"
+        disabled={occupe || apercu === null || !position.trim() || !designation.trim()}
+      >
+        {occupe ? t('common.saving') : t('plan.pdf.reprendreConfirmer')}
+      </button>
+      <button type="button" data-testid="pdf-reprise-annuler" onClick={onAnnuler}>
+        {t('common.cancel')}
+      </button>
+    </form>
   )
 }

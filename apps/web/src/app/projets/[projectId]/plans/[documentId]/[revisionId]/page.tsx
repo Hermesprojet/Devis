@@ -70,7 +70,7 @@ export default function PagePlan() {
 }
 
 function PlanDeLaRoute() {
-  const params = useParams<{ documentId: string; revisionId: string }>()
+  const params = useParams<{ projectId: string; documentId: string; revisionId: string }>()
   // Le nom du fichier n'est qu'un CONFORT d'affichage, passé par l'écran qui
   // ouvre celui-ci. L'écran ne s'en sert pour aucun appel, et son absence ne
   // l'empêche pas de fonctionner : une adresse recopiée à la main marche.
@@ -80,6 +80,7 @@ function PlanDeLaRoute() {
     <LecturePlan
       documentId={params.documentId}
       revisionId={params.revisionId}
+      projectId={params.projectId}
       nomDuFichier={nomDuFichier ?? undefined}
     />
   )

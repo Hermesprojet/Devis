@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
 
@@ -71,6 +71,13 @@ class Reprise:
     source_mesure: dict[str, object]
     #: Une phrase lisible, pour un journal ou un libellé par défaut.
     provenance_lisible: str
+    #: La quantité ci-dessus, écrite pour être LUE — « 4,18068 m ».
+    #:
+    #: Rendue par le serveur, et jamais recomposée par l'écran : l'écran doit
+    #: pouvoir montrer le nombre AVANT de l'écrire, et deux arrondis — un en
+    #: Python, un en TypeScript — finiraient par diverger d'un chiffre. C'est
+    #: la même règle que `valeur_lisible` sur une mesure.
+    quantite_lisible: str
 
 
 def preparer(
@@ -121,9 +128,20 @@ def preparer(
     unite_source = mesure.unite_retenue or mesure.unite
     quantite, unite = _convertir(Decimal(mesure.valeur_retenue), unite_source, unite_cible)
 
+    # **L'incertitude suit la même conversion**, et elle sert à décider à quelle
+    # décimale la quantité s'arrête. Sans elle, « 4,1806800000 m » s'afficherait
+    # pour une mesure dont on sait qu'elle est incertaine au millimètre : dix
+    # chiffres qui affirment une précision qu'on vient soi-même de déclarer
+    # absente. C'est la règle de `lisible.decimales_utiles`, appliquée ici
+    # comme elle l'est sur la mesure elle-même.
+    incertitude = _en_decimal(mesure.incertitude)
+    if incertitude is not None:
+        incertitude, _ = _convertir(incertitude, unite_source, unite_cible)
+
     return Reprise(
         quantite=quantite,
         unite=unite,
+        quantite_lisible=lisible.quantite_lisible(quantite, unite, incertitude=incertitude),
         source_mesure=_empreinte(mesure, unite_source=unite_source, unite_reprise=unite),
         provenance_lisible=(
             f"Mesure de plan, page {mesure.page}, "
@@ -139,6 +157,22 @@ _DECISION_LISIBLE: dict[str, str] = {
     "corrected": "corrigée",
     "rejected": "rejetée",
 }
+
+
+def _en_decimal(valeur: str | None) -> Decimal | None:
+    """Un nombre, ou rien — jamais une exception sur une valeur de JSON.
+
+    Même raison que l'homonyme de `calibration_de_plan` : `value` est du JSON,
+    et rien en base ne garantit qu'une ligne écrite par une version future
+    reste lisible. Une incertitude illisible fait perdre le choix des
+    décimales, pas la reprise.
+    """
+    if valeur in (None, ""):
+        return None
+    try:
+        return Decimal(str(valeur))
+    except (InvalidOperation, ValueError):
+        return None
 
 
 def _pourquoi_elle_ne_se_reprend_pas(decision: str | None) -> str:

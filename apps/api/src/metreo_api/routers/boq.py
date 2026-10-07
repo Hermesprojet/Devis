@@ -13,6 +13,8 @@ from metreo_domain.units import get_unit
 from ..db import session_scope
 from ..models import BillOfQuantities, BoqItem, CompositePriceRow, PriceItem, Project
 from ..schemas import (
+    ApercuDeReprise,
+    ApercuDeRepriseCreate,
     BoqCreate,
     BoqItemBulkCreate,
     BoqItemCreate,
@@ -259,6 +261,67 @@ def bulk_create_items(
         actor_email=context.user.email,
     )
     return created
+
+
+@router.post(
+    "/boqs/{boq_id}/reprises-de-mesure/apercu",
+    response_model=ApercuDeReprise,
+    summary="Ce qu'une reprise écrirait, sans l'écrire",
+)
+def preview_measurement_carry_over(
+    boq_id: str,
+    payload: ApercuDeRepriseCreate,
+    context: TenantContext = Depends(require(Permission.BOQ_READ)),
+    session: Session = Depends(session_scope),
+) -> ApercuDeReprise:
+    """Prévisualiser, puis confirmer — le patron du dépôt depuis l'import de prix.
+
+    **Rien n'est écrit ici**, et c'est pour cela que la route exige `BOQ_READ`
+    et non `BOQ_WRITE` : quelqu'un qui n'a pas le droit d'écrire dans un
+    bordereau a le droit de savoir ce qu'une reprise y mettrait.
+
+    `POST` parce qu'elle reçoit un corps structuré, pas parce qu'elle
+    enregistre — exactement comme l'aperçu d'un sous-détail. Le registre
+    transactionnel la classe en LECTURE, et c'est ce classement qui interdit
+    qu'elle se mette un jour à écrire sans que personne ne le voie.
+
+    **Pourquoi elle est nécessaire alors que la conversion tient en un facteur
+    mille.** Parce que ce facteur serait sinon écrit deux fois, une en Python
+    et une en TypeScript, et que les deux finiraient par diverger. L'écran
+    montre donc le nombre que le SERVEUR a calculé, et c'est le même code qui
+    l'écrira ensuite.
+
+    Les refus sont les mêmes que ceux de la reprise, et ils arrivent ici
+    **avant** toute saisie : une mesure rejetée se dit rejetée au moment où on
+    la désigne, pas après qu'on a tapé une position et une désignation.
+    """
+    get_owned(session, BillOfQuantities, context.organization_id, boq_id, label="Bordereau")
+
+    try:
+        reprise = reprise_de_mesure.preparer(
+            session,
+            organization_id=context.organization_id,
+            proposal_id=payload.proposal_id,
+            unite_cible=payload.unite_cible,
+        )
+    except reprise_de_mesure.RepriseRefusee as refus:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": refus.code, "message": refus.message},
+        ) from refus
+
+    if reprise is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "Mesure introuvable."},
+        )
+
+    return ApercuDeReprise(
+        quantite=reprise.quantite,
+        unite=reprise.unite,
+        quantite_lisible=reprise.quantite_lisible,
+        provenance_lisible=reprise.provenance_lisible,
+    )
 
 
 @router.post(

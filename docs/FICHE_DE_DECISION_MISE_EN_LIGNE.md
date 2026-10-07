@@ -32,7 +32,7 @@ portrait et les tracés à plusieurs sommets.
 | **L'écart de mesure est divisé par cinq** : 0,020 % en longueur, 0,050 % en surface, contre 0,105 % et 0,250 % | l'écart est désormais **contenu** dans le ± affiché, ce qui n'était pas le cas |
 | **La vérification chiffrée tombe à chaque livraison** | une régression de pointage ne peut plus passer les douze ateliers verts |
 | **Le diagnostic « probablement scanné » est remplacé par une description** | l'écran ne qualifie plus de scan un plan vectoriel |
-| **Une mesure tranchée alimente un bordereau**, puis le devis, puis le PDF | **une migration de plus** : voir l'encadré ci-dessous |
+| **Une mesure tranchée alimente un bordereau**, puis le devis, puis le PDF — **et le parcours existe à l'écran** | **une migration de plus** : voir l'encadré ci-dessous |
 
 ```bash
 git fetch origin main
@@ -55,6 +55,13 @@ avant d'aller plus loin.
 > `boq_items`, une contrainte d'unicité et deux clés étrangères. Elle ne touche
 > aucune ligne existante, et son `downgrade` ne détruit aucune ligne de
 > bordereau — seulement la trace de leur origine.
+>
+> **La montée depuis la préproduction est éprouvée, et non supposée.**
+> `scripts/epreuve_montee_depuis_preproduction.py` monte une base au schéma de
+> `main` avec les fichiers de `main`, puis y applique les migrations du
+> candidat. Mesuré sur les deux moteurs depuis `39ad8d0` :
+> `c7d8e9fa0102 → f3a4b5c60708`, six révisions, une seule tête. L'atelier
+> « API (PostgreSQL + PostGIS) » le rejoue à chaque commit.
 
 ## 2. Sauvegarde — avant toute chose
 
