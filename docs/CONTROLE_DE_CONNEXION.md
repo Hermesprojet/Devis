@@ -26,6 +26,9 @@ protocole est correcte, et il la prouve à chaque commit. Il ne peut rien dire
 de la moitié qui appartient à Auth0 et à Google. Les deux moitiés sont
 nécessaires, aucune ne remplace l'autre.
 
+> **Pour la suivre pas à pas**, depuis la déclaration de l'application chez
+> Auth0 jusqu'au tableau à renvoyer : `docs/CONNEXION_AUTH0_PAS_A_PAS.md`.
+
 ## 2. Avant de commencer : l'adresse décide de tout
 
 À la **première** connexion d'une personne, l'identité se lie par l'adresse

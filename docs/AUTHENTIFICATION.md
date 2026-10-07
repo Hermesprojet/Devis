@@ -399,3 +399,6 @@ fournisseur d'identité — un banc automatisé ne franchit pas l'écran de Goog
 
 La procédure manuelle qui comble ce trou, ses cinq scénarios et ce qu'il faut
 y observer vivent dans `docs/CONTROLE_DE_CONNEXION.md`.
+La même procédure, découpée en une action à la fois avec son résultat attendu —
+du tableau de bord Auth0 au premier écran de Metreo —, est dans
+`docs/CONNEXION_AUTH0_PAS_A_PAS.md`.
