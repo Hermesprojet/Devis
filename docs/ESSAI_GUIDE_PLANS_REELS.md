@@ -179,6 +179,22 @@ en commun.
 >    vérifier. Si votre DXF porte ses cotes « éclatées » — des traits et un
 >    texte, et non des entités de cotation —, l'écran n'en proposera aucune.
 >    C'est un constat sur le fichier, pas une panne.
+>
+> **Ce que vos DXF ont montré au premier essai**, et que l'écran dit désormais :
+>
+> - **une cotation angulaire est un angle**, et s'affiche en degrés. Elle
+>   s'affichait « 1.431 cm » : la cote stockée par un logiciel de dessin est en
+>   radians, et le lecteur lui donnait l'unité de longueur du document ;
+> - **une cote stockée « sentinelle »** — une valeur que le logiciel écrit sans
+>   qu'elle soit une mesure — est ignorée, et la cotation est recalculée depuis
+>   sa géométrie. Sur une série de vos plans, c'était le cas de **toutes** les
+>   cotations. La mention l'accompagne, mais ne la fait pas passer « à
+>   vérifier » : seule une autre réserve le fait ;
+> - **des façades sans aucune entité de cotation** : leurs cotes sont des
+>   traits et des textes. Rien n'est proposé, et c'est le constat du fichier ;
+> - **un trait isolé loin du bâtiment** étire l'emprise du dessin, et le rendu
+>   montre alors le bâtiment dans un coin. Le rendu est fidèle au fichier : il
+>   ne masque rien de ce qu'il porte.
 
 ### 6 — Trancher, puis reprendre au bordereau
 
