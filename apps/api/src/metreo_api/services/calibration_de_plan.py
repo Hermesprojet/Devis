@@ -321,6 +321,7 @@ def mesurer(
     type_de_mesure: TypeDeMesure,
     points_ecran: list[tuple[float, float]],
     libelle: str,
+    resolution_du_pointage: Decimal | None = None,
 ) -> MesureEnregistree:
     """Mesure un segment ou une surface, et l'écrit comme une proposition.
 
@@ -356,8 +357,28 @@ def mesurer(
     )
     points = [mesures_pdf.vers_la_page(point, boite, rotation) for point in points_ecran]
 
+    # **La résolution de CE pointage, quand elle est connue.**
+    #
+    # Le modèle supposait que la mesure était pointée au même zoom que la
+    # calibration. C'est vrai dans l'écran livré ; ce ne l'est plus dès qu'on
+    # calibre sur une cote à la loupe puis qu'on mesure ailleurs, et ce ne l'a
+    # jamais été pour un autre client.
+    #
+    # **Elle est passée en paramètre, et non substituée dans la calibration.**
+    # Une première version remplaçait `resolution_du_pointage` dans une copie
+    # de la `Calibration` : les DEUX termes de l'incertitude en dépendaient
+    # alors, y compris celui du facteur — qui porte l'erreur des deux clics de
+    # la calibration, posés une fois pour toute la page et pas au zoom de cette
+    # mesure-ci. Mesurer en agrandissant davantage annonçait donc une échelle
+    # plus sûre qu'elle n'est. Seul le terme de TRACÉ dépend de ces clics-ci.
     outil = mesures_pdf.longueur if type_de_mesure == "segment" else mesures_pdf.aire
-    mesure = outil(points, _en_calibration(calibration))
+    mesure = outil(
+        points,
+        _en_calibration(calibration),
+        resolution_du_trace=(
+            None if resolution_du_pointage is None else float(resolution_du_pointage)
+        ),
+    )
 
     # La citation : la page, et la boîte englobante de ce qui a été désigné.
     # C'est ce qui permettra de retrouver la mesure sur l'aperçu — et c'est

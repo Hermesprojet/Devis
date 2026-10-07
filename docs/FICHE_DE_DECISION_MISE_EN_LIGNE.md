@@ -23,6 +23,17 @@ valeurs à dix décimales, et la purge d'organisation — qui, vérification fai
 sur les fichiers. Deux écarts d'incertitude sont corrigés avec eux : la page en
 portrait et les tracés à plusieurs sommets.
 
+**Une seconde passe s'y ajoute**, après relecture des captures
+(`docs/REVUE_FINALE_DU_CANDIDAT.md`, section F) :
+
+| | Ce que cela change pour la mise en ligne |
+| --- | --- |
+| **Le pointage est fermé** tant que l'image affichée n'est pas celle de la zone demandée | un point ne peut plus s'enregistrer ailleurs que là où il a été vu |
+| **L'écart de mesure est divisé par cinq** : 0,020 % en longueur, 0,050 % en surface, contre 0,105 % et 0,250 % | l'écart est désormais **contenu** dans le ± affiché, ce qui n'était pas le cas |
+| **La vérification chiffrée tombe à chaque livraison** | une régression de pointage ne peut plus passer les douze ateliers verts |
+| **Le diagnostic « probablement scanné » est remplacé par une description** | l'écran ne qualifie plus de scan un plan vectoriel |
+| **Une mesure tranchée alimente un bordereau**, puis le devis, puis le PDF | **une migration de plus** : voir l'encadré ci-dessous |
+
 ```bash
 git fetch origin main
 git diff --stat origin/main claude/candidat-corrige
@@ -32,11 +43,18 @@ Sortie attendue après les fusions : **vide**. Toute ligne est une divergence
 entre ce qui a été éprouvé et ce qui serait mis en ligne, et doit être expliquée
 avant d'aller plus loin.
 
-> **La tête d'Alembic a changé.** La tranche des plans porte une révision de
-> plus — `a4b5c6d70809` — et la migration de fusion `f3a4b5c60708` cite
-> désormais `("d1e2f3a40506", "a4b5c6d70809")`. Continuer à citer
-> `e2f3a4b50607` laisserait la base à deux têtes. Le contrôle de l'étape 1
-> ci-dessous le voit.
+> **La tête d'Alembic a changé, deux fois.** La tranche des plans porte
+> maintenant **deux** révisions de plus : `a4b5c6d70809` (la purge d'une
+> révision publiée) puis `b5c6d7e8090a` (la provenance d'une ligne de
+> bordereau). La migration de fusion `f3a4b5c60708` doit donc citer
+> `("d1e2f3a40506", "b5c6d7e8090a")` — et non plus `e2f3a4b50607`, ni
+> `a4b5c6d70809`. Toute autre citation laisse la base à deux têtes. Le contrôle
+> de l'étape 1 ci-dessous le voit.
+>
+> `b5c6d7e8090a` est **purement additive** : deux colonnes nullables sur
+> `boq_items`, une contrainte d'unicité et deux clés étrangères. Elle ne touche
+> aucune ligne existante, et son `downgrade` ne détruit aucune ligne de
+> bordereau — seulement la trace de leur origine.
 
 ## 2. Sauvegarde — avant toute chose
 
@@ -135,5 +153,15 @@ cote que vous connaissez, vous pointez, il rend un nombre avec son incertitude
 propagée et la provenance de l'échelle utilisée. **Sa justesse sur vos plans
 reste à établir.** Ce qui est éprouvé est l'arithmétique, sur des cas dont la
 réponse est connue d'avance ; ce qui ne l'est pas est l'écart entre ce que
-Metreo rend et ce que vos plans portent réellement. C'est l'objet de
-`docs/COTES_DE_REFERENCE.md`, et cette fiche ne le remplace pas.
+Metreo rend et ce que vos plans portent réellement.
+
+**Le « ± » affiché est une incertitude type, à k = 1**, propagée depuis la seule
+finesse du pixel sous la souris. Il ne couvre **aucune** des sept hypothèses qui
+restent ouvertes : une mesure peut être fausse d'un facteur 2 avec un ± de
+0,04 % si l'échelle saisie est fausse. Le détail est au § 2.0 de
+`docs/PRECISION_DES_MESURES.md`.
+
+La procédure d'essai sur vos plans est `docs/VALIDATION_SUR_PLANS_REELS.md` :
+les fichiers nécessaires, les trois cotes à relever, le tableau attendu /
+mesuré / écart, et la ligne « votre tolérance » laissée vide. Cette fiche ne la
+remplace pas.

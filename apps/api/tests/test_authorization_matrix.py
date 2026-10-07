@@ -211,6 +211,15 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
             "unit_code": "m3",
             "quantity": "1",
         },
+        # La reprise d'une mesure : le corps doit être VALIDE, sinon la route
+        # répond 422 à la validation et ne prouve rien de la portée par
+        # organisation. `proposal_id` désigne une proposition de
+        # l'organisation A — l'identifiant croisé qu'on veut voir refusé.
+        "POST /api/v1/boqs/{boq_id}/items:depuis-une-mesure": {
+            "proposal_id": ids["proposal"],
+            "position": "9.1",
+            "designation": "Poste repris d'une mesure de plan",
+        },
         "POST /api/v1/boqs/{boq_id}/items:bulk": {
             "items": [
                 {

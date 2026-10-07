@@ -975,6 +975,17 @@ class PlanLu(ApiModel):
     dimensions_des_pages: list[list[float]] = Field(default_factory=list)
     #: Faux pour un document scanné : l'aperçu reste utile, l'extraction non.
     porte_du_texte: bool = False
+    #: Les FAITS de l'extraction, à afficher tels quels.
+    #:
+    #: L'écran annonçait « aucun — plan probablement scanné » dès que
+    #: l'extraction rendait moins de cinquante caractères, pour un plan
+    #: vectoriel qui en portait vingt-sept. Ce qui distingue un scan n'est pas
+    #: la quantité de texte : c'est son absence totale sur une page qui ne
+    #: porte qu'une image.
+    caracteres_extraits: int = 0
+    traces_vectoriels: int = 0
+    images_incluses: int = 0
+    probablement_scanne: bool = False
     #: Combien de fragments de texte ont été récoltés. Un COMPTE, pas le texte :
     #: les fragments se demandent à la route `…/plan/textes`, parce qu'un plan
     #: réel en porte quelques milliers.
@@ -1097,6 +1108,16 @@ class MesureCreate(BaseModel):
     #: Ce que la personne mesure — « mur nord », « dalle du séjour ». Une liste
     #: de mesures sans libellé est une liste de nombres que personne ne relit.
     libelle: NonBlank = Field(max_length=200)
+    #: La résolution à laquelle CES points ont été posés, en points PostScript
+    #: par pixel affiché.
+    #:
+    #: **Facultative, et elle ne devrait pas l'être longtemps.** Le modèle
+    #: d'incertitude supposait jusqu'ici que la mesure était pointée au même
+    #: zoom que la calibration — vrai dans l'écran livré, faux pour tout autre
+    #: client, et faux dès qu'on calibre à la loupe puis qu'on mesure sur une
+    #: autre. Absente, l'ancienne hypothèse s'applique : c'est la résolution de
+    #: la calibration qui sert, et le comportement ne change pas.
+    resolution_du_pointage: Decimal | None = Field(default=None, gt=0)
 
 
 class MesureDePdf(ApiModel):
@@ -1603,6 +1624,39 @@ class BoqItemOut(DecimalOut):
     price_item_id: str | None
     composite_price_id: str | None
     sort_index: int
+    #: La mesure de plan reprise, et son empreinte figée.
+    #:
+    #: `None` sur une ligne saisie à la main, ce qui est le cas courant. Rendus
+    #: tous les deux : le lien permet de rouvrir le plan à la bonne page tant
+    #: qu'il existe, et l'empreinte dit d'où vient le nombre même si ce lien
+    #: est un jour dénoué.
+    source_proposal_id: str | None = None
+    source_mesure: dict[str, Any] | None = None
+
+
+class RepriseDeMesureCreate(BaseModel):
+    """Reprendre une mesure tranchée dans une ligne de bordereau.
+
+    **La quantité n'y figure pas, et c'est tout l'objet de cette route.** Elle
+    vient de la mesure et de la décision humaine qui l'a retenue ; la laisser
+    déclarer ici rendrait possible une ligne qui annonce une provenance et
+    porte un autre nombre, ce qui est pire que pas de provenance du tout.
+
+    `unite_cible` est la seule conversion du parcours, et elle est explicite :
+    une mesure en millimètres se reprend en mètres si la personne le demande,
+    jamais d'office. Omise, l'unité de la mesure est conservée telle quelle.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: str
+    position: str = Field(min_length=1, max_length=40)
+    designation: str = Field(min_length=1)
+    unite_cible: str | None = Field(default=None, max_length=12)
+    kind: Literal["section", "item", "option", "variant", "provisional"] = "item"
+    code: str | None = Field(default=None, max_length=60)
+    sort_index: int | None = None
+    notes: str | None = None
 
 
 class BoqItemBulkCreate(BaseModel):

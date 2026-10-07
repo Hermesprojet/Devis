@@ -502,6 +502,50 @@ def page_sans_texte(*, largeur: float = 300.0, hauteur: float = 200.0) -> bytes:
     )
 
 
+def page_scannee(*, largeur: float = 300.0, hauteur: float = 200.0) -> bytes:
+    """Une page qui ne porte QU'UNE IMAGE : un vrai scan, et rien d'autre.
+
+    **Pourquoi elle manquait, et ce que son absence coûtait.** Le dépôt
+    éprouvait « probablement scanné » avec `page_sans_texte`, qui dessine un
+    TRAIT. Elle n'a jamais été un scan : c'est un plan vectoriel sans texte, et
+    le lecteur qui la déclarait scannée se trompait sur toute une famille de
+    documents — dont `plan_batiment.pdf`, qui porte quatre textes et quatre
+    tracés.
+
+    Ce qui distingue un scan n'est pas la quantité de texte. C'est son absence
+    totale sur une page dont le seul objet est une image. Cette fixture est donc
+    le seul vrai contre-exemple : aucun texte, aucun tracé, une image.
+
+    L'image est une bande de quatre pixels, en RGB non compressé — douze octets.
+    Sa TAILLE n'a aucune importance ; c'est son existence comme unique objet de
+    la page qui est éprouvée.
+    """
+    # Quatre pixels : rouge, vert, bleu, noir. Non compressés, pour que le
+    # fichier reste lisible au `grep` comme le reste de cette fabrique.
+    pixels = bytes([255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0])
+    image = (
+        b"<< /Type /XObject /Subtype /Image /Width 4 /Height 1 "
+        b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Length "
+        + str(len(pixels)).encode("ascii")
+        + b" >>\nstream\n"
+        + pixels
+        + b"\nendstream"
+    )
+    # `cm` met l'image à l'échelle de la page : un scan couvre sa feuille.
+    contenu = f"q {largeur:g} 0 0 {hauteur:g} 0 0 cm /Im0 Do Q\n".encode("ascii")
+    return assembler(
+        [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {largeur:g} {hauteur:g}] "
+            f"/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>".encode("ascii"),
+            image,
+            _flux(contenu),
+        ],
+        racine=1,
+    )
+
+
 def beaucoup_de_pages(combien: int) -> bytes:
     """`combien` pages identiques et vides, pour éprouver le plafond.
 
@@ -681,6 +725,7 @@ def main() -> int:
         ("page_tournee(90)", page_tournee(90)),
         ("page_avec_texte_hors_cadre", page_avec_texte_hors_cadre()),
         ("page_sans_texte", page_sans_texte()),
+        ("page_scannee", page_scannee()),
         ("beaucoup_de_pages(51)", beaucoup_de_pages(51)),
         ("chiffre", chiffre()),
         ("pas_un_pdf", pas_un_pdf()),

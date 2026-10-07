@@ -404,3 +404,167 @@ def test_pointer_plus_finement_resserre_l_incertitude_proportionnellement(facteu
 
     rapport = float(grossiere.incertitude_relative) / float(precise.incertitude_relative)
     assert rapport == pytest.approx(facteur, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Plusieurs pointages indépendants contre la même référence connue
+# ---------------------------------------------------------------------------
+#
+# **Ce que les tests ci-dessus ne pouvaient pas dire.** Ils pointent les sommets
+# du dessin à la coordonnée EXACTE, c'est-à-dire là où aucun humain ne clique.
+# Ils prouvent donc que la chaîne de calcul est juste, et rien sur ce que le ±
+# annoncé vaut face à la dispersion réelle d'un geste répété.
+#
+# Le propriétaire a demandé exactement cela : « Compare plusieurs pointages
+# indépendants aux références connues. » Ce qui suit le fait, sans introduire
+# de paramètre inventé.
+#
+# Le seul modèle d'erreur utilisé est celui que le navigateur IMPOSE : un clic
+# ne rend pas une position continue, il rend un PIXEL. La coordonnée enregistrée
+# est donc celle du centre du pixel visé, sur une grille dont le pas vaut ε —
+# la résolution du pointage — et dont l'ORIGINE change à chaque placement de la
+# loupe. Deux pointages successifs de la même cote, la loupe recentrée entre les
+# deux, tombent sur deux grilles décalées : c'est cela qui les rend
+# indépendants, et c'est une propriété du logiciel, pas une hypothèse sur la
+# main de l'utilisateur.
+
+
+def _sur_la_grille(valeur: float, origine: float, pas: float) -> float:
+    """La coordonnée que le navigateur rend : le centre du pixel visé."""
+    return origine + round((valeur - origine) / pas) * pas
+
+
+def _pointage_independant(
+    octets: bytes, decalage: float
+) -> tuple[mesures_pdf.Calibration, list[mesures_pdf.Point]]:
+    """Un pointage complet — calibration et mur — sur une grille décalée.
+
+    `decalage` est la position de l'origine de la grille dans un pixel, en
+    fraction de pixel. Il tient le rôle du recentrage de la loupe entre deux
+    pointages : rien d'autre ne change.
+    """
+    boite, rotation = page_du_plan(octets)
+    largeur, hauteur = boite[2] - boite[0], boite[3] - boite[1]
+    epsilon = resolution_de_la_loupe(largeur, hauteur)
+    origine = decalage * epsilon
+
+    def pointe(sommet: tuple[float, float]) -> mesures_pdf.Point:
+        grille = (
+            _sur_la_grille(sommet[0], origine, epsilon),
+            _sur_la_grille(sommet[1], origine, epsilon),
+        )
+        return mesures_pdf.vers_la_page(vers_l_ecran(grille, boite, rotation), boite, rotation)
+
+    calibration = mesures_pdf.Calibration(
+        premier=pointe((fabrique.COTE_X0, fabrique.COTE_Y)),
+        second=pointe((fabrique.COTE_X1, fabrique.COTE_Y)),
+        distance_reelle=Decimal("5000"),
+        unite="mm",
+        resolution_du_pointage=epsilon,
+    )
+    return calibration, [pointe(sommet) for sommet in COINS_DE_LA_PIECE[:2]]
+
+
+#: Douze placements de loupe, répartis dans le pixel sans jamais retomber sur
+#: le même décalage. Posés en dur : un tirage au hasard rendrait l'échec de ce
+#: test non reproductible, et un test qui ne se rejoue pas ne prouve rien.
+DECALAGES_DE_LA_LOUPE: tuple[float, ...] = (
+    0.00,
+    0.37,
+    0.08,
+    0.71,
+    0.29,
+    0.94,
+    0.13,
+    0.56,
+    0.82,
+    0.21,
+    0.65,
+    0.48,
+)
+
+
+def _douze_longueurs(octets: bytes) -> list[mesures_pdf.Mesure]:
+    return [
+        mesures_pdf.longueur(mur, calibration)
+        for calibration, mur in (
+            _pointage_independant(octets, decalage) for decalage in DECALAGES_DE_LA_LOUPE
+        )
+    ]
+
+
+def test_douze_pointages_independants_encadrent_tous_la_cote_connue() -> None:
+    """La propriété de couverture, éprouvée douze fois sur la même référence.
+
+    6 000 mm est écrit dans la fabrique. Chacun des douze pointages est fait
+    sur une grille de pixels différente, donc commet une erreur différente.
+    **Aucun ne doit rater la vérité de plus de deux fois son propre ±.**
+
+    Deux fois, et non une : le ± rendu est une incertitude TYPE (§ 2.0 de
+    `docs/PRECISION_DES_MESURES.md`), pas un intervalle garanti. Un intervalle
+    de couverture s'obtient en le multipliant par un facteur d'élargissement,
+    et c'est k = 2 qui est vérifié ici.
+    """
+    octets = fabrique.plan_de_batiment()
+    attendu = Decimal(str(fabrique.LARGEUR_DE_LA_PIECE_EN_MM))
+
+    manques: list[str] = []
+    for decalage, mesure in zip(DECALAGES_DE_LA_LOUPE, _douze_longueurs(octets), strict=True):
+        if abs(mesure.valeur - attendu) > 2 * mesure.incertitude:
+            manques.append(
+                f"décalage {decalage} : {mesure.valeur} ± {mesure.incertitude} "
+                f"rate {attendu} de plus de 2 σ"
+            )
+
+    assert manques == [], "\n".join(manques)
+
+
+def test_la_dispersion_observee_ne_depasse_pas_l_incertitude_annoncee() -> None:
+    """Le ± annoncé est-il assez large ? Oui, et de combien.
+
+    Un ± plus petit que la dispersion réelle serait un mensonge. Ce test
+    compare l'écart-type OBSERVÉ sur les douze pointages à l'incertitude
+    ANNONCÉE, et exige que le second majore le premier.
+
+    Il exige aussi que le rapport reste sous 10 : un ± cent fois trop large
+    serait honnête mais inutilisable, et passerait la première moitié du test.
+    Le rapport réellement constaté est écrit dans le document de précision.
+    """
+    octets = fabrique.plan_de_batiment()
+    mesures = _douze_longueurs(octets)
+
+    valeurs = [float(mesure.valeur) for mesure in mesures]
+    moyenne = sum(valeurs) / len(valeurs)
+    observee = math.sqrt(sum((valeur - moyenne) ** 2 for valeur in valeurs) / (len(valeurs) - 1))
+    annoncee = sum(float(mesure.incertitude) for mesure in mesures) / len(mesures)
+
+    assert observee <= annoncee, (
+        f"dispersion observée {observee:.4f} mm > incertitude annoncée {annoncee:.4f} mm : "
+        "le ± affiché est trop étroit"
+    )
+    assert annoncee <= 10 * max(observee, 1e-9), (
+        f"incertitude annoncée {annoncee:.4f} mm pour une dispersion de {observee:.4f} mm : "
+        "le ± est large au point de ne plus rien dire"
+    )
+
+
+def test_le_biais_moyen_des_douze_pointages_reste_sous_l_incertitude() -> None:
+    """Un biais ne s'annule pas en répétant : il faut le regarder à part.
+
+    L'hypothèse **H7** du document de précision dit que l'erreur de pointage
+    est supposée centrée. Ce test la met à l'épreuve sur le seul mécanisme
+    d'erreur que le logiciel impose : la quantification en pixels. La moyenne
+    des douze écarts doit rester petite devant le ± d'un seul pointage, sinon
+    la somme en quadrature n'a pas de sens.
+    """
+    octets = fabrique.plan_de_batiment()
+    attendu = float(fabrique.LARGEUR_DE_LA_PIECE_EN_MM)
+    mesures = _douze_longueurs(octets)
+
+    biais = sum(float(mesure.valeur) - attendu for mesure in mesures) / len(mesures)
+    annoncee = sum(float(mesure.incertitude) for mesure in mesures) / len(mesures)
+
+    assert abs(biais) <= annoncee, (
+        f"biais moyen de {biais:.4f} mm pour un ± annoncé de {annoncee:.4f} mm : "
+        "l'erreur de pointage n'est pas centrée, et la quadrature la sous-estime"
+    )

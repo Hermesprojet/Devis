@@ -122,6 +122,15 @@ class Tuile:
     #: deçà de seize la cote reste difficile à relire — l'écran doit pouvoir le
     #: dire au lieu d'afficher un flou sans un mot.
     hauteur_de_la_zone_px: float
+    #: La zone que l'image couvre VRAIMENT, en coordonnées d'écran normalisées.
+    #:
+    #: Ce que l'écran doit employer pour placer un clic, et **jamais la zone
+    #: demandée** : un bitmap se compte en pixels entiers, PDFium tronque, et
+    #: l'image couvre donc un peu moins. Mesuré : 0,2 % de moins en largeur,
+    #: 0,28 % en hauteur sur la loupe du plan de bâtiment. L'erreur est petite
+    #: et SYSTÉMATIQUE — elle entre dans l'échelle déclarée, et de là dans
+    #: toutes les mesures de la page.
+    zone_rendue: tuple[float, float, float, float]
     #: Vrai quand elle a été relue du volume plutôt que rendue.
     depuis_le_cache: bool
 
@@ -144,7 +153,7 @@ def cle_de_la_tuile(
 
 def _rendre_hors_processus(
     original: Path, *, page: int, zone: tuple[float, float, float, float], sortie: Path
-) -> tuple[int, int, float]:
+) -> tuple[int, int, float, tuple[float, float, float, float]]:
     """Lance le fils, attend, et traduit sa sortie.
 
     Le fils est invoqué par `-m` sur le MÊME interpréteur que le parent : c'est
@@ -195,11 +204,21 @@ def _rendre_hors_processus(
         )
 
     morceaux = (resultat.stdout or "").split()
-    if len(morceaux) != 3:  # pragma: no cover - le fils garantit ce format
+    if len(morceaux) != 7:  # pragma: no cover - le fils garantit ce format
         raise TuileRefusee(
             "rendu_illisible", "Le rendu n'a pas rendu compte de ce qu'il a produit."
         )
-    return int(morceaux[0]), int(morceaux[1]), float(morceaux[2])
+    return (
+        int(morceaux[0]),
+        int(morceaux[1]),
+        float(morceaux[2]),
+        (
+            float(morceaux[3]),
+            float(morceaux[4]),
+            float(morceaux[5]),
+            float(morceaux[6]),
+        ),
+    )
 
 
 def obtenir(
@@ -223,22 +242,36 @@ def obtenir(
     if taille is not None:
         octets = b"".join(stockage.lire(cle))
         largeur, hauteur = _dimensions_du_png(octets)
-        return Tuile(
-            png=octets,
-            largeur=largeur,
-            hauteur=hauteur,
-            # Inconnue depuis le cache : elle dépend de la zone demandée et
-            # du facteur, dont le PNG ne porte pas la trace. L'écran la reçoit
-            # à la PREMIÈRE demande, celle où il décide quoi afficher.
-            hauteur_de_la_zone_px=0.0,
-            depuis_le_cache=True,
+        zone_rendue = _zone_du_png(octets)
+        if zone_rendue is not None:
+            return Tuile(
+                png=octets,
+                largeur=largeur,
+                hauteur=hauteur,
+                # Inconnue depuis le cache : elle dépend de la zone demandée et
+                # du facteur, dont le PNG ne porte pas la trace. L'écran la reçoit
+                # à la PREMIÈRE demande, celle où il décide quoi afficher.
+                hauteur_de_la_zone_px=0.0,
+                zone_rendue=zone_rendue,
+                depuis_le_cache=True,
+            )
+        # **Une tuile sans sa zone est traitée comme absente.**
+        #
+        # Le cas se présente une fois : une tuile écrite par une version qui ne
+        # portait pas encore sa géométrie, et qui dort sur le volume. Servir
+        # cette image en supposant qu'elle couvre la zone DEMANDÉE ramènerait
+        # en silence le défaut qu'on vient de corriger, et pour une durée
+        # indéterminée. La re-rendre coûte une seconde, une seule fois.
+        logger.info(
+            "tuile_sans_zone_rerendue",
+            extra={"organization_id": organization_id, "revision_id": revision_id},
         )
 
     import tempfile
 
     with tempfile.TemporaryDirectory(prefix="metreo-tuile-") as brouillon:
         provisoire = Path(brouillon) / "tuile.png"
-        largeur, hauteur, hauteur_de_la_zone = _rendre_hors_processus(
+        largeur, hauteur, hauteur_de_la_zone, zone_rendue = _rendre_hors_processus(
             original, page=page, zone=zone, sortie=provisoire
         )
         octets = provisoire.read_bytes()
@@ -277,6 +310,7 @@ def obtenir(
         largeur=largeur,
         hauteur=hauteur,
         hauteur_de_la_zone_px=hauteur_de_la_zone,
+        zone_rendue=zone_rendue,
         depuis_le_cache=False,
     )
 
@@ -315,6 +349,51 @@ def cles_des_tuiles(stockage: StockageLocal, organization_id: str, revision_id: 
         f"{DOSSIER_TUILES}/{organization_id}/{chemin.name}"
         for chemin in sorted(dossier.glob(f"{revision_id}-p*.png"))
     ]
+
+
+def _zone_du_png(octets: bytes) -> tuple[float, float, float, float] | None:
+    """La zone que l'image couvre, lue dans son bloc `tEXt`.
+
+    **Pourquoi la géométrie voyage dans le PNG.** Une tuile est conservée sur le
+    volume et resservie telle quelle, parfois des semaines plus tard. Sa
+    géométrie doit lui survivre, et un second fichier à côté pourrait s'en
+    séparer — c'est exactement le genre de désynchronisation qui produit un
+    clic au mauvais endroit sans que rien ne le signale.
+
+    Lue à la main plutôt qu'avec Pillow : ce module tourne dans le processus
+    PARENT, celui qui doit rester à onze mégaoctets. Charger une bibliothèque
+    d'images pour lire quarante octets irait contre tout ce que `rendu_tuile`
+    sert à éviter.
+
+    Rend `None` quand le bloc manque — une tuile écrite par une version
+    antérieure — et l'appelant la re-rend plutôt que de deviner.
+    """
+    if len(octets) < 8 or octets[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    position = 8
+    cle = b"metreo:zone"
+    while position + 8 <= len(octets):
+        longueur = int.from_bytes(octets[position : position + 4], "big")
+        type_de_bloc = octets[position + 4 : position + 8]
+        debut = position + 8
+        fin = debut + longueur
+        if fin > len(octets):
+            return None
+        if type_de_bloc == b"tEXt" and octets[debut : debut + len(cle)] == cle:
+            valeur = octets[debut + len(cle) + 1 : fin].decode("latin-1").split()
+            if len(valeur) != 4:
+                return None
+            try:
+                x0, y0, x1, y1 = (float(nombre) for nombre in valeur)
+            except ValueError:  # pragma: no cover - le bloc est écrit par nous
+                return None
+            return (x0, y0, x1, y1)
+        if type_de_bloc == b"IDAT":
+            # Les blocs de texte précèdent les données d'image dans ce qu'on
+            # écrit. Pousser plus loin reviendrait à parcourir tout le bitmap.
+            return None
+        position = fin + 4  # + le CRC
+    return None
 
 
 def _dimensions_du_png(octets: bytes) -> tuple[int, int]:

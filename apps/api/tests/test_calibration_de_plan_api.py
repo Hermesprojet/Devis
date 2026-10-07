@@ -102,7 +102,13 @@ def _calibrer(
     premier: tuple[float, float] = (0.0, 0.5),
     second: tuple[float, float] = (0.5, 0.5),
 ):
-    """Par défaut : la moitié de la largeur de la page, déclarée à 5 000 mm."""
+    """Par défaut : la moitié de la largeur de la page, déclarée à 7 500 mm.
+
+    Le nombre est lu dans `DISTANCE_DE_CALIBRATION`, et non recopié : cette
+    docstring annonçait 5 000 mm alors que la constante valait 7 500. Les
+    assertions étaient justes ; seule la phrase mentait, ce qui est le pire des
+    deux cas — on relit la phrase avant le code.
+    """
     corps: dict = {
         "page": 1,
         "premier": {"x": premier[0], "y": premier[1]},
@@ -130,8 +136,21 @@ def _mesurer(
     type_de_mesure: str = "segment",
     points: list[tuple[float, float]] | None = None,
     libelle: str = "Mur nord",
+    resolution: str | None = None,
 ):
     points = points or [(0.0, 0.5), (0.25, 0.5)]
+    if resolution is not None:
+        return client.post(
+            f"/api/v1/documents/{document_id}/revisions/{revision_id}/plan/mesures",
+            headers=entetes,
+            json={
+                "page": 1,
+                "type": type_de_mesure,
+                "points": [{"x": x, "y": y} for x, y in points],
+                "libelle": libelle,
+                "resolution_du_pointage": resolution,
+            },
+        )
     return client.post(
         f"/api/v1/documents/{document_id}/revisions/{revision_id}/plan/mesures",
         headers=entetes,
@@ -570,3 +589,74 @@ def test_a_flat_zone_is_refused_rather_than_rendered(
     )
     assert refus.status_code == 422, refus.text
     assert refus.json()["detail"]["code"] == "zone_invalide"
+
+
+# ---------------------------------------------------------------------------
+# La résolution de CE pointage-ci
+# ---------------------------------------------------------------------------
+
+
+def test_a_measurement_may_declare_the_resolution_of_its_own_pointing(
+    seeded_client: TestClient,
+) -> None:
+    """L'erreur de TRACÉ est celle des clics qu'on vient de poser.
+
+    **L'hypothèse que ce champ lève.** Le modèle supposait que la mesure était
+    pointée au même zoom que la calibration. C'est vrai dans l'écran livré, et
+    faux dès qu'on calibre sur une cote à la loupe puis qu'on mesure ailleurs —
+    et faux pour tout autre client.
+
+    L'échelle, elle, vient toujours de la calibration : le facteur est à elle.
+    Seule la part de l'incertitude due au tracé change.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _deposer_un_pdf(seeded_client, admin, "PDF-RESOLUTION")
+    assert _calibrer(seeded_client, admin, document, revision, resolution="0.05").status_code == 201
+
+    fine = _mesurer(
+        seeded_client,
+        admin,
+        document,
+        revision,
+        points=[(0.0, 0.5), (0.25, 0.5)],
+        libelle="Pointée finement",
+        resolution="0.01",
+    )
+    grossiere = _mesurer(
+        seeded_client,
+        admin,
+        document,
+        revision,
+        points=[(0.0, 0.5), (0.25, 0.5)],
+        libelle="Pointée grossièrement",
+        resolution="1.0",
+    )
+    assert fine.status_code == 201, fine.text
+    assert grossiere.status_code == 201, grossiere.text
+
+    # Même valeur — ce sont les mêmes points — et des incertitudes différentes.
+    assert fine.json()["valeur"] == grossiere.json()["valeur"]
+    assert Decimal(grossiere.json()["incertitude_relative"]) > Decimal(
+        fine.json()["incertitude_relative"]
+    ), "un pointage grossier ne peut pas être annoncé aussi sûr qu'un pointage fin"
+
+
+def test_a_measurement_without_its_own_resolution_keeps_the_old_behaviour(
+    seeded_client: TestClient,
+) -> None:
+    """Le champ est facultatif, et son absence ne change rien.
+
+    Un client plus ancien continue de fonctionner, et son incertitude est
+    exactement celle qu'il obtenait avant — celle de la calibration.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _deposer_un_pdf(seeded_client, admin, "PDF-SANS-RESOLUTION")
+    assert _calibrer(seeded_client, admin, document, revision, resolution="0.05").status_code == 201
+
+    sans = _mesurer(seeded_client, admin, document, revision, libelle="Sans résolution")
+    avec = _mesurer(
+        seeded_client, admin, document, revision, libelle="Avec la même", resolution="0.05"
+    )
+    assert sans.status_code == 201, sans.text
+    assert avec.status_code == 201, avec.text
+    assert sans.json()["incertitude_relative"] == avec.json()["incertitude_relative"]

@@ -342,6 +342,22 @@ def _incertitude_relative_du_facteur(calibration: Calibration) -> Decimal:
     return Decimal(str(math.sqrt(2) * epsilon / calibration.ecart_en_points))
 
 
+def _epsilon_du_trace(calibration: Calibration, declaree: float | None) -> float:
+    """La finesse des clics du TRACÉ, qui n'est pas celle de la calibration.
+
+    `None` veut dire « on ne sait pas », et le seul choix qui ne suppose rien
+    est alors de reprendre celle de la calibration : c'est vrai dans l'écran
+    livré, où les deux gestes se font dans la même loupe.
+
+    Une valeur négative est ramenée à zéro, comme pour le facteur : une
+    résolution négative n'a pas de sens, et la propager rendrait une
+    incertitude négative — un nombre qui se lirait comme une précision.
+    """
+    if declaree is None:
+        return max(calibration.resolution_du_pointage, 0.0)
+    return max(declaree, 0.0)
+
+
 # ---------------------------------------------------------------------------
 # Les mesures
 # ---------------------------------------------------------------------------
@@ -372,7 +388,11 @@ def _verdict(valeur: Decimal, relative: Decimal, reserves: list[str]) -> Mesure:
 
 
 def longueur(
-    points: list[Point], calibration: Calibration, *, reserves: tuple[str, ...] = ()
+    points: list[Point],
+    calibration: Calibration,
+    *,
+    reserves: tuple[str, ...] = (),
+    resolution_du_trace: float | None = None,
 ) -> Mesure:
     """La longueur d'une ligne brisée, dans l'unité de la calibration.
 
@@ -380,6 +400,18 @@ def longueur(
     longueur sort en millimètres. Convertir ici imposerait un choix que
     personne n'a fait, et ferait perdre le lien direct entre ce qui a été saisi
     et ce qui est rendu.
+
+    **`resolution_du_trace` ne touche QUE le terme de tracé**, et c'est tout
+    l'intérêt de l'avoir en paramètre plutôt que de remplacer la résolution de
+    la calibration. Les deux termes ne décrivent pas le même geste : le facteur
+    porte l'erreur des deux clics de la CALIBRATION, posés une fois pour toute
+    la page ; le tracé porte celle des clics qu'on vient de poser. Remplacer la
+    résolution dans la calibration ferait varier les deux ensemble, et
+    annoncerait une échelle plus sûre qu'elle n'est dès qu'on mesure en
+    agrandissant davantage.
+
+    Omis, c'est la résolution de la calibration qui sert — le comportement
+    d'avant, et le seul qui ne suppose rien quand on ne sait pas.
     """
     if len(points) < 2:
         raise MesureRefusee(
@@ -410,7 +442,7 @@ def longueur(
     du_trace = Decimal(
         str(
             _sensibilite_d_une_longueur(points)
-            * calibration.resolution_du_pointage
+            * _epsilon_du_trace(calibration, resolution_du_trace)
             / total_en_points
         )
     )
@@ -441,7 +473,11 @@ UNITE_DE_SURFACE = "m2"
 
 
 def aire(
-    points: list[Point], calibration: Calibration, *, reserves: tuple[str, ...] = ()
+    points: list[Point],
+    calibration: Calibration,
+    *,
+    reserves: tuple[str, ...] = (),
+    resolution_du_trace: float | None = None,
 ) -> Mesure:
     """L'aire d'un contour fermé, en mètres carrés.
 
@@ -499,7 +535,11 @@ def aire(
     # périmètre.
     du_facteur = _incertitude_relative_du_facteur(calibration)
     du_trace = Decimal(
-        str(_sensibilite_d_une_aire(points) * calibration.resolution_du_pointage / aire_en_points)
+        str(
+            _sensibilite_d_une_aire(points)
+            * _epsilon_du_trace(calibration, resolution_du_trace)
+            / aire_en_points
+        )
     )
     relative = Decimal(str(math.hypot(2 * float(du_facteur), float(du_trace))))
 

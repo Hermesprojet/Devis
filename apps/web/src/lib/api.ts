@@ -197,7 +197,15 @@ async function publicRequest<T>(path: string, options: RequestOptions = {}): Pro
  * jeton périmé — parce que deux traitements divergeraient au premier code
  * ajouté.
  */
-async function octetsAuthentifies(chemin: string): Promise<Blob> {
+/**
+ * La RÉPONSE d'un appel authentifié, en-têtes compris.
+ *
+ * Séparée de `octetsAuthentifies` parce qu'une tuile de plan ne transporte pas
+ * que des pixels : elle dit aussi quelle zone elle couvre, et cette
+ * information vit dans les en-têtes. Un appelant qui n'a besoin que des octets
+ * continue d'appeler la seconde.
+ */
+async function reponseAuthentifiee(chemin: string): Promise<Response> {
   const session = loadSession()
   const response = await fetch(`${API_URL}${chemin}`, {
     headers: session ? { Authorization: `Bearer ${session.token}` } : {},
@@ -214,7 +222,11 @@ async function octetsAuthentifies(chemin: string): Promise<Blob> {
     endSessionIfExpired(error)
     throw error
   }
-  return response.blob()
+  return response
+}
+
+async function octetsAuthentifies(chemin: string): Promise<Blob> {
+  return (await reponseAuthentifiee(chemin)).blob()
 }
 
 export const api = {
@@ -448,16 +460,43 @@ export const api = {
    * donc annoncer l'attente, et ne pas la relancer à chaque mouvement de
    * souris.
    */
-  tuileDuPlan: (
+  tuileDuPlan: async (
     documentId: string,
     revisionId: string,
     page: number,
     zone: [number, number, number, number],
-  ) =>
-    octetsAuthentifies(
+  ): Promise<TuileDePlan> => {
+    const reponse = await reponseAuthentifiee(
       `/documents/${documentId}/revisions/${revisionId}/plan/tuile` +
         `?page=${page}&x0=${zone[0]}&y0=${zone[1]}&x1=${zone[2]}&y1=${zone[3]}`,
-    ),
+    )
+    // **La zone que l'image couvre VRAIMENT**, et non celle demandée.
+    //
+    // Un bitmap se compte en pixels entiers : le rendu tronque, et l'image
+    // couvre un peu moins que la fenêtre demandée — mesuré, 0,2 % de moins en
+    // largeur et 0,28 % en hauteur sur une loupe de 21 × 16 points. Placer un
+    // clic sur la zone demandée introduit donc une erreur petite, systématique,
+    // et qui entre dans l'échelle déclarée avant de multiplier toutes les
+    // mesures de la page.
+    //
+    // En-tête absent : le serveur est plus ancien que cet écran, ou un proxy
+    // l'a filtré. On retombe sur la zone demandée en le DISANT, pour qu'un
+    // pointage décalé ne reste pas sans explication.
+    const brut = reponse.headers.get('X-Metreo-Zone')
+    const nombres = brut?.split(',').map(Number) ?? []
+    const zoneConnue = nombres.length === 4 && nombres.every((n) => Number.isFinite(n))
+    const pixels = reponse.headers.get('X-Metreo-Pixels')?.split(',').map(Number) ?? []
+    return {
+      blob: await reponse.blob(),
+      zone: zoneConnue ? (nombres as [number, number, number, number]) : zone,
+      zoneDeclaree: zoneConnue,
+      pixels:
+        pixels.length === 2 && pixels.every((n) => Number.isFinite(n))
+          ? (pixels as [number, number])
+          : null,
+      depuisLeCache: reponse.headers.get('X-Metreo-Tuile') === 'cache',
+    }
+  },
 
   /** Les échelles déclarées et les mesures prises sur un PDF. */
   mesuresDuPdf: (documentId: string, revisionId: string) =>
@@ -501,6 +540,8 @@ export const api = {
       type: 'segment' | 'surface'
       points: PointDEcran[]
       libelle: string
+      /** Points PostScript par pixel AFFICHÉ, mesurés au clic. */
+      resolution_du_pointage?: string
     },
   ) =>
     request<MesureDePdf>(
@@ -1002,8 +1043,29 @@ export interface PlanLu {
   /** Faux pour un document scanné : l'aperçu sert, l'extraction non. */
   porte_du_texte: boolean
   fragments_lus: number
+  /** Les FAITS de l'extraction, affichés tels quels plutôt qu'un verdict. */
+  caracteres_extraits: number
+  traces_vectoriels: number
+  images_incluses: number
+  /** Vrai seulement si : aucun texte, aucun tracé, et au moins une image. */
+  probablement_scanne: boolean
   /** Les pages qui ont un aperçu. Une absente n'est pas affichable. */
   apercus: number[]
+}
+
+/**
+ * Une tuile servie, avec ce qu'il faut pour placer un clic dessus.
+ *
+ * `zone` est ce que l'image couvre VRAIMENT, et non ce qui a été demandé.
+ * `zoneDeclaree` dit si le serveur l'a fournie : sinon on retombe sur la
+ * demande, et l'écran le signale plutôt que de laisser un décalage sans cause.
+ */
+export type TuileDePlan = {
+  blob: Blob
+  zone: [number, number, number, number]
+  zoneDeclaree: boolean
+  pixels: [number, number] | null
+  depuisLeCache: boolean
 }
 
 /** Un point désigné sur l'aperçu : [0,1], origine en haut à gauche. */

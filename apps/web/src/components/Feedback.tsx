@@ -3,14 +3,21 @@
 import { ApiError } from '@/lib/api'
 import { t } from '@/lib/i18n'
 
-/** Renders an API failure with its actionable detail instead of a generic toast. */
+/** Renders an API failure with its actionable detail instead of a generic toast.
+ *
+ * `data-testid="notice-erreur"` est posé sur les deux branches, et il est
+ * nécessaire : Next.js maintient en permanence un `role="alert"` VIDE —
+ * l'annonceur de route, destiné aux lecteurs d'écran — qu'un scénario visant
+ * `getByRole('alert')` confond avec un vrai refus. Le dépôt a déjà payé cette
+ * erreur une fois, sur le parcours de connexion.
+ */
 export function ErrorNotice({ error }: { error: unknown }) {
   if (!error) return null
   if (error instanceof ApiError) {
     const detail = (error.detail ?? {}) as Record<string, unknown>
     const problems = Array.isArray(detail.problems) ? detail.problems : null
     return (
-      <div className="notice error" role="alert">
+      <div className="notice error" role="alert" data-testid="notice-erreur">
         <strong>{error.message}</strong>
         {typeof detail.required_permission === 'string' && (
           <div className="mono">permission requise : {detail.required_permission}</div>
@@ -48,7 +55,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
     )
   }
   return (
-    <div className="notice error" role="alert">
+    <div className="notice error" role="alert" data-testid="notice-erreur">
       {t('common.error')} : {String((error as Error)?.message ?? error)}
     </div>
   )

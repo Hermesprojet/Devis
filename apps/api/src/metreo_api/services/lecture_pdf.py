@@ -57,10 +57,35 @@ PLAFOND_PAGES = 50
 #: borne la mémoire d'un fichier hostile.
 PLAFOND_FRAGMENTS = 50_000
 
-#: En dessous, le document ne porte pas de texte exploitable : il est
-#: probablement scanné. Ce n'est PAS un refus — l'aperçu reste utile, et
-#: l'OCR est une étape ultérieure. C'est une anomalie qui dégrade la confiance.
+#: En dessous, l'extraction est MAIGRE. Elle n'est pas pour autant absente.
+#:
+#: **Ce seuil ne dit plus « probablement scanné », et il ne le devait pas.**
+#: Le plan de bâtiment du dépôt porte quatre textes — « 5000 », « SEJOUR »,
+#: « PLAN RDC », « Ech. 1:71 », vingt-sept caractères — et quatre tracés
+#: vectoriels. Il est tout sauf un scan : l'extraction a simplement rendu peu
+#: de chose, parce qu'il y a peu à rendre.
+#:
+#: Ce qui distingue un scan n'est pas la QUANTITÉ de texte, c'est son absence
+#: totale sur une page qui ne porte qu'une image. Le constat rend donc les
+#: deux comptes, et laisse le lecteur conclure.
 SEUIL_TEXTE_MAIGRE = 50
+
+#: Combien d'objets de dessin on compte au plus, PAR PAGE.
+#:
+#: **Bien plus bas que `PLAFOND_FRAGMENTS`, et pour une raison de coût.** Ce
+#: comptage est un ajout : il n'existait pas avant que le constat ait besoin de
+#: distinguer un plan pauvre en texte d'un document scanné. Un plan
+#: d'exécution réel porte facilement des dizaines de milliers de tracés, et
+#: parcourir cinquante pages à cinquante mille objets ajouterait des secondes à
+#: une analyse déjà synchrone.
+#:
+#: **La troncature ne change AUCUN verdict**, et c'est ce qui la rend
+#: acceptable : la décision ne regarde que `traces == 0` et `images > 0`. Dès
+#: le premier tracé rencontré, « ce n'est pas un scan » est tranché, et les
+#: 4 999 suivants n'y ajoutent rien. Seul le nombre AFFICHÉ devient alors un
+#: minorant, ce que le message ne prétend pas dépasser — il dit « la page porte
+#: N tracé(s) », ce qui reste vrai.
+PLAFOND_OBJETS_DE_DESSIN = 5_000
 
 #: Le code d'erreur de PDFium pour « mot de passe incorrect ».
 #: Vérifié à l'exécution sur un PDF réellement chiffré : `err_code` vaut 4.
@@ -126,10 +151,45 @@ class LecturePdf:
     fragments: list[Fragment] = field(default_factory=list)
     anomalies: list[Anomalie] = field(default_factory=list)
 
+    #: Combien d'objets de DESSIN la page porte, tous types confondus.
+    #:
+    #: C'est le fait qui tranche entre « peu de texte » et « scanné ». Une page
+    #: scannée est une image et rien d'autre ; une page de plan porte des
+    #: tracés, qu'elle porte du texte ou non.
+    traces: int = 0
+    images: int = 0
+
+    @property
+    def caracteres_extraits(self) -> int:
+        """Combien de caractères l'extraction a réellement rendus."""
+        return sum(len(f.texte) for f in self.fragments)
+
     @property
     def porte_du_texte(self) -> bool:
-        """Faux pour un document scanné : l'aperçu marche, l'extraction non."""
-        return sum(len(f.texte) for f in self.fragments) >= SEUIL_TEXTE_MAIGRE
+        """Vrai dès qu'un caractère a été extrait.
+
+        **Le seuil de cinquante caractères a quitté cette propriété**, et il le
+        devait : il faisait répondre « ce document ne porte pas de texte » pour
+        un plan qui en portait vingt-sept. Ce qui est maigre est dit
+        séparément, en chiffres, par `extraction_maigre`.
+        """
+        return self.caracteres_extraits > 0
+
+    @property
+    def extraction_maigre(self) -> bool:
+        """L'extraction a rendu peu de chose — ce qui n'est pas un verdict."""
+        return 0 < self.caracteres_extraits < SEUIL_TEXTE_MAIGRE
+
+    @property
+    def probablement_scanne(self) -> bool:
+        """Aucun texte, aucun tracé, et au moins une image.
+
+        **Les trois conditions ensemble**, parce qu'aucune ne suffit : une page
+        de garde vide n'a ni texte ni image, et un plan vectoriel sans
+        cartouche n'a pas de texte non plus. C'est la page qui ne porte QU'UNE
+        IMAGE qui est un scan.
+        """
+        return self.caracteres_extraits == 0 and self.traces == 0 and self.images > 0
 
 
 #: Comment un point de la page tombe à l'écran, selon `/Rotate`.
@@ -232,6 +292,7 @@ def lire(chemin: str | Path) -> LecturePdf:
     """
     # Import local : la dépendance `pdf` reste optionnelle, comme `plans`.
     import pypdfium2 as pdfium
+    import pypdfium2.raw as pdfium_raw
 
     constat = LecturePdf()
     chemin = Path(chemin)
@@ -316,6 +377,26 @@ def lire(chemin: str | Path) -> LecturePdf:
         if rotation:
             pages_tournees.append(numero + 1)
 
+        # **Ce que la page porte comme DESSIN**, et non seulement comme texte.
+        #
+        # C'est le fait qui distingue un plan pauvre en texte d'un document
+        # scanné : le premier porte des tracés, le second une image et rien
+        # d'autre. Sans ce comptage, le constat annonçait « probablement
+        # scanné » pour un plan vectoriel dont le cartouche tenait en vingt-sept
+        # caractères.
+        #
+        # Le parcours est borné par `PLAFOND_OBJETS_DE_DESSIN`, et non par le
+        # plafond des fragments : voir le commentaire de la constante pour le
+        # coût que cela évite, et pourquoi la troncature ne change aucun
+        # verdict.
+        for rang, objet in enumerate(page.get_objects()):
+            if rang >= PLAFOND_OBJETS_DE_DESSIN:
+                break
+            if objet.type == pdfium_raw.FPDF_PAGEOBJ_PATH:
+                constat.traces += 1
+            elif objet.type == pdfium_raw.FPDF_PAGEOBJ_IMAGE:
+                constat.images += 1
+
         texte_de_page = page.get_textpage()
         rectangles = texte_de_page.count_rects()
         for index in range(rectangles):
@@ -387,14 +468,43 @@ def lire(chemin: str | Path) -> LecturePdf:
             )
         )
 
-    if not constat.porte_du_texte:
+    # **Trois constats distincts, et aucun n'est un verdict d'un mot.**
+    #
+    # L'ancien code en posait un seul — « probablement scanné » — dès que
+    # l'extraction rendait moins de cinquante caractères. Le plan de bâtiment du
+    # dépôt en rend vingt-sept, et porte quatre tracés vectoriels : il est tout
+    # sauf un scan. Ce qui manquait n'était pas le bon seuil, c'était la
+    # distinction entre « peu de texte » et « pas de texte », et entre « pas de
+    # texte » et « rien que de l'image ».
+    if constat.probablement_scanne:
         constat.anomalies.append(
             Anomalie(
                 "texte_absent",
-                "Le document ne porte pas de texte exploitable : il est "
-                "probablement scanné. L'aperçu reste utilisable ; la lecture "
-                "des cotes demanderait une reconnaissance optique, qui n'est "
-                "pas livrée.",
+                f"Aucun texte n'a été extrait, et la page ne porte que "
+                f"{constat.images} image(s) : ce document est probablement "
+                "scanné. L'aperçu reste utilisable ; la lecture des cotes "
+                "demanderait une reconnaissance optique, qui n'est pas livrée.",
+            )
+        )
+    elif not constat.porte_du_texte:
+        constat.anomalies.append(
+            Anomalie(
+                "texte_absent",
+                f"Aucun texte n'a été extrait, mais la page porte "
+                f"{constat.traces} tracé(s) vectoriel(s) : ce n'est pas un "
+                "scan, c'est un plan exporté sans texte. Les cotes écrites par "
+                "le dessinateur n'y sont pas sélectionnables.",
+            )
+        )
+    elif constat.extraction_maigre:
+        constat.anomalies.append(
+            Anomalie(
+                "extraction_maigre",
+                f"L'extraction a rendu {len(constat.fragments)} fragment(s) de "
+                f"texte, soit {constat.caracteres_extraits} caractères, et la "
+                f"page porte {constat.traces} tracé(s) vectoriel(s). C'est peu, "
+                "et ce n'est pas anormal sur un plan dont le cartouche est "
+                "court. Rien n'indique un document scanné.",
             )
         )
 
