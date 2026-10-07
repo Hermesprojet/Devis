@@ -56,22 +56,28 @@ est `c7d8e9fa0102` — le schéma de `39ad8d0`, ce qui tourne en préproduction.
 Six révisions sont au-dessus :
 
 ```
-                    c7d8e9fa0102   ← le schéma de 39ad8d0, ce qui tourne
-                         │
-        ┌────────────────┴────────────────┐
-        │                                 │
-  d1e2f3a40506                      d8e9fa010203
-  tranche de la connexion                 │
-  (seule de sa branche,              e2f3a4b50607
-   donc elle est sa tête)                 │
-        │                            a4b5c6d70809
-        │                                 │
-        │                            b5c6d7e8090a   ← tête de la tranche
-        └────────────────┬────────────────┘             des plans
-                         │
-                   f3a4b5c60708   ← tête unique du graphe
-                   migration de FUSION, vide
+                  c7d8e9fa0102   ← le schéma de 39ad8d0, ce qui tourne
+                       │
+       ┌───────────────┴───────────────┐
+       │                               │
+ d1e2f3a40506                    d8e9fa010203
+ (connexion)                           │
+       │                         e2f3a4b50607
+       │                               │
+       │                         a4b5c6d70809
+       │                               │
+       │                         b5c6d7e8090a   ← tête de la tranche des plans
+       │                               │
+       └───────────────┬───────────────┘
+                       │
+                  f3a4b5c60708   ← tête unique du graphe (fusion, vide)
 ```
+
+La tranche de la connexion n'a qu'une révision : `d1e2f3a40506` est donc à la
+fois son premier maillon et sa tête, et elle n'a jamais bougé. La tranche des
+plans en porte quatre, et sa tête s'est **décalée deux fois** — `e2f3a4b50607`,
+puis `a4b5c6d70809`, puis `b5c6d7e8090a`. C'est là, et seulement là, que la
+règle de la tête s'est fait oublier.
 
 | Révision | Ce qu'elle fait |
 | --- | --- |
@@ -141,9 +147,16 @@ de travail jetable :
 > ci-dessus.
 
 Les 930 erreurs sont le gabarit : elles se produisent au montage de la base de
-test, avant que le test lui-même ne commence. Les 20 échecs sont les assertions
-sur la chaîne, dans `apps/api/tests/test_platform.py` et
-`apps/api/tests/test_referential_action_drift.py`.
+test, avant que le test lui-même ne commence. Les 20 échecs se répartissent sur
+cinq fichiers, et pour deux motifs distincts :
+
+- **l'assertion sur la chaîne**, dans `apps/api/tests/test_platform.py` (6) et
+  `apps/api/tests/test_referential_action_drift.py` (6) ;
+- **`alembic upgrade head` qui refuse de choisir**, dans
+  `apps/api/tests/test_audit_golden.py` (2),
+  `apps/api/tests/test_audit_migration.py` (3) et
+  `apps/api/tests/test_tenant_preflight.py` (3) — ceux-là appliquent de vraies
+  migrations, et tombent sur « Multiple head revisions are present ».
 
 Le risque n'est donc pas qu'une `main` à deux têtes passe inaperçue. Le risque
 est qu'elle **bloque tout** : `main` rouge, et chaque demande de fusion ouverte
@@ -185,11 +198,14 @@ empêcher. Rien ne proteste au moment de l'écriture : le fichier est valide,
 `alembic heads` sort en 0, et le défaut ne se voit qu'en lisant ses deux lignes.
 
 **Ce qui le rattrape.** Les quatre contrôles de la section « Ce qui est déjà
-protégé, et ce qui ne l'est pas », dès le `push`. Parmi eux,
-`scripts/epreuve_montee_depuis_preproduction.py` est le seul à jouer le geste du
-déploiement — appliquer les migrations du candidat à une base qui porte le
-schéma en service — et donc le seul à tomber pour cette raison-là et non pour
-une autre.
+protégé, et ce qui ne l'est pas », dès le `push` — mesuré : la seule suite
+ordinaire suffit à rendre l'arbre rouge. Mais c'est
+`scripts/epreuve_montee_depuis_preproduction.py` qui le dit le plus
+lisiblement : il joue le geste du déploiement — appliquer les migrations du
+candidat à une base qui porte le schéma en service — et son message est
+`ÉCHEC — 2 tête(s)` suivi de leurs noms (lu dans le script ; non rejoué ici,
+faute d'un PostgreSQL sous la main). Les autres rendent des centaines de lignes
+dont il faut extraire la cause.
 
 **Ce qu'il faut faire.** À chaque révision ajoutée à une tranche, relire
 `down_revision` dans le fichier de fusion et le décaler sur la nouvelle tête.

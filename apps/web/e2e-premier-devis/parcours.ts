@@ -158,7 +158,8 @@ export const ESPACE_PDF = '\u00a0'
  * encodées en WinAnsi, qui ne porte pas la première.
  */
 export function enBelge(canonique: string, espace: string = ESPACE_ECRAN): string {
-  const [entiereBrute = '', fraction] = canonique.split('.')
+  const negatif = canonique.startsWith('-')
+  const [entiereBrute = '', fraction] = (negatif ? canonique.slice(1) : canonique).split('.')
   const groupes: string[] = []
   let entiere = entiereBrute
   while (entiere.length > 3) {
@@ -166,7 +167,10 @@ export function enBelge(canonique: string, espace: string = ESPACE_ECRAN): strin
     entiere = entiere.slice(0, -3)
   }
   groupes.unshift(entiere)
-  const groupee = groupes.join(espace)
+  // Le signe est retiré AVANT le groupage et remis après : sans cela,
+  // « -298.45 » voyait sa partie entière « -298 » dépasser trois caractères et
+  // se faire couper en « - 298 ».
+  const groupee = (negatif ? '-' : '') + groupes.join(espace)
   return fraction === undefined ? groupee : `${groupee},${fraction}`
 }
 

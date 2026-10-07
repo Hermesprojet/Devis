@@ -28,6 +28,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
+from metreo_api.services import lisible
 from metreo_api.services import pdf as moteur_pdf
 
 from . import emission
@@ -663,11 +664,14 @@ def test_l_apercu_rend_la_quantite_sans_rien_ecrire(seeded_client: TestClient, c
 def test_l_apercu_rend_la_quantite_convertie_et_son_ecriture_lisible(
     seeded_client: TestClient, chantier
 ) -> None:
-    """Le nombre exact ET sa lecture, arrondie à ce que l'incertitude autorise.
+    """Le nombre exact ET sa lecture, écrite comme le bordereau l'écrira.
 
-    Dix décimales annonceraient une précision que la mesure vient elle-même de
-    déclarer absente. C'est la règle de `lisible.decimales_utiles`, et elle
-    s'applique ici comme sur la mesure.
+    Une ligne de bordereau vit dans le monde du DOCUMENT : son nombre sera
+    multiplié par un prix unitaire et imprimé sur un devis. L'aperçu l'écrit
+    donc comme le document l'écrira — deux décimales au moins, celles de la
+    valeur au-delà — et non avec les décimales de la MESURE, tirées de son
+    incertitude. Annoncer « 6,0200 m » puis écrire « 6,02 m » était annoncer
+    autre chose que ce qu'on fait.
     """
     entetes = chantier["entetes"]
     mesure = _mesure_tranchee(seeded_client, entetes, chantier["project_id"], decision="accepted")
@@ -679,9 +683,57 @@ def test_l_apercu_rend_la_quantite_convertie_et_son_ecriture_lisible(
     assert apercu["unite"] == "m"
     assert Decimal(apercu["quantite"]) == Decimal(mesure["valeur_retenue"]) / Decimal(1000)
     assert apercu["quantite_lisible"].endswith(" m")
-    assert len(apercu["quantite_lisible"].split(",")[-1].rstrip(" m")) <= 4, (
-        f"trop de décimales pour une mesure incertaine : {apercu['quantite_lisible']}"
+    assert apercu["quantite_lisible"] == lisible.quantite_de_document_lisible(
+        Decimal(apercu["quantite"]), "m"
     )
+
+
+def test_l_apercu_annonce_EXACTEMENT_le_nombre_que_la_ligne_portera(
+    seeded_client: TestClient, chantier
+) -> None:
+    """L'aperçu et l'écriture, sur la même mesure, à la dernière décimale.
+
+    **Le défaut que ce test ferme.** `convert` travaille à vingt-huit chiffres
+    significatifs ; la colonne `quantity` en garde dix et quantise à
+    l'écriture. Une conversion de millimètres en mètres produisait donc treize
+    décimales, dont l'aperçu annonçait les treize et dont la ligne n'écrivait
+    que dix. L'écart valait 10⁻¹¹ m : invisible, et c'est précisément pourquoi
+    il fallait un test. Un aperçu qui annonce autre chose que ce qu'il écrit
+    n'est plus un aperçu.
+
+    La cote est choisie pour que la division par mille ne tombe pas juste.
+    """
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(
+        seeded_client,
+        entetes,
+        chantier["project_id"],
+        decision="corrected",
+        corrigee="4180.6822810844",
+    )
+
+    annonce = _apercu(
+        seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], unite_cible="m"
+    ).json()
+    ecrite = _reprendre(
+        seeded_client,
+        entetes,
+        chantier["boq_id"],
+        mesure["proposal_id"],
+        unite_cible="m",
+        position="70.10",
+        designation="La cote qui ne tombe pas juste",
+    ).json()
+
+    assert Decimal(ecrite["quantity"]) == Decimal(annonce["quantite"]), (
+        f"annoncé {annonce['quantite']}, écrit {ecrite['quantity']}"
+    )
+    # Et la ligne relue par l'API dit la même chose : l'égalité ne tient pas
+    # qu'à la réponse de la route d'écriture.
+    lignes = seeded_client.get(f"/api/v1/boqs/{chantier['boq_id']}/items", headers=entetes).json()
+    relue = next(ligne for ligne in lignes if ligne["id"] == ecrite["id"])
+    assert Decimal(relue["quantity"]) == Decimal(annonce["quantite"])
+    assert relue["quantity_lisible"] == annonce["quantite_lisible"]
 
 
 def test_l_apercu_dit_d_ou_vient_le_nombre(seeded_client: TestClient, chantier) -> None:

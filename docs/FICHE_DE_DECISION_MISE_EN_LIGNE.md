@@ -224,8 +224,15 @@ restent ouvertes : une mesure peut être fausse d'un facteur 2 avec un ± de
 0,04 % si l'échelle saisie est fausse. Le détail est au § 2.0 de
 `docs/PRECISION_DES_MESURES.md`.
 
-La procédure d'essai sur vos plans est `docs/VALIDATION_SUR_PLANS_REELS.md` :
-les fichiers nécessaires, les trois cotes à relever, le tableau attendu /
-mesuré / écart, et la ligne « votre tolérance » laissée vide. Le parcours
-pas-à-pas, écran par écran, est `docs/ESSAI_UTILISATEUR_PDF.md`. Cette fiche ne
-les remplace pas.
+Trois documents portent l'essai sur vos plans, et ils ne se remplacent pas :
+
+- **`docs/ESSAI_GUIDE_PLANS_REELS.md`** — l'essai court, les sept gestes du PDF
+  au devis, les fichiers et les références à fournir, et la fiche d'une page à
+  rendre. **C'est par là qu'on commence.**
+- `docs/VALIDATION_SUR_PLANS_REELS.md` — la méthode chiffrée : le tableau
+  attendu / mesuré / écart, la répétition qui lève le biais de pointage, et la
+  ligne « votre tolérance » laissée vide.
+- `docs/ESSAI_UTILISATEUR_PDF.md` — le détail écran par écran, mille lignes,
+  pour quand quelque chose ne se passe pas comme prévu.
+
+Cette fiche ne les remplace pas.

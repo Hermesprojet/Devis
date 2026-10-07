@@ -323,3 +323,41 @@ chaînes, et l'API les rend telles quelles.
   document tel qu'il a été remis — c'est la même réserve que pour l'arrondi,
   et pour la même raison : on ne réécrit pas un document déjà entre les mains
   d'un client.
+
+## Ce qui reste ouvert, et qui est une décision de chiffrage
+
+**Une quantité reprise d'un plan porte dix décimales.** La mesure est quantisée
+à dix décimales à son calcul, la conversion de millimètres en mètres en produit
+autant, et la colonne `boq_items.quantity` les conserve. Pour une cote ronde —
+6 020 mm corrigée à la main — cela ne se voit pas : 6,02 m s'écrit avec deux
+décimales. Pour une cote **mesurée**, qui ne tombe jamais juste, cela se voit :
+
+| Où | Ce qui s'affiche pour 4,180 682 281 1 m |
+| --- | --- |
+| La ligne du bordereau, à l'écran | `4,180682 m` — l'affichage plafonne à six décimales |
+| Le PDF du devis | `4,1806822811` — le moteur rend la valeur entière |
+
+**Les deux nombres sont la même valeur**, et le total de la ligne est le même :
+le moteur multiplie la quantité stockée, jamais celle qui s'affiche. Mais le
+document et l'écran ne s'écrivent pas pareil, et c'est le défaut que cette passe
+avait pour objet de fermer.
+
+Trois sorties possibles, et **aucune n'est de la présentation** :
+
+1. **Quantiser la quantité au moment de la reprise**, à la précision que son
+   incertitude justifie — 4 180,68 mm ± 26 mm donne 4,18 m, et pas un chiffre
+   de plus. C'est la règle que `lisible.decimales_utiles` applique déjà à
+   l'affichage d'une mesure, portée à la valeur stockée. Défendable — *une
+   quantité n'est jamais connue mieux que son incertitude* — mais c'est une
+   décision de chiffrage : elle change le nombre qui chiffre le devis.
+2. **Arrondir à l'impression**, comme on arrondit un montant. Il faudrait alors
+   vérifier que le document s'additionne toujours de tête, ce qui est la raison
+   d'être de tout ce qui précède.
+3. **Ne rien changer**, et afficher les dix décimales partout. Honnête, et
+   illisible : c'est le défaut A2 que la revue a fait corriger.
+
+**Rien n'a été tranché ici.** Le plafond d'affichage à six décimales reste, et
+le PDF continue de porter la valeur entière. Le jour où un essai sur des plans
+réels produira une ligne de bordereau à six décimales significatives, la
+question se posera d'elle-même — et c'est le bon moment pour la trancher, avec
+un vrai métré sous les yeux.

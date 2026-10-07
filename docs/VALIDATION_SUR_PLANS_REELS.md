@@ -20,6 +20,11 @@
 > **Confidentialité.** Aucun plan réel n'entre dans ce dépôt, et aucun ne part
 > vers un service tiers. La règle et les trois voies de dépôt possibles sont
 > dans `docs/PLANS_REELS.md` ; ce document ne les répète pas.
+>
+> **Pour conduire l'essai, lisez d'abord `docs/ESSAI_GUIDE_PLANS_REELS.md`** :
+> il enchaîne les sept gestes du PDF au devis, en une page, et ajoute la
+> comparaison avec le DXF du même dessin. Ce document-ci est la MÉTHODE
+> chiffrée qu'il applique.
 
 ---
 

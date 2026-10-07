@@ -45,6 +45,7 @@ from metreo_domain.errors import (
 )
 from metreo_domain.units import Quantity, convert, get_unit
 
+from ..db import AMOUNT_SCALE
 from ..models import ExtractionProposal
 from . import calibration_de_plan, lisible
 from .tenant import find_owned
@@ -160,6 +161,14 @@ def preparer(
     )
 
 
+#: La précision que la colonne `boq_items.quantity` conserve réellement.
+#:
+#: `Amount` est un `NUMERIC(28, 10)`, et quantise à l'écriture. La reprise
+#: quantise AVANT, pour que l'aperçu annonce le nombre qui sera écrit et non
+#: celui qui lui ressemble à la treizième décimale.
+_PRECISION_DE_COLONNE = Decimal(1).scaleb(-AMOUNT_SCALE)
+
+
 #: Pourquoi une mesure ne se reprend pas, selon ce qui lui est arrivé.
 _DECISION_LISIBLE: dict[str, str] = {
     "accepted": "confirmée",
@@ -237,7 +246,15 @@ def _convertir(valeur: Decimal, unite_source: str, unite_cible: str | None) -> t
             f"Cette mesure est en {lisible.unite_affichee(source.code)} ; "
             f"elle ne peut pas être reprise en {lisible.unite_affichee(cible.code)}.",
         ) from exc
-    return converti.quantity.value, cible.code
+    # **Quantisée à la précision de la COLONNE, et non rendue brute.**
+    #
+    # `convert` travaille à 28 chiffres significatifs : 4 180,682 281 084 4 mm
+    # devient 4,180 682 281 084 4 m, soit treize décimales. La colonne `Amount`
+    # en garde dix, et quantise à l'écriture. Sans cette ligne, l'aperçu
+    # annonçait donc un nombre que la ligne n'allait pas porter — exactement ce
+    # que cet aperçu existe pour empêcher. L'écart est de l'ordre de 10⁻¹¹ m ;
+    # ce n'est pas sa taille qui compte, c'est qu'il existe.
+    return converti.quantity.value.quantize(_PRECISION_DE_COLONNE), cible.code
 
 
 def _empreinte(

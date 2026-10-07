@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
 import { ADMIN } from './banc'
-import { seConnecter, seDeconnecter } from './parcours'
+import { enBelge, seConnecter, seDeconnecter } from './parcours'
 
 /**
  * Trois hypothèses de chiffrage, éprouvées au navigateur sur un vrai devis.
@@ -75,10 +75,22 @@ async function calculer(page: Page): Promise<void> {
 }
 
 /** Le déboursé sec d'une colonne, attendu jusqu'à ce que le serveur réponde. */
+/**
+ * Le déboursé sec d'un scénario, attendu sous son écriture d'ÉCRAN.
+ *
+ * Les constantes de ce fichier restent canoniques — « 3434.50 » se relit et se
+ * recalcule de tête — et c'est `enBelge` qui les transcrit au dernier moment,
+ * sans rien arrondir. L'écran, lui, écrit « 3 434,50 EUR ».
+ */
 async function attendreDebourse(page: Page, nom: Nom, montant: string): Promise<void> {
-  await expect(page.getByTestId(`debourse-${nom}`)).toHaveText(`${montant} EUR`, {
+  await expect(page.getByTestId(`debourse-${nom}`)).toHaveText(`${enBelge(montant)} EUR`, {
     timeout: 20_000,
   })
+}
+
+/** L'écart d'un scénario, même règle. */
+async function attendreEcart(page: Page, nom: Nom, montant: string): Promise<void> {
+  await expect(page.getByTestId(`ecart-${nom}`)).toContainText(`${enBelge(montant)} EUR`)
 }
 
 test('trois scénarios de chiffrage, calculés par le moteur et jamais par le navigateur', async ({
@@ -181,7 +193,7 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
   const urlVersion = page.url()
 
   // Le chiffrage de RÉFÉRENCE, celui auquel tout scénario doit se comparer.
-  await expect(page.getByRole('row', { name: `Déboursé sec ${REFERENCE} EUR` })).toBeVisible({
+  await expect(page.getByRole('row', { name: `Déboursé sec ${enBelge(REFERENCE)} EUR` })).toBeVisible({
     timeout: 20_000,
   })
 
@@ -206,7 +218,7 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
   for (const nom of ['bas', 'probable', 'haut'] as const) {
     await attendreDebourse(page, nom, REFERENCE)
   }
-  await expect(page.getByTestId('ecart-bas')).toContainText('0.00 EUR')
+  await attendreEcart(page, 'bas', '0.00')
   await expect(page.getByTestId('ecart-bas')).toContainText('(0 %)')
 
   // ---- 5. une variation de prix touche les ENTRÉES, et épargne le forfait
@@ -219,11 +231,11 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
 
   // 3 434,50 × 1,10 vaudrait 3 777,95. La différence, 45,00, est exactement
   // 10 % du forfait : la preuve que le total n'a pas été multiplié.
-  await expect(colonne(page, 'haut')).not.toContainText('3777.95')
-  await expect(page.getByTestId('ecart-haut')).toContainText('298.45 EUR')
-  await expect(page.getByTestId('ecart-bas')).toContainText('-298.45 EUR')
+  await expect(colonne(page, 'haut')).not.toContainText(enBelge('3777.95'))
+  await attendreEcart(page, 'haut', '298.45')
+  await attendreEcart(page, 'bas', '-298.45')
   // Le pourcentage vient du serveur : 298,45 ÷ 3 434,50 = 8,69 %.
-  await expect(page.getByTestId('ecart-haut')).toContainText('(8.69 %)')
+  await expect(page.getByTestId('ecart-haut')).toContainText(`(${enBelge('8.69')} %)`)
 
   // Les hypothèses affichées sont celles que le SERVEUR a appliquées, relues
   // de sa réponse, et non celles que l'écran croit avoir envoyées.
@@ -242,7 +254,7 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
   await calculer(page)
   // 661,50 → 727,65 : seuls les matériaux ont bougé, soit +66,15.
   await attendreDebourse(page, 'haut', '3500.65')
-  await expect(page.getByTestId('ecart-haut')).toContainText('66.15 EUR')
+  await attendreEcart(page, 'haut', '66.15')
 
   // ---- 7. la productivité, dont le sens s'inverse
   await colonne(page, 'haut').getByRole('checkbox', { name: 'Matériaux' }).uncheck()
@@ -250,7 +262,7 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
   await calculer(page)
   // 750,00 ÷ 1,1 = 681,82 : produire plus par heure COÛTE MOINS.
   await attendreDebourse(page, 'haut', '3366.32')
-  await expect(page.getByTestId('ecart-haut')).toContainText('-68.18 EUR')
+  await attendreEcart(page, 'haut', '-68.18')
 
   // ---- 8. la distance passe par l'arrondi des rotations
   await poser(page, 'haut', { productivite: '0', distance: '10' })
@@ -258,8 +270,8 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
   // 13 × (85 + 33 × 1,20) = 1 619,80, et NON 1 573,00 × 1,10 = 1 730,30 :
   // 13 rotations restent 13 rotations.
   await attendreDebourse(page, 'haut', '3481.30')
-  await expect(page.getByTestId('ecart-haut')).toContainText('46.80 EUR')
-  await expect(colonne(page, 'haut')).not.toContainText('3591.80')
+  await attendreEcart(page, 'haut', '46.80')
+  await expect(colonne(page, 'haut')).not.toContainText(enBelge('3591.80'))
 
   // ---- 9. la virgule est acceptée, comme le point
   //
@@ -276,8 +288,8 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
   await expect(colonne(page, 'haut').getByRole('alert')).toHaveCount(0)
   // Et les deux voisins gardent leur résultat : une faute de frappe sur un
   // tiers de l'écran ne fait pas perdre une comparaison entière.
-  await expect(page.getByTestId('debourse-haut')).toHaveText('3481.30 EUR')
-  await expect(page.getByTestId('debourse-probable')).toHaveText(`${REFERENCE} EUR`)
+  await expect(page.getByTestId('debourse-haut')).toHaveText(`${enBelge('3481.30')} EUR`)
+  await expect(page.getByTestId('debourse-probable')).toHaveText(`${enBelge(REFERENCE)} EUR`)
 
   // ---- 11. des libellés qui mentent sont SIGNALÉS, jamais réordonnés
   await poser(page, 'bas', { prix: '10' })
@@ -293,7 +305,7 @@ test('trois scénarios de chiffrage, calculés par le moteur et jamais par le na
 
   // ---- 12. rien n'a été écrit, et une version gelée reste isolée
   await page.reload()
-  await expect(page.getByRole('row', { name: `Déboursé sec ${REFERENCE} EUR` })).toBeVisible({
+  await expect(page.getByRole('row', { name: `Déboursé sec ${enBelge(REFERENCE)} EUR` })).toBeVisible({
     timeout: 20_000,
   })
   await expect(page.getByText('Brouillon', { exact: true })).toBeVisible()

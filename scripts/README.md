@@ -43,17 +43,25 @@ Appelés par le `Makefile` et par la CI. Ils ne réparent rien : ils refusent.
 | `check_skills.py` | Un skill dont le frontmatter, les chemins cités ou les données volatiles ont dérivé |
 | `schema_drift_gate.py` | Un schéma migré qui ne correspond plus aux modèles, ou deux têtes Alembic |
 | `verify_dependency_closure.py` | Un environnement dont les versions installées n'honorent pas les manifestes |
-| `verifier_provenance_du_candidat.py` | Une branche d'intégration portant une correction qui n'appartient à aucune PR |
+| `verifier_provenance_du_candidat.py` | Un candidat portant un commit qu'aucune branche fusionnée n'emporte |
 | `_url_safety.py` | *(module partagé)* Analyse une URL de base sans jamais journaliser son mot de passe |
 
 `verifier_provenance_du_candidat.py` n'est pas appelé par le `Makefile` : il
 lit l'historique de plusieurs branches distantes, ce qu'un arbre de travail
 quelconque ne porte pas. Il se lance à la main, avant de proposer un candidat.
 
-Il compare les `patch-id` des commits de la branche d'intégration à ceux des
-branches de PR. Un commit qui n'est dans aucune disparaîtra avec la branche —
-et le défaut qu'il corrigeait reviendra à la mise en ligne, sans que personne
-se souvienne qu'il avait été vu.
+Il compare les `patch-id` des commits du candidat à ceux des branches de PR. Un
+commit qui n'est dans aucune ne se perd que si la branche qui le porte n'est pas
+fusionnée — le script situe donc le candidat par rapport à la branche que la
+demande de fusion unique amène sur `main`, et ne parle de perte que dans ce cas.
+Il ne décide pas la mise en ligne : ce qui ferme l'écart entre « éprouvé » et
+« en ligne » est la comparaison de contenu de
+`docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md`.
+
+Mesuré sur le candidat `2d18299` : 70 commits hors fusion, dont 9 écrits sur les
+branches de candidat elles-mêmes, que la fusion emporte. Avant correction de son
+candidat par défaut et de sa liste de branches, il en annonçait 31 perdus — dont
+22 à tort. Un contrôle qui crie à tort cesse d'être lu.
 
 ## Règle
 

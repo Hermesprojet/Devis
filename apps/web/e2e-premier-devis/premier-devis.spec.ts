@@ -240,8 +240,8 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
   await page.goto(urlDevis)
   await expect(page.getByText('Gelée', { exact: true })).toBeVisible()
   expect(await totaux(page)).toMatchObject({
-    'Total HT': MONTANTS.totalHT,
-    'Total TTC': MONTANTS.ttc,
+    'Total HT': enBelge(MONTANTS.totalHT),
+    'Total TTC': enBelge(MONTANTS.ttc),
   })
 
   // ---- 11. et l'appelant sait où le retrouver

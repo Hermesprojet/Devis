@@ -19,7 +19,7 @@ voie de livraison. Cette fiche ne recopie **aucun** SHA de candidat, et elle dit
 pourquoi : le renvoi « SHA en tête de la fiche » qui figurait dans ce tableau
 était donc pendant — il envoyait chercher un numéro que la fiche n'écrit pas.
 
-**Ce que relire veut dire ici.** Les douze ateliers de CI étaient verts sur
+**Ce que relire veut dire ici.** Les onze ateliers de CI étaient verts sur
 `daeb7f0`, et sa suite d'API rejouée donnait 1 605 réussites. Cette revue n'a
 donc pas refait ce que les tests font : elle a cherché ce qu'aucun test ne
 regarde — les contradictions entre deux écrans, les nombres affichés, les
@@ -402,7 +402,7 @@ résolution n'est plus calculée depuis une constante, elle est lue.
 **Ce qui était signalé.** Le scénario qui comparait la mesure affichée à une
 longueur connue ne vivait que dans `apps/web/captures/`, qu'**aucune des deux
 configurations de CI ne ramasse**. Une régression de pointage pouvait passer les
-douze ateliers verts.
+onze ateliers verts.
 
 **Ce qui a changé.** Le scénario est écrit une fois dans
 `apps/web/mesure-pdf/plan-connu.ts`, et appelé deux fois :
