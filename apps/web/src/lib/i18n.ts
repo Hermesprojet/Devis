@@ -346,13 +346,22 @@ const fr: Dictionary = {
   'plan.pdf.pageCourte': 'p. {page}',
   'plan.pdf.outils': 'Outils',
   'plan.pdf.texteLabel': 'Textes lus',
-  'plan.pdf.sansTexte': 'aucun — plan probablement scanné',
-  // Dit à CÔTÉ du compte, et non à sa place. L'en-tête affichait « aucun »
-  // alors que le bas de l'écran annonçait « 4 textes affichés sur 4 lus » :
-  // deux phrases contradictoires sur la même page, parce que l'une parlait du
-  // SEUIL d'extraction et l'autre du nombre réellement lu.
-  'plan.pdf.texteMaigre':
-    'trop peu pour une extraction fiable — plan probablement scanné',
+  // Trois phrases, et aucune n'est un verdict d'un mot.
+  //
+  // L'ancienne — « aucun — plan probablement scanné » — s'affichait dès que
+  // l'extraction rendait moins de cinquante caractères. Le plan de bâtiment du
+  // dépôt en porte vingt-sept et quatre tracés vectoriels : il est tout sauf un
+  // scan. Ce qui distingue un scan n'est pas la quantité de texte, c'est son
+  // absence totale sur une page qui ne porte qu'une image.
+  'plan.pdf.sansTexte': 'aucun',
+  'plan.pdf.extraction':
+    '{fragments} fragment(s), {caracteres} caractère(s) · {traces} tracé(s) vectoriel(s)',
+  'plan.pdf.scanne':
+    'aucun texte et aucun tracé : document probablement scanné. '
+    + 'La mesure géométrique reste possible, la lecture des cotes non.',
+  'plan.pdf.sansTexteMaisVectoriel':
+    'aucun texte extrait, mais la page porte du dessin vectoriel : '
+    + 'ce n’est pas un scan, c’est un plan exporté sans texte.',
   'plan.pdf.echelleLabel': 'Échelle déclarée',
   'plan.pdf.sansEchelle': 'aucune : rien ne peut être mesuré',
   'plan.pdf.sansApercu':
@@ -362,6 +371,22 @@ const fr: Dictionary = {
   'plan.pdf.loupeAlt': 'Agrandissement de la zone désignée',
   'plan.pdf.loupeEnCours':
     "Agrandissement en cours. La première ouverture d'une page prend quelques secondes ; les suivantes sont immédiates.",
+  // Dit pendant que l'agrandissement charge, à la place du pointage.
+  //
+  // L'écran montrait auparavant « Agrandissement en cours » AVEC l'image
+  // précédente encore affichée, et le clic restait accepté : un point pouvait
+  // s'enregistrer dans une zone que le propriétaire ne voyait plus. Le
+  // pointage est désormais fermé tant que l'image affichée n'est pas celle de
+  // la page, de la révision et de la zone demandées.
+  'plan.pdf.loupePasPrete':
+    'Pointage suspendu : l’agrandissement de cette zone n’est pas encore affiché. '
+    + 'Aucun clic n’est enregistré tant que l’image montrée n’est pas celle de la zone demandée.',
+  // Le filet de sécurité du cas où le serveur ne dit PAS quelle zone son image
+  // couvre : la géométrie serait alors supposée, et une mesure supposée ne
+  // vaut rien. Mieux vaut le dire que de mesurer sur une hypothèse.
+  'plan.pdf.zoneNonDeclaree':
+    'Cet agrandissement n’a pas déclaré la zone qu’il couvre. '
+    + 'La position des points ne peut pas être garantie : rechargez la page avant de mesurer.',
   'plan.pdf.pointsPoses': '{nombre} point(s) posé(s)',
   'plan.pdf.confirmerEchelle': "Confirmer l'échelle de cette page",
   'plan.pdf.aideEchelle':

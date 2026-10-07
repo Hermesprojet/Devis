@@ -103,9 +103,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
+        # Sans cette liste, le navigateur REFUSE à l'application de lire ces
+        # en-têtes d'une réponse d'une autre origine — et l'écran de lecture de
+        # plans en a besoin : `X-Metreo-Zone` dit quelle zone la tuile couvre
+        # vraiment, et c'est elle qui place les clics. Un défaut de CORS se
+        # manifesterait ici par un pointage silencieusement décalé, jamais par
+        # une erreur.
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Request-Id", "Content-Disposition"],
+        expose_headers=[
+            "X-Request-Id",
+            "Content-Disposition",
+            "X-Metreo-Tuile",
+            "X-Metreo-Zone",
+            "X-Metreo-Pixels",
+        ],
     )
 
     @app.middleware("http")

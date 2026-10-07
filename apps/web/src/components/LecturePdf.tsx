@@ -52,27 +52,42 @@ const UNITES = ['mm', 'cm', 'm'] as const
 const TAILLE_DE_LA_LOUPE = 0.05
 
 /**
- * Ce qu'un pixel de la LOUPE vaut en points PostScript de la page.
- *
- * La tuile fait 512 pixels pour une zone de `TAILLE_DE_LA_LOUPE` de page. Sur
- * une page de 3 370 points de large, cela donne 168 points rendus sur 512
- * pixels, soit 0,33 point par pixel.
+ * Ce qu'un pixel AFFICHÉ vaut en points PostScript de la page.
  *
  * **C'est ce nombre qui part au serveur comme `resolution_du_pointage`**, et
- * c'est lui qui décide de l'incertitude de toutes les mesures. Le calculer
- * plutôt que de l'affirmer est ce qui rend l'incertitude honnête.
+ * c'est lui qui décide de l'incertitude de toutes les mesures. Le MESURER
+ * plutôt que le supposer est ce qui rend l'incertitude honnête.
  *
- * **Le PLUS GRAND côté, et non la largeur.** Le défaut corrigé : cette
- * fonction ne prenait que la largeur, alors que `rendu_pdf.tuile` ajuste son
- * facteur sur le plus grand côté de la zone demandée. Les deux coïncident tant
- * que la page est en paysage — les quatre plans du propriétaire le sont tous —
- * et divergent de 1,41 dès qu'elle est en portrait, **dans le mauvais sens** :
- * l'écran annonçait alors une mesure plus sûre qu'elle ne l'est. Éprouvé par
- * `test_le_portrait_n_annonce_pas_une_mesure_plus_sure_que_le_paysage`.
+ * **Il était supposé, et de trois façons fausses à la fois.** L'ancienne
+ * version calculait `largeur_de_page × 0,05 ÷ 512` :
+ *
+ * 1. `512` est la taille que le serveur VISE, pas celle qu'il produit : un
+ *    bitmap se compte en pixels entiers, et la loupe mesurée fait 511 × 389 ;
+ * 2. l'image n'est pas affichée à sa taille naturelle. Elle remplit la largeur
+ *    de sa colonne — 417,6 pixels CSS pour 511 pixels de bitmap dans la
+ *    disposition à deux colonnes — et c'est le pixel AFFICHÉ que l'utilisateur
+ *    vise, pas celui du fichier ;
+ * 3. la largeur de page ignorait l'orientation, ce qui donnait 1,41 d'écart en
+ *    portrait, dans le sens qui annonce une mesure plus sûre qu'elle ne l'est.
+ *
+ * Les trois disparaissent en prenant la zone RÉELLEMENT couverte et la taille
+ * RÉELLEMENT affichée. Rien n'est supposé : les deux se lisent.
+ *
+ * Le plus grand des deux axes est retenu. Ils coïncident tant que l'image n'est
+ * pas déformée ; s'ils divergent, annoncer le plus fin reviendrait à promettre
+ * une précision que l'autre axe ne tient pas.
  */
-function resolutionDeLaLoupe(largeurEnPoints: number, hauteurEnPoints: number): number {
-  const pointsRendus = Math.max(largeurEnPoints, hauteurEnPoints) * TAILLE_DE_LA_LOUPE
-  return pointsRendus / 512
+function resolutionAffichee(
+  image: HTMLImageElement,
+  zone: [number, number, number, number],
+  largeurDeLaPage: number,
+  hauteurDeLaPage: number,
+): number | null {
+  const boite = image.getBoundingClientRect()
+  if (boite.width <= 0 || boite.height <= 0) return null
+  const pointsEnLargeur = (zone[2] - zone[0]) * largeurDeLaPage
+  const pointsEnHauteur = (zone[3] - zone[1]) * hauteurDeLaPage
+  return Math.max(pointsEnLargeur / boite.width, pointsEnHauteur / boite.height)
 }
 
 type Outil = 'naviguer' | 'calibrer' | 'segment' | 'surface'
@@ -110,30 +125,73 @@ const OUTILS: { cle: Outil; libelle: string; aide: string }[] = [
   },
 ]
 
-/** Charge une image authentifiée et rend son URL d'objet. */
-function useImageAuthentifiee(
-  charger: () => Promise<Blob>,
+/**
+ * Ce qu'une image affichée EST, et non seulement qu'elle est là.
+ *
+ * **Le défaut que ce type ferme.** L'ancien crochet ne rendait qu'une URL. Quand
+ * on déplaçait la loupe, la zone changeait immédiatement, l'ANCIENNE image
+ * restait affichée pendant le chargement de la nouvelle, et le clic restait
+ * autorisé. Un point posé à cet instant était calculé sur la zone COURANTE
+ * alors que l'utilisateur visait ce que montrait l'image PRÉCÉDENTE : un point
+ * enregistré ailleurs que là où il a été vu, sans un mot.
+ *
+ * Chaque rendu porte donc son identité — révision, page, zone demandée — et
+ * l'écran n'autorise le pointage que lorsque l'identité de l'image affichée est
+ * celle de la zone courante.
+ */
+type RenduAffiche = {
+  url: string
+  /** L'identité de CE rendu : `revision|page|zone`. */
+  cle: string
+  /** La zone que l'image couvre vraiment, rendue par le serveur. */
+  zone: [number, number, number, number]
+  /** Faux quand le serveur n'a pas dit sa zone et qu'on retombe sur la demande. */
+  zoneDeclaree: boolean
+}
+
+/**
+ * Charge une image authentifiée et rend ce qui est RÉELLEMENT affiché.
+ *
+ * Trois propriétés, et chacune corrige un cas observé :
+ *
+ * - **une réponse en retard ne remplace jamais une plus récente.** Deux
+ *   déplacements rapides lancent deux requêtes ; si la première arrive après
+ *   la seconde, l'écran afficherait la mauvaise zone en se croyant à jour. La
+ *   clé en cours est comparée au retour ;
+ * - **l'ancienne image disparaît dès que la zone change.** Elle restait visible
+ *   pour éviter un clignotement, au prix d'un décalage silencieux entre ce
+ *   qu'on voit et ce qu'on désigne. L'attente est annoncée, c'est plus honnête
+ *   qu'un dessin périmé ;
+ * - **un échec de chargement n'affiche rien.** Garder l'image précédente après
+ *   une erreur laisserait pointer sur une zone qu'on ne sert plus.
+ */
+function useRenduAuthentifie(
+  charger: () => Promise<{ blob: Blob; zone: [number, number, number, number]; zoneDeclaree: boolean }>,
   actif: boolean,
   cle: string,
-): { url: string | null; enCours: boolean; erreur: unknown } {
-  const [url, setUrl] = useState<string | null>(null)
+): { rendu: RenduAffiche | null; enCours: boolean; erreur: unknown } {
+  const [rendu, setRendu] = useState<RenduAffiche | null>(null)
   const [enCours, setEnCours] = useState(false)
   const [erreur, setErreur] = useState<unknown>(null)
 
   useEffect(() => {
     if (!actif) {
-      setUrl(null)
+      setRendu(null)
+      setErreur(null)
       return
     }
     let abandonne = false
     let objet: string | null = null
+    // L'image précédente part AVANT la nouvelle : tant que celle-ci n'est pas
+    // là, l'écran n'a rien à montrer et rien à laisser désigner.
+    setRendu(null)
     setEnCours(true)
     setErreur(null)
     charger()
-      .then((blob) => {
+      .then((tuile) => {
         if (abandonne) return
-        objet = URL.createObjectURL(blob)
-        setUrl(objet)
+        objet = URL.createObjectURL(tuile.blob)
+        setRendu({ url: objet, cle, zone: tuile.zone, zoneDeclaree: tuile.zoneDeclaree })
       })
       .catch((cause) => {
         if (!abandonne) setErreur(cause)
@@ -152,7 +210,33 @@ function useImageAuthentifiee(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actif, cle])
 
-  return { url, enCours, erreur }
+  return { rendu, enCours, erreur }
+}
+
+/**
+ * Où un clic est tombé DANS une image, en fraction de l'image elle-même.
+ *
+ * **Et non en fraction de son conteneur.** Mesuré dans un navigateur :
+ * l'enveloppe de l'aperçu fait 668,39 pixels pour une image de 666,39, et celle
+ * de la loupe 419,61 pour 417,61 — un pixel de bordure de chaque côté. Les
+ * clics étaient rapportés à l'enveloppe, ce qui décalait chaque point d'un
+ * pixel ET le mettait à une échelle de 0,3 % trop grande. Les deux erreurs sont
+ * systématiques : elles entrent dans l'échelle déclarée, puis multiplient
+ * toutes les mesures de la page.
+ *
+ * Rend `null` si le clic tombe hors de l'image — sur la bordure, précisément.
+ */
+function fractionDansLImage(
+  evenement: React.MouseEvent<HTMLElement>,
+): { fx: number; fy: number } | null {
+  const image = evenement.currentTarget.querySelector('img')
+  if (!image) return null
+  const boite = image.getBoundingClientRect()
+  if (boite.width <= 0 || boite.height <= 0) return null
+  const fx = (evenement.clientX - boite.left) / boite.width
+  const fy = (evenement.clientY - boite.top) / boite.height
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null
+  return { fx, fy }
 }
 
 export function LecturePdf({
@@ -180,6 +264,13 @@ export function LecturePdf({
   const [outil, setOutil] = useState<Outil>('naviguer')
   const [loupe, setLoupe] = useState<[number, number, number, number] | null>(null)
   const [points, setPoints] = useState<PointDEcran[]>([])
+  // La résolution la plus GROSSIÈRE parmi les clics du tracé en cours.
+  //
+  // La plus grossière, et non la dernière : une calibration posée à deux
+  // niveaux de zoom différents ne vaut pas mieux que son pire pointage, et
+  // retenir le meilleur annoncerait une précision que l'autre point ne tient
+  // pas. Remise à zéro avec le tracé.
+  const [resolutionDuTrace, setResolutionDuTrace] = useState<number | null>(null)
   const [textes, setTextes] = useState<TextesDePlan | null>(null)
   const [travail, setTravail] = useState<MesuresDePdf | null>(null)
   const [erreur, setErreur] = useState<unknown>(null)
@@ -191,16 +282,31 @@ export function LecturePdf({
 
   const apercuDisponible = plan.apercus.includes(page)
 
-  const apercu = useImageAuthentifiee(
-    () => api.renduDeLaPage(documentId, revisionId, page),
+  // L'identité de ce que CHAQUE image doit montrer. C'est elle qui autorise le
+  // pointage : tant que l'image affichée ne la porte pas, on ne clique pas.
+  const cleDeLApercu = `apercu|${revisionId}|${page}`
+  const cleDeLaLoupe = `loupe|${revisionId}|${page}|${loupe?.join(',') ?? ''}`
+
+  const apercu = useRenduAuthentifie(
+    async () => ({
+      blob: await api.renduDeLaPage(documentId, revisionId, page),
+      // Un aperçu couvre la page entière, par construction.
+      zone: [0, 0, 1, 1] as [number, number, number, number],
+      zoneDeclaree: true,
+    }),
     apercuDisponible,
-    `apercu-${revisionId}-${page}`,
+    cleDeLApercu,
   )
-  const tuile = useImageAuthentifiee(
+  const tuile = useRenduAuthentifie(
     () => api.tuileDuPlan(documentId, revisionId, page, loupe!),
     loupe !== null,
-    `tuile-${revisionId}-${page}-${loupe?.join(',') ?? ''}`,
+    cleDeLaLoupe,
   )
+
+  /** L'aperçu affiché est-il bien celui de la page courante ? */
+  const apercuPret = apercu.rendu?.cle === cleDeLApercu
+  /** La loupe affichée montre-t-elle bien la zone courante ? */
+  const loupePrete = loupe !== null && tuile.rendu?.cle === cleDeLaLoupe
 
   useEffect(() => {
     api
@@ -224,7 +330,10 @@ export function LecturePdf({
 
   // Changer d'outil ou de page abandonne le tracé en cours : garder des points
   // désignés à un autre endroit produirait une mesure que personne n'a voulue.
-  useEffect(() => setPoints([]), [outil, page])
+  useEffect(() => {
+    setPoints([])
+    setResolutionDuTrace(null)
+  }, [outil, page])
 
   const calibrationDeLaPage = useMemo(
     () => travail?.calibrations.find((c) => c.page === page) ?? null,
@@ -242,9 +351,13 @@ export function LecturePdf({
   )
 
   function cliquerSurLApercu(evenement: React.MouseEvent<HTMLDivElement>) {
-    const boite = evenement.currentTarget.getBoundingClientRect()
-    const x = (evenement.clientX - boite.left) / boite.width
-    const y = (evenement.clientY - boite.top) / boite.height
+    // Rapporté à l'IMAGE, et non à son enveloppe : celle-ci porte une bordure
+    // d'un pixel, qui décalait chaque clic et le mettait à une échelle de
+    // 0,3 % trop grande.
+    if (!apercuPret) return
+    const fraction = fractionDansLImage(evenement)
+    if (!fraction) return
+    const { fx: x, fy: y } = fraction
     const demi = TAILLE_DE_LA_LOUPE / 2
     setLoupe([
       Math.max(0, x - demi),
@@ -255,17 +368,38 @@ export function LecturePdf({
   }
 
   function cliquerDansLaLoupe(evenement: React.MouseEvent<HTMLDivElement>) {
-    if (!loupe || outil === 'naviguer') return
-    const boite = evenement.currentTarget.getBoundingClientRect()
-    const dansLaLoupeX = (evenement.clientX - boite.left) / boite.width
-    const dansLaLoupeY = (evenement.clientY - boite.top) / boite.height
-    // De la loupe vers la page : la loupe est une fenêtre sur [0,1]².
+    if (outil === 'naviguer') return
+    // **Le pointage n'est autorisé que sur l'image de la zone COURANTE.**
+    //
+    // Pendant le chargement d'une nouvelle loupe, la zone a déjà changé.
+    // Accepter un clic reviendrait à enregistrer un point calculé sur la
+    // nouvelle fenêtre alors que l'utilisateur visait ce que montrait
+    // l'ancienne image — un point posé ailleurs qu'où il a été vu.
+    if (!loupePrete || !tuile.rendu) return
+    const fraction = fractionDansLImage(evenement)
+    if (!fraction) return
+    // De l'image vers la page : on emploie la zone que l'image couvre
+    // VRAIMENT, et non celle qu'on a demandée. Un bitmap se compte en pixels
+    // entiers, et l'écart — 0,2 % en largeur, 0,28 % en hauteur sur la loupe
+    // mesurée — est systématique.
+    const [zx0, zy0, zx1, zy1] = tuile.rendu.zone
     const point = {
-      x: loupe[0] + dansLaLoupeX * (loupe[2] - loupe[0]),
-      y: loupe[1] + dansLaLoupeY * (loupe[3] - loupe[1]),
+      x: zx0 + fraction.fx * (zx1 - zx0),
+      y: zy0 + fraction.fy * (zy1 - zy0),
     }
+    const image = evenement.currentTarget.querySelector('img')
+    const resolution = image
+      ? resolutionAffichee(image, tuile.rendu.zone, largeurDeLaPage, hauteurDeLaPage)
+      : null
+
     const maximum = outil === 'calibrer' ? 2 : 200
     setPoints((anciens) => (anciens.length >= maximum ? [point] : [...anciens, point]))
+    setResolutionDuTrace((ancienne) => {
+      if (resolution === null) return ancienne
+      const recommence = points.length >= maximum
+      if (recommence || ancienne === null) return resolution
+      return Math.max(ancienne, resolution)
+    })
   }
 
   return (
@@ -358,13 +492,13 @@ export function LecturePdf({
           )}
 
           {apercu.enCours && <p className="muted">{t('common.loading')}</p>}
-          {apercu.url && (
+          {apercu.rendu && (
             <div className="pdf-apercu" data-testid="pdf-apercu" onClick={cliquerSurLApercu}>
               {/* Chargé comme IMAGE, jamais en ligne : un PNG est inerte, et le
                   rester explicitement vaut mieux que le rester par hasard. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={apercu.url}
+                src={apercu.rendu.url}
                 alt={t('plan.pdf.apercuAlt')}
                 data-testid="pdf-apercu-image"
               />
@@ -381,7 +515,8 @@ export function LecturePdf({
         <div className="pdf-colonne-action">
           {loupe && (
             <Loupe
-              url={tuile.url}
+              rendu={tuile.rendu}
+              prete={loupePrete}
               enCours={tuile.enCours}
               erreur={tuile.erreur}
               points={points}
@@ -414,9 +549,11 @@ export function LecturePdf({
                     second,
                     distance_reelle: distance,
                     unite,
-                    resolution_du_pointage: String(
-                      resolutionDeLaLoupe(largeurDeLaPage, hauteurDeLaPage),
-                    ),
+                    // Mesurée au clic, jamais supposée. `?? 1` est le défaut
+                    // PESSIMISTE du serveur — un point de papier par pixel —
+                    // et il n'est atteint que si l'image a disparu entre le
+                    // clic et l'envoi.
+                    resolution_du_pointage: String(resolutionDuTrace ?? 1),
                     motif,
                   })
                   setPoints([])
@@ -447,8 +584,14 @@ export function LecturePdf({
                       type: outil,
                       points,
                       libelle,
+                      // L'incertitude de TRACÉ est celle de ces clics-ci, et
+                      // non de ceux de la calibration. Les confondre était une
+                      // hypothèse vraie dans cet écran et fausse partout
+                      // ailleurs.
+                      resolution_du_pointage: String(resolutionDuTrace ?? 1),
                     })
                     setPoints([])
+                    setResolutionDuTrace(null)
                     // La mesure qu'on vient de créer devient celle qu'on
                     // regarde : son tracé s'affiche sans qu'il faille la
                     // chercher dans la liste pour vérifier ce qu'on a pointé.
@@ -656,14 +799,29 @@ function EnTetePdf({
           contradictoires sur la même page : l'une parlait du seuil, l'autre du
           nombre lu, et rien ne le disait.
         */}
+        {/*
+          **Les FAITS de l'extraction, et non un verdict.** L'écran annonçait
+          « aucun — plan probablement scanné » dès que l'extraction rendait
+          moins de cinquante caractères : le plan de bâtiment du dépôt en porte
+          vingt-sept et quatre tracés vectoriels, et n'a jamais été un scan.
+
+          Ce qui distingue un scan n'est pas la quantité de texte, c'est son
+          absence totale sur une page qui ne porte qu'une image. L'écran dit
+          donc ce qu'il a obtenu, et ne conclut que dans ce cas-là.
+        */}
         <dd data-testid="pdf-textes-entete">
           {plan.fragments_lus > 0 ? plan.fragments_lus : t('plan.pdf.sansTexte')}
-          {plan.fragments_lus > 0 && !plan.porte_du_texte && (
-            <>
-              <br />
-              <span className="muted">{t('plan.pdf.texteMaigre')}</span>
-            </>
-          )}
+          <br />
+          <span className="muted" data-testid="pdf-extraction">
+            {plan.probablement_scanne
+              ? t('plan.pdf.scanne')
+              : !plan.porte_du_texte
+                ? t('plan.pdf.sansTexteMaisVectoriel')
+                : t('plan.pdf.extraction')
+                    .replace('{fragments}', String(plan.fragments_lus))
+                    .replace('{caracteres}', String(plan.caracteres_extraits))
+                    .replace('{traces}', String(plan.traces_vectoriels))}
+          </span>
         </dd>
       </div>
       <div>
@@ -774,7 +932,8 @@ function Surlignages({
 }
 
 function Loupe({
-  url,
+  rendu,
+  prete,
   enCours,
   erreur,
   points,
@@ -784,7 +943,15 @@ function Loupe({
   onCliquer,
   onFermer,
 }: {
-  url: string | null
+  rendu: RenduAffiche | null
+  /**
+   * L'image affichée est-elle bien celle de la zone courante ?
+   *
+   * Faux pendant qu'une nouvelle loupe charge, et après un échec. L'écran
+   * annonce alors qu'on ne peut pas pointer, au lieu de laisser croire que
+   * le dessin visible est celui qu'on désignera.
+   */
+  prete: boolean
   enCours: boolean
   erreur: unknown
   points: PointDEcran[]
@@ -809,10 +976,17 @@ function Loupe({
           première fois. Les suivantes viennent du cache, en 0,3 ms. */}
       {enCours && <p className="muted">{t('plan.pdf.loupeEnCours')}</p>}
       <ErrorNotice error={erreur} />
-      {url && (
-        <div className="pdf-loupe-image" data-testid="pdf-loupe-image" onClick={onCliquer}>
+      {rendu && (
+        <div
+          className={prete ? 'pdf-loupe-image' : 'pdf-loupe-image en-attente'}
+          data-testid="pdf-loupe-image"
+          data-prete={prete ? 'oui' : 'non'}
+          data-zone={rendu.zone.map((valeur) => valeur.toFixed(10)).join(',')}
+          data-zone-declaree={rendu.zoneDeclaree ? 'oui' : 'non'}
+          onClick={onCliquer}
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={url} alt={t('plan.pdf.loupeAlt')} data-testid="pdf-loupe-rendu" />
+          <img src={rendu.url} alt={t('plan.pdf.loupeAlt')} data-testid="pdf-loupe-rendu" />
           <svg className="pdf-surlignages" viewBox="0 0 1 1" preserveAspectRatio="none">
             {selectionnee && (
               <polyline
@@ -821,8 +995,8 @@ function Loupe({
                 points={fermerSiSurface(selectionnee.points, selectionnee.type)
                   .map(
                     (p) =>
-                      `${(p.x - loupe[0]) / (loupe[2] - loupe[0])},` +
-                      `${(p.y - loupe[1]) / (loupe[3] - loupe[1])}`,
+                      `${(p.x - rendu.zone[0]) / (rendu.zone[2] - rendu.zone[0])},` +
+                      `${(p.y - rendu.zone[1]) / (rendu.zone[3] - rendu.zone[1])}`,
                   )
                   .join(' ')}
               />
@@ -832,8 +1006,8 @@ function Loupe({
                 key={`sl${rang}`}
                 className="pdf-sommet"
                 data-testid="pdf-loupe-sommet"
-                cx={(point.x - loupe[0]) / (loupe[2] - loupe[0])}
-                cy={(point.y - loupe[1]) / (loupe[3] - loupe[1])}
+                cx={(point.x - rendu.zone[0]) / (rendu.zone[2] - rendu.zone[0])}
+                cy={(point.y - rendu.zone[1]) / (rendu.zone[3] - rendu.zone[1])}
                 r={0.014}
               />
             ))}
@@ -841,8 +1015,8 @@ function Loupe({
               <circle
                 key={rang}
                 className="pdf-point"
-                cx={(point.x - loupe[0]) / (loupe[2] - loupe[0])}
-                cy={(point.y - loupe[1]) / (loupe[3] - loupe[1])}
+                cx={(point.x - rendu.zone[0]) / (rendu.zone[2] - rendu.zone[0])}
+                cy={(point.y - rendu.zone[1]) / (rendu.zone[3] - rendu.zone[1])}
                 r={0.012}
               />
             ))}
@@ -852,13 +1026,26 @@ function Loupe({
                 points={fermerSiSurface(points, outil)
                   .map(
                     (p) =>
-                      `${(p.x - loupe[0]) / (loupe[2] - loupe[0])},` +
-                      `${(p.y - loupe[1]) / (loupe[3] - loupe[1])}`,
+                      `${(p.x - rendu.zone[0]) / (rendu.zone[2] - rendu.zone[0])},` +
+                      `${(p.y - rendu.zone[1]) / (rendu.zone[3] - rendu.zone[1])}`,
                   )
                   .join(' ')}
               />
             )}
           </svg>
+        </div>
+      )}
+      {/* Dit, et non deviné : pendant le chargement, le clic est refusé, et il
+          vaut mieux l'annoncer que de laisser l'utilisateur croire qu'il a
+          posé un point. */}
+      {!prete && !enCours && !erreur && (
+        <p className="muted" data-testid="pdf-loupe-non-pointable">
+          {t('plan.pdf.loupePasPrete')}
+        </p>
+      )}
+      {rendu && !rendu.zoneDeclaree && (
+        <div className="notice warning" role="note" data-testid="pdf-zone-non-declaree">
+          {t('plan.pdf.zoneNonDeclaree')}
         </div>
       )}
       {outil !== 'naviguer' && (

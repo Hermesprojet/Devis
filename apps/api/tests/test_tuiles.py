@@ -19,6 +19,7 @@ mesure a imposé : une tuile pèse de 26 à 246 Ko selon la densité du dessin
 from __future__ import annotations
 
 import logging
+import zlib
 from pathlib import Path
 
 import pytest
@@ -26,17 +27,45 @@ import pytest
 from metreo_api.services import tuiles
 from metreo_api.services.document_storage import StockageLocal
 
-#: Un PNG minuscule mais VALIDE : signature, puis un IHDR qui annonce 7 × 5.
-#: Fabriqué à la main pour que `_dimensions_du_png` soit vérifié sur des octets
-#: dont la réponse attendue est connue, et non sur ce qu'un rendu a produit.
-_PNG_7x5 = (
-    b"\x89PNG\r\n\x1a\n"
-    + (13).to_bytes(4, "big")
-    + b"IHDR"
-    + (7).to_bytes(4, "big")
-    + (5).to_bytes(4, "big")
-    + b"\x08\x06\x00\x00\x00"
-)
+
+def _bloc(type_de_bloc: bytes, contenu: bytes) -> bytes:
+    """Un bloc PNG complet : longueur, type, contenu, CRC.
+
+    Le CRC est calculé et non inventé : `_zone_du_png` saute d'un bloc au
+    suivant par la longueur ET les quatre octets du CRC, et un bloc tronqué
+    ferait passer le test pour la mauvaise raison.
+    """
+    return (
+        len(contenu).to_bytes(4, "big")
+        + type_de_bloc
+        + contenu
+        + zlib.crc32(type_de_bloc + contenu).to_bytes(4, "big")
+    )
+
+
+def _png_de_test(
+    *, largeur: int = 7, hauteur: int = 5, zone: tuple[float, float, float, float] | None = None
+) -> bytes:
+    """Un PNG minuscule mais VALIDE, avec ou sans sa zone.
+
+    Fabriqué à la main pour que `_dimensions_du_png` et `_zone_du_png` soient
+    vérifiés sur des octets dont la réponse attendue est connue, et non sur ce
+    qu'un rendu a produit.
+    """
+    octets = b"\x89PNG\r\n\x1a\n" + _bloc(
+        b"IHDR",
+        largeur.to_bytes(4, "big") + hauteur.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00",
+    )
+    if zone is not None:
+        texte = b"metreo:zone\x00" + " ".join(f"{v:.10f}" for v in zone).encode("latin-1")
+        octets += _bloc(b"tEXt", texte)
+    return octets + _bloc(b"IDAT", b"\x00")
+
+
+#: La zone que portent les fausses tuiles des tests. Arbitraire, et RELUE :
+#: c'est la propriété qui compte, pas la valeur.
+_ZONE_DE_TEST = (0.1, 0.2, 0.3, 0.4)
+_PNG_7x5 = _png_de_test(zone=_ZONE_DE_TEST)
 
 
 @pytest.fixture()
@@ -145,7 +174,7 @@ def test_the_byte_ceiling_stops_writing_but_still_serves_the_tile(
         "_rendre_hors_processus",
         lambda original, *, page, zone, sortie: (
             sortie.write_bytes(_PNG_7x5),
-            (7, 5, 18.0),
+            (7, 5, 18.0, _ZONE_DE_TEST),
         )[1],
     )
 
@@ -188,7 +217,7 @@ def test_the_count_ceiling_also_stops_writing(
         "_rendre_hors_processus",
         lambda original, *, page, zone, sortie: (
             sortie.write_bytes(_PNG_7x5),
-            (7, 5, 18.0),
+            (7, 5, 18.0, _ZONE_DE_TEST),
         )[1],
     )
     tuile = tuiles.obtenir(
@@ -217,7 +246,7 @@ def test_a_tile_below_both_ceilings_is_written_to_the_volume(
     def _rendre(original: Path, *, page: int, zone: tuple[float, ...], sortie: Path):
         appels["nombre"] += 1
         sortie.write_bytes(_PNG_7x5)
-        return 7, 5, 18.0
+        return 7, 5, 18.0, _ZONE_DE_TEST
 
     monkeypatch.setattr(tuiles, "_rendre_hors_processus", _rendre)
     zone = (0.40, 0.40, 0.45, 0.45)
@@ -319,25 +348,96 @@ def test_a_child_that_never_finishes_is_killed_and_said_so(
     assert refus.value.code == "rendu_trop_long"
 
 
-def test_a_png_that_is_not_one_reports_no_dimensions_instead_of_guessing(
-    stockage: StockageLocal, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_png_that_is_not_one_reports_no_dimensions_instead_of_guessing() -> None:
     """Des octets qui ne sont pas un PNG donnent 0 × 0, pas une exception.
 
-    Le cas arrive si un fichier du volume est tronqué par un disque plein. Zéro
-    est faux mais visible ; une exception ferait échouer la lecture d'une tuile
-    au lieu de la signaler.
+    Éprouvé sur la FONCTION, et non plus par le cache : une tuile illisible
+    n'est désormais plus servie du tout — voir le test suivant — et ce contrat
+    de lecture reste celui qu'il faut tenir pour que rien ne lève.
+    """
+    assert tuiles._dimensions_du_png(b"pas un png") == (0, 0)
+    assert tuiles._dimensions_du_png(b"") == (0, 0)
+    assert tuiles._zone_du_png(b"pas un png") is None
+
+
+def test_a_cached_tile_without_its_zone_is_rendered_again(
+    stockage: StockageLocal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Une tuile dont on ignore la géométrie n'est PAS servie.
+
+    Deux cas, et le même traitement : une tuile écrite par une version
+    antérieure, qui ne portait pas encore sa zone, et un fichier tronqué par un
+    disque plein. Dans les deux cas, la servir reviendrait à placer les clics
+    de l'utilisateur en supposant qu'elle couvre la zone DEMANDÉE — ce qui est
+    faux d'un pixel, toujours dans le même sens, et donc jamais compensé entre
+    deux pointages.
+
+    La re-rendre coûte une seconde, une seule fois, et le volume reçoit alors
+    une image qui sait dire ce qu'elle montre.
+    """
+    appels = {"nombre": 0}
+
+    def _rendre(original: Path, *, page: int, zone: tuple[float, ...], sortie: Path):
+        appels["nombre"] += 1
+        sortie.write_bytes(_PNG_7x5)
+        return 7, 5, 18.0, _ZONE_DE_TEST
+
+    monkeypatch.setattr(tuiles, "_rendre_hors_processus", _rendre)
+    zone = (0.40, 0.40, 0.45, 0.45)
+    arguments = {
+        "organization_id": "org-1",
+        "revision_id": "rev-1",
+        "original": Path("/peu-importe.pdf"),
+        "page": 1,
+        "zone": zone,
+    }
+
+    for octets in (b"pas un png", _png_de_test(zone=None)):
+        chemin = stockage.chemin(tuiles.cle_de_la_tuile("org-1", "rev-1", 1, zone))
+        chemin.parent.mkdir(parents=True, exist_ok=True)
+        chemin.write_bytes(octets)
+        avant = appels["nombre"]
+
+        tuile = tuiles.obtenir(stockage, **arguments)  # type: ignore[arg-type]
+
+        assert appels["nombre"] == avant + 1, "la tuile sans zone aurait dû être re-rendue"
+        assert tuile.depuis_le_cache is False
+        assert tuile.zone_rendue == _ZONE_DE_TEST
+
+
+def test_the_real_zone_survives_the_cache(
+    stockage: StockageLocal, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La géométrie voyage DANS le PNG, et se relit telle quelle.
+
+    C'est la propriété qui rend le cache utilisable : une tuile resservie des
+    semaines plus tard doit encore savoir dire quelle zone elle couvre, sans
+    qu'aucun second fichier ait eu l'occasion de s'en séparer.
     """
     zone = (0.40, 0.40, 0.45, 0.45)
-    chemin = stockage.chemin(tuiles.cle_de_la_tuile("org-1", "rev-1", 1, zone))
-    chemin.parent.mkdir(parents=True, exist_ok=True)
-    chemin.write_bytes(b"pas un png")
-    tuile = tuiles.obtenir(
-        stockage,
-        organization_id="org-1",
-        revision_id="rev-1",
-        original=Path("/peu-importe.pdf"),
-        page=1,
-        zone=zone,
+    rendue = (0.4, 0.4, 0.4498, 0.4496)
+    monkeypatch.setattr(
+        tuiles,
+        "_rendre_hors_processus",
+        lambda original, *, page, zone, sortie: (
+            sortie.write_bytes(_png_de_test(zone=rendue)),
+            (7, 5, 18.0, rendue),
+        )[1],
     )
-    assert (tuile.largeur, tuile.hauteur) == (0, 0)
+    arguments = {
+        "organization_id": "org-1",
+        "revision_id": "rev-1",
+        "original": Path("/peu-importe.pdf"),
+        "page": 1,
+        "zone": zone,
+    }
+
+    premiere = tuiles.obtenir(stockage, **arguments)  # type: ignore[arg-type]
+    seconde = tuiles.obtenir(stockage, **arguments)  # type: ignore[arg-type]
+
+    assert premiere.depuis_le_cache is False
+    assert seconde.depuis_le_cache is True
+    assert seconde.zone_rendue == premiere.zone_rendue == rendue
+    assert seconde.zone_rendue != zone, (
+        "la zone rendue n'est pas la zone demandée, et c'est tout le propos"
+    )

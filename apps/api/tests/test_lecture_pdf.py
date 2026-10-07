@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from metreo_api.services import lecture_pdf
+from metreo_api.services import lecture_pdf, rendu_pdf
 
 pytest.importorskip(
     "pypdfium2",
@@ -324,17 +324,83 @@ def test_a_page_without_extractable_text_is_flagged_but_not_refused(
     plan scanné, et de le mesurer à la main. L'anomalie dit seulement que les
     cotes n'en seront pas tirées, et elle nomme la reconnaissance optique
     comme l'étape qui manque, sans promettre qu'elle existe.
+
+    **La fixture est une page qui ne porte QU'UNE IMAGE.** Elle l'est devenue
+    en corrigeant ce test : il interrogeait auparavant `page_sans_texte()`,
+    qui trace une ligne vectorielle, et acceptait donc comme « scan » une page
+    qui n'en est pas un. Le verdict passait, le diagnostic était faux.
     """
-    constat = lecture_pdf.lire(_ecrire(tmp_path, fabrique.page_sans_texte()))
+    constat = lecture_pdf.lire(_ecrire(tmp_path, fabrique.page_scannee()))
 
     assert not constat.refuse
     assert constat.pages == 1
     assert constat.fragments == []
     assert not constat.porte_du_texte
 
+    # Les trois faits comptés, pas le verdict seul : c'est ce qui rend le
+    # diagnostic vérifiable.
+    assert constat.caracteres_extraits == 0
+    assert constat.traces == 0
+    assert constat.images == 1
+    assert constat.probablement_scanne
+
     codes = [a.code for a in constat.anomalies]
     assert codes == ["texte_absent"]
     assert "reconnaissance optique" in constat.anomalies[0].message
+
+
+def test_a_page_drawn_without_text_is_not_called_a_scan(tmp_path: Path) -> None:
+    """Pas de texte ne veut pas dire scanné, et le message doit le dire.
+
+    `page_sans_texte()` porte un tracé vectoriel et aucun texte : c'est un
+    plan exporté sans cartouche sélectionnable, pas une image numérisée.
+    L'anomalie reste `texte_absent` — l'extraction n'a rien rendu, c'est vrai —
+    mais elle nomme la bonne cause, et ne promet pas qu'une reconnaissance
+    optique y changerait quoi que ce soit.
+    """
+    constat = lecture_pdf.lire(_ecrire(tmp_path, fabrique.page_sans_texte()))
+
+    assert not constat.refuse
+    assert not constat.porte_du_texte
+    assert constat.traces == 1
+    assert constat.images == 0
+    assert not constat.probablement_scanne
+
+    codes = [a.code for a in constat.anomalies]
+    assert codes == ["texte_absent"]
+    message = constat.anomalies[0].message
+    assert "ce n'est pas un scan" in message
+    assert "reconnaissance optique" not in message
+
+
+def test_a_short_title_block_is_described_in_figures_not_judged(
+    tmp_path: Path,
+) -> None:
+    """Le plan du dépôt rend vingt-sept caractères : c'est peu, pas un scan.
+
+    C'est le défaut exact que le propriétaire a signalé. Le PDF fabriqué porte
+    quatre textes et quatre tracés vectoriels ; leur petit nombre ne permet
+    aucune conclusion sur la nature du document. Ce que l'anomalie affiche
+    désormais est une DESCRIPTION — combien de fragments, combien de
+    caractères, combien de tracés — et une phrase qui écarte explicitement le
+    verdict « scanné ».
+    """
+    constat = lecture_pdf.lire(_ecrire(tmp_path, fabrique.plan_de_batiment()))
+
+    assert not constat.refuse
+    assert constat.porte_du_texte
+    assert constat.extraction_maigre
+    assert not constat.probablement_scanne
+    assert constat.traces > 0
+    assert constat.images == 0
+
+    codes = [a.code for a in constat.anomalies]
+    assert codes == ["extraction_maigre"]
+    message = constat.anomalies[0].message
+    assert f"{len(constat.fragments)} fragment(s)" in message
+    assert f"{constat.caracteres_extraits} caractères" in message
+    assert f"{constat.traces} tracé(s)" in message
+    assert "Rien n'indique un document scanné" in message
 
 
 def test_a_vector_plan_is_not_mistaken_for_a_scan(tmp_path: Path) -> None:
@@ -716,3 +782,70 @@ def test_a_tile_of_a_loupe_sized_zone_is_finer_than_the_preview(
         f"la tuile rend {tuile.pixels_par_point:.3f} pixel par point et l'aperçu "
         f"{apercu.pixels_par_point:.3f} : l'agrandissement travaille contre lui-même"
     )
+
+
+# ---------------------------------------------------------------------------
+# La zone que la tuile couvre VRAIMENT
+# ---------------------------------------------------------------------------
+
+
+def test_a_tile_says_which_zone_it_really_covers(tmp_path: Path) -> None:
+    """Et ce n'est pas celle qu'on a demandée — un bitmap se compte en pixels.
+
+    **Le défaut que cette propriété ferme.** L'écran plaçait ses clics en
+    supposant que l'image couvrait exactement la zone demandée. PDFium tronque
+    la dimension du bitmap au pixel inférieur : sur la loupe du plan de
+    bâtiment — 21 × 16 points, facteur 24,38 — l'image fait 511 × 389 pixels au
+    lieu de 512 × 390,1, soit 20,96 × 15,96 points.
+
+    L'erreur est petite et elle est SYSTÉMATIQUE : elle ne se compense pas
+    entre deux pointages, elle entre dans l'échelle déclarée, et de là multiplie
+    toutes les mesures de la page.
+    """
+    chemin = tmp_path / "plan.pdf"
+    chemin.write_bytes(fabrique.plan_de_batiment())
+    demandee = (0.117857, 0.85, 0.167857, 0.90)
+
+    tuile = rendu_pdf.rendre_une_zone(chemin, page=1, zone=demandee)
+
+    assert tuile.zone_rendue is not None
+    x0, y0, x1, y1 = tuile.zone_rendue
+    # Le coin haut gauche est celui qu'on a demandé : le rognage part de là.
+    assert (x0, y0) == pytest.approx((demandee[0], demandee[1]), abs=1e-9)
+    # L'étendue, elle, est celle des pixels obtenus — jamais plus grande que la
+    # demande, et ici strictement plus petite.
+    assert x1 <= demandee[2] and y1 <= demandee[3]
+    assert (x1, y1) != (demandee[2], demandee[3]), (
+        "si la zone rendue égalait la demande, ce test ne protégerait de rien"
+    )
+    # Et elle concorde avec le bitmap, au dix-millième de point près.
+    largeur_pt, hauteur_pt = 420.0, 320.0
+    assert (x1 - x0) * largeur_pt == pytest.approx(tuile.largeur / tuile.pixels_par_point, abs=1e-4)
+    assert (y1 - y0) * hauteur_pt == pytest.approx(tuile.hauteur / tuile.pixels_par_point, abs=1e-4)
+
+
+def test_the_tile_carries_its_zone_inside_the_png(tmp_path: Path) -> None:
+    """La géométrie voyage avec les pixels, pas à côté d'eux.
+
+    Une tuile est conservée sur le volume et resservie telle quelle, parfois
+    des semaines plus tard. Un second fichier pourrait s'en séparer ; un bloc
+    `tEXt` ne le peut pas.
+    """
+    chemin = tmp_path / "plan.pdf"
+    chemin.write_bytes(fabrique.plan_de_batiment())
+
+    tuile = rendu_pdf.rendre_une_zone(chemin, page=1, zone=(0.1, 0.1, 0.15, 0.15))
+
+    from metreo_api.services import tuiles as service_de_tuiles
+
+    relue = service_de_tuiles._zone_du_png(tuile.png)
+    assert relue is not None
+    assert relue == pytest.approx(tuile.zone_rendue, abs=1e-9)
+
+
+def test_a_full_page_preview_declares_no_zone(tmp_path: Path) -> None:
+    """Un aperçu pleine page n'est pas une fenêtre : il n'a pas de zone à dire."""
+    chemin = tmp_path / "plan.pdf"
+    chemin.write_bytes(fabrique.plan_de_batiment())
+
+    assert rendu_pdf.rendre(chemin, page=1).zone_rendue is None

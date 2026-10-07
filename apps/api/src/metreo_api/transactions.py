@@ -127,6 +127,7 @@ _classer(
     "POST /api/v1/projects/{project_id}/boqs",
     "POST /api/v1/boqs/{boq_id}/items",
     "POST /api/v1/boqs/{boq_id}/items:bulk",
+    "POST /api/v1/boqs/{boq_id}/items:depuis-une-mesure",
     "PATCH /api/v1/boq-items/{item_id}",
     "DELETE /api/v1/boq-items/{item_id}",
     "POST /api/v1/boq-items/{item_id}/approve",

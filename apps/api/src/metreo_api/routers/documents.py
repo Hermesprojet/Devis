@@ -393,6 +393,21 @@ def _plan_lu(
         ],
         porte_du_texte=bool(contenu.get("porte_du_texte")),
         fragments_lus=int(contenu.get("fragments_lus") or 0),
+        # **Les quatre faits de l'extraction, relus de l'artefact.**
+        #
+        # Oubliés ici, et le défaut était invisible : `PlanLu` leur donne des
+        # défauts — 0, 0, 0, faux — et l'écran affichait donc « 4 fragment(s),
+        # 0 caractère(s) · 0 tracé(s) vectoriel(s) » sur un plan qui en porte
+        # vingt-sept et quatre. Le constat écrit sur le volume était juste ;
+        # c'est la relecture qui les perdait, sans erreur ni avertissement.
+        #
+        # C'est le piège de cette fonction : elle recopie champ par champ, et
+        # un champ oublié ne se voit pas — il prend sa valeur par défaut, qui
+        # est un nombre plausible.
+        caracteres_extraits=int(contenu.get("caracteres_extraits") or 0),
+        traces_vectoriels=int(contenu.get("traces_vectoriels") or 0),
+        images_incluses=int(contenu.get("images_incluses") or 0),
+        probablement_scanne=bool(contenu.get("probablement_scanne")),
         apercus=[page for page in (contenu.get("apercus") or []) if isinstance(page, int)],
         mesurable=bool(contenu.get("mesurable")),
         unite_source=contenu.get("unite_source"),
@@ -942,6 +957,7 @@ def post_mesure_de_pdf(
             type_de_mesure=payload.type,
             points_ecran=[(point.x, point.y) for point in payload.points],
             libelle=payload.libelle,
+            resolution_du_pointage=payload.resolution_du_pointage,
         )
     except calibration_de_plan.CalibrationRefusee as refus:
         raise _refus_de_calibration(refus, refus.code, refus.message) from refus
@@ -1128,5 +1144,12 @@ def get_tuile(
             # Pour le diagnostic : une tuile servie en une milliseconde vient
             # du volume, une servie en quatre secondes vient d'être rendue.
             "X-Metreo-Tuile": "cache" if tuile.depuis_le_cache else "rendue",
+            # **La zone que cette image couvre VRAIMENT**, et la taille du
+            # bitmap. Sans ces deux en-têtes, l'écran place ses clics en
+            # supposant que l'image couvre la zone qu'il a DEMANDÉE — ce qui
+            # est faux d'un pixel, toujours dans le même sens, et donc jamais
+            # compensé entre deux pointages.
+            "X-Metreo-Zone": ",".join(f"{valeur:.10f}" for valeur in tuile.zone_rendue),
+            "X-Metreo-Pixels": f"{tuile.largeur},{tuile.hauteur}",
         },
     )

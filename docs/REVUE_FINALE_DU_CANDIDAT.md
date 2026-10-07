@@ -21,8 +21,12 @@ livraison ne traverse pas.
 **La distinction à tenir dans tout ce qui suit.** Le prototype réalise une
 **mesure assistée** : une personne déclare une échelle, pointe des points, et le
 programme rend un nombre avec son incertitude propagée. Sa **justesse sur vos
-plans reste à établir** — c'est l'objet de `docs/COTES_DE_REFERENCE.md`, et rien
-de ce qui suit ne l'établit.
+plans reste à établir** — la procédure est écrite dans
+`docs/VALIDATION_SUR_PLANS_REELS.md`, et rien de ce qui suit ne l'établit.
+
+**Deux passes de corrections.** Les sections A à E portent la première, les
+captures qu'elle a produites ayant été relues ; la section **F** porte la
+seconde, qui répond aux cinq points de cette relecture.
 
 ---
 
@@ -307,9 +311,185 @@ l'ancienne API fait VRAIMENT sur le schéma neuf ».
 
 ---
 
-## F. Ce qui est validé, et par quoi — les trois niveaux séparés
+## F. La seconde passe de corrections — les cinq priorités du 7 octobre
 
-### F1. Validé par les tests du dépôt
+Relecture des captures par le propriétaire, cinq points, et ce qu'ils ont donné.
+
+### F1. Le pointage pendant le chargement de la loupe
+
+**Ce qui était signalé.** La capture 08 montrait « Agrandissement en cours »
+**avec une image encore affichée**. Dans `LecturePdf.tsx`, la zone changeait
+immédiatement, l'ancienne image restait disponible et le clic restait autorisé :
+un point pouvait s'enregistrer dans une zone différente de celle que la personne
+voyait.
+
+**Ce qui a changé.** Chaque image porte désormais son **identité** —
+`revision|page|zone` — et le pointage n'est ouvert que lorsque l'image affichée
+porte celle de la zone courante. Trois propriétés, et chacune corrige un cas
+observé :
+
+1. **l'ancienne image disparaît dès que la zone change.** Il n'y a donc plus
+   rien à cliquer pendant l'attente, et l'attente est annoncée ;
+2. **une réponse en retard ne remplace jamais une plus récente.** La clé en
+   cours est comparée au retour ;
+3. **un échec de chargement n'affiche rien**, et le dit.
+
+Côté serveur, la tuile **déclare la zone qu'elle couvre vraiment** — en-tête
+`X-Metreo-Zone` et bloc `tEXt` du PNG, pour que la déclaration survive au cache.
+Une tuile en cache sans sa zone est **re-rendue** plutôt que servie avec une
+géométrie inconnue.
+
+**Comment c'est éprouvé.** `apps/web/e2e-premier-devis/suite-pointage-sur-loupe.spec.ts`,
+trois scénarios, chacun provoqué en **interceptant** la requête de tuile plutôt
+qu'en espérant tomber sur le bon instant : chargement retardé de cinq secondes,
+deux déplacements rapides dont la **première** réponse arrive après la seconde,
+et rendu en échec (503). Et le banc de captures **attend la bonne image**
+(`data-prete="oui"`), au lieu de constater qu'une image est visible.
+
+### F2. Les incertitudes : ce que « ± » veut dire, et d'où venaient les écarts
+
+**Ce qui était signalé.** 6 000 mm attendus, 6 006,3 ± 2,3 mm affichés ;
+24,000 m² attendus, 24,060 ± 0,016 m². L'écart **dépassait** le ±.
+
+**Le sens du « ± », écrit noir sur blanc** au § 2.0 de
+`docs/PRECISION_DES_MESURES.md` : c'est une **incertitude type, à k = 1**,
+propagée au premier ordre depuis une seule grandeur — la résolution du pointage.
+Pas une borne, aucun facteur d'élargissement, et **aucune** des hypothèses du
+modèle n'y entre.
+
+**Les trois causes, mesurées sur les coordonnées réellement enregistrées**, et
+non devinées. Un banc de diagnostic (`apps/web/captures/diagnostic-pointage.spec.ts`)
+imprime le point visé, la fraction cliquée, les boîtes de l'enveloppe et de
+l'image, et ce que l'API a reçu. Il a montré un décalage **constant** de
++0,0009 de la page sur les deux points d'une calibration — +0,38 pt — c'est-à-dire
+la signature d'un repère translaté, pas d'un bruit de pointage.
+
+| Cause | Mesure | Correction |
+| --- | --- | --- |
+| La **bordure de 1 px** des conteneurs comptée dans la fraction cliquée (enveloppe `w=419,61` contre image `w=417,61`) | facteur de calibration faux de **+0,088 %** — « 25,02 mm par point » au lieu de 25,00. **Cause dominante** | le clic est rapporté à la boîte de l'**image**, et rendu `null` hors d'elle |
+| La **troncature du bitmap** : 21 × 16 pt demandés reviennent en 511 × 389 px, soit 20,959 × 15,955 pt | **−0,2 %** en x, **−0,28 %** en y, systématique | la tuile déclare sa zone réelle, et le clic y est rapporté |
+| **ε supposé** depuis 512 px fixes et la largeur de page | ε sous-estimé d'un facteur **1,22** en paysage, **1,73** en portrait : le ± était trop étroit | `resolutionAffichee` **mesure** la taille réellement affichée et la zone réellement rendue |
+
+**Le résultat, mesuré par le navigateur sur la même fixture :**
+
+| Grandeur | Attendu | Avant | Après |
+| --- | --- | --- | --- |
+| Longueur | 6 000 mm | 6 006,3 mm (**+0,105 %**) | **6 001,2 mm** (**+0,020 %**) |
+| Surface | 24,000 m² | 24,060 m² (**+0,250 %**) | **24,012 m²** (**+0,050 %**) |
+
+Cinq fois moins d'écart, et surtout : l'écart est désormais **contenu** dans le ±.
+
+**Plusieurs pointages indépendants contre la référence connue.** Douze
+pointages, chacun sur une grille de pixels décalée : biais de **+0,017 mm**,
+écart-type observé de **0,49 mm** pour un ± annoncé de **2,27 mm**, et
+**12 / 12** encadrent la vérité. Le ± est donc large, volontairement — ce qu'il
+ne couvre pas est le biais d'une main réelle, et seule une répétition sur un
+vrai dessin le lèvera.
+
+**H4, H5, H6 et H9 sont levées.** Portrait, redimensionnement, bords : la
+résolution n'est plus calculée depuis une constante, elle est lue.
+
+### F3. La vérification chiffrée est entrée dans la CI
+
+**Ce qui était signalé.** Le scénario qui comparait la mesure affichée à une
+longueur connue ne vivait que dans `apps/web/captures/`, qu'**aucune des deux
+configurations de CI ne ramasse**. Une régression de pointage pouvait passer les
+douze ateliers verts.
+
+**Ce qui a changé.** Le scénario est écrit une fois dans
+`apps/web/mesure-pdf/plan-connu.ts`, et appelé deux fois :
+
+- `apps/web/e2e-premier-devis/suite-mesure-juste-pdf.spec.ts` le joue **à chaque
+  livraison** et vérifie longueur, surface, unités, correspondance image–tracé
+  et exclusion de la mesure rejetée ;
+- `apps/web/captures/parcours-pdf.spec.ts` le joue à la demande et
+  **photographie** chaque étape — une sortie complémentaire, plus la preuve
+  elle-même.
+
+### F4. Le diagnostic « probablement scanné »
+
+**Ce qui était signalé.** Le PDF fabriqué contient de la géométrie vectorielle
+et quatre textes ; leur petit nombre ne suffit pas à conclure qu'il est scanné.
+
+**La cause.** Le verdict tombait dès que l'extraction rendait moins de cinquante
+caractères. Ce qui manquait n'était pas le bon seuil : c'était la distinction
+entre « peu de texte » et « pas de texte », et entre « pas de texte » et « rien
+que de l'image ».
+
+**Ce qui a changé.** Le lecteur **compte** les objets de dessin — tracés
+vectoriels et images — et rend trois constats distincts :
+
+| Ce que la page porte | Ce qui est dit |
+| --- | --- |
+| 0 caractère, 0 tracé, ≥ 1 image | « ce document est probablement scanné » — **et c'est le seul cas** |
+| 0 caractère, ≥ 1 tracé | « ce n'est pas un scan, c'est un plan exporté sans texte » |
+| peu de caractères, des tracés | **une description** : « 4 fragment(s), 27 caractère(s) · 4 tracé(s) vectoriel(s) », suivie de « Rien n'indique un document scanné » |
+
+Une fixture de **vraie page scannée** — une image et rien d'autre — a été
+ajoutée (`fabriquer_pdf_de_test.page_scannee`). **Deux** tests prétendaient
+éprouver le cas du scan — un dans le lecteur pur, un dans le parcours API — et
+tous deux interrogeaient en réalité une page vectorielle : leur prémisse était
+fausse, et c'est exactement le défaut signalé.
+
+**Et un second défaut, trouvé en REGARDANT la capture.** L'en-tête affichait
+« 4 fragment(s), **0 caractère(s)** · **0 tracé(s) vectoriel(s)** » sur un plan
+qui en porte vingt-sept et quatre. Les quatre faits de l'extraction étaient
+justes dans le constat écrit sur le volume, et perdus à la **relecture** :
+`routers/documents._plan_lu` recopie l'artefact champ par champ, les quatre
+nouveaux champs y avaient été oubliés, et `PlanLu` leur donne des défauts —
+0, 0, 0, faux. Aucune erreur, aucun avertissement : **un champ oublié prend une
+valeur plausible**, et c'est ce qui rend ce genre d'oubli invisible.
+
+Deux contrôles le tiennent désormais : un test d'API qui compare le compte de
+caractères à ce que la fixture porte, et le parcours navigateur qui exige des
+comptes **non nuls** — une assertion sur la seule phrase « tracé(s)
+vectoriel(s) » passait avec des zéros.
+
+### F5. La première reprise d'une mesure dans un bordereau
+
+**Ce qui était signalé.** `reprenables()` définissait les mesures admissibles,
+mais aucun code ne les reprenait.
+
+**Ce qui a changé.** Une route, `POST /boqs/{boq_id}/items:depuis-une-mesure`,
+et un service pur, `services/reprise_de_mesure.py`. Trois décisions, toutes
+contestables et donc écrites :
+
+1. **la quantité n'est pas déclarée par l'appelant.** Elle est lue de la mesure
+   et de la décision humaine qui l'a retenue. Un champ optionnel sur la route
+   ordinaire aurait laissé coexister une provenance déclarée et une quantité
+   saisie ;
+2. **la conversion d'unité a lieu maintenant, et seulement si on la demande.**
+   C'est ce que `ExtractionProposal` annonce dans sa propre docstring. À défaut,
+   l'unité de la mesure est conservée telle quelle ;
+3. **l'incertitude ne devient pas une quantité.** Elle est conservée dans
+   l'empreinte et n'entre dans aucun calcul de prix : majorer un métré de son
+   incertitude serait une marge déguisée.
+
+La ligne porte **deux** traces : `source_proposal_id`, le **lien**, qui permet
+de rouvrir le plan à la bonne page ; et `source_mesure`, l'**empreinte** figée —
+valeur mesurée, valeur retenue, unité, incertitude, décision et son motif.
+La clé est en `SET NULL` et non en `CASCADE` : un montant de devis ne doit pas
+disparaître avec le dessin dont il est issu.
+
+**Et `uq_boq_item_source`** interdit de reprendre deux fois la même mesure dans
+un même bordereau. Le double comptage est l'erreur la plus coûteuse d'un métré :
+chaque ligne est juste, seul le total est faux.
+
+**Ce qui est refusé, avec son motif exact** : une mesure **rejetée** (« elle
+n'alimentera aucun bordereau »), une mesure **non tranchée** (« confirmez-la ou
+corrigez-la d'abord »), une **conversion entre dimensions** (une surface ne se
+reprend pas en mètres linéaires).
+
+**Jusqu'où cela va.** `apps/api/tests/test_reprise_d_une_mesure.py` suit la
+quantité de la mesure jusqu'au **calcul du devis** — la ligne y figure avec sa
+quantité, son unité et son déboursé — puis jusqu'au **PDF remis au client**,
+où sa désignation est retrouvée dans le texte du fichier.
+
+---
+
+## G. Ce qui est validé, et par quoi — les trois niveaux séparés
+
+### G1. Validé par les tests du dépôt
 
 Tout ce qui précède, plus les propriétés déjà couvertes : isolation par
 organisation (404 et jamais 422), registre transactionnel, séparation
@@ -318,10 +498,19 @@ cache de tuiles, politique de refus total sur les en-têtes d'image, absence de
 secret commité.
 
 **La justesse de la chaîne de mesure est validée sur une géométrie connue** —
-0,11 % et 0,25 % d'écart — et c'est une propriété arithmétique, pas
-métrologique.
+**0,020 %** en longueur et **0,050 %** en surface, par le navigateur, à chaque
+livraison (`suite-mesure-juste-pdf.spec.ts`) — et c'est une propriété
+arithmétique, pas métrologique. Avant la seconde passe, les mêmes écarts
+valaient 0,105 % et 0,250 %, et le premier **dépassait** le ± affiché.
 
-### F2. Sur vos plans réels : rien
+S'y ajoutent, depuis la seconde passe : le **pointage fermé** tant que l'image
+affichée n'est pas celle de la zone demandée (chargement lent, déplacements
+rapides, échec de rendu), la **zone réellement rendue** déclarée par le serveur
+et survivant au cache, le **diagnostic d'extraction** rendu factuel, et la
+**première reprise** d'une mesure tranchée dans un bordereau, suivie jusqu'au
+PDF du devis.
+
+### G2. Sur vos plans réels : rien
 
 **Les quatre plans ne sont pas accessibles dans cet environnement.** Le
 conteneur de cette session a été recréé, et le dossier privé qui les portait
@@ -341,11 +530,19 @@ d'octobre est une copie de la fixture fabriquée, pas un plan.
    ce qui montre si l'erreur suit la longueur ou non — et **une cote oblique**,
    qui est la seule à éprouver l'isotropie des deux axes.
 
-`docs/COTES_DE_REFERENCE.md` (PR #88) décrit la fiche à remplir. Tant qu'elle
-est vide, « Metreo mesure juste sur vos plans » reste une opinion — la mienne
-comprise.
+**`docs/VALIDATION_SUR_PLANS_REELS.md`, sur cette branche, est la procédure
+complète** : les fichiers nécessaires, les trois cotes à relever, le tableau
+attendu / mesuré / écart prêt à remplir, la section de répétition qui est le
+seul essai levant H7, les cas de bord à jouer, et la ligne « votre tolérance »
+laissée vide. Elle ne dépend d'aucune PR en attente.
+`docs/COTES_DE_REFERENCE.md` (PR #88) reste la référence sur le FORMAT des
+cotes. Tant que le tableau est vide, « Metreo mesure juste sur vos plans » reste
+une opinion — la mienne comprise.
 
-### F3. En préproduction : rien
+**Et leur absence n'a bloqué aucun des cinq points de la section F** : les cinq
+ont été traités et éprouvés sur des fixtures fabriquées.
+
+### G3. En préproduction : rien
 
 **Aucun déploiement, aucune publication d'image, aucune modification du VPS.**
 Les dernières observations du serveur datent du **16 septembre 2026**, et rien
@@ -361,7 +558,7 @@ d'une sauvegarde réelle.
 
 ---
 
-## G. Ce qui reste ouvert
+## H. Ce qui reste ouvert
 
 | | Pourquoi ce n'est pas corrigé ici |
 | --- | --- |
@@ -370,5 +567,8 @@ d'une sauvegarde réelle.
 | Un seul navigateur éprouvé : Chromium | Ajouter Firefox et WebKit double le temps de la CI pour un parcours qui n'utilise rien d'exotique |
 | La route de tuile ne vérifie pas que la révision est un PDF | Sur un DXF, le fils échoue et l'API rend un 422 `rendu_impossible`. Correct, mais le message ne dit pas la vraie cause |
 | Une calibration de ZONE peut diverger de ce que l'en-tête affiche | Inatteignable par l'écran, qui n'envoie jamais de `zone`. Chaque ligne de mesure affiche le motif de la calibration **réellement utilisée** : la provenance par mesure est juste |
-| H7 — le biais de pointage | La quadrature suppose une erreur aléatoire. Un biais systématique n'apparaît nulle part, et se mesure par 5 à 10 répétitions de la même cote — sur vos plans |
+| H7 — le biais de pointage | La quadrature suppose une erreur aléatoire. Un biais systématique n'apparaît nulle part dans le ±. Mesuré sur fixture, il est de +0,017 mm sur 6 000 — mais la grille de pixels est centrée, et une main ne l'est pas. Se lève par cinq répétitions de la même cote, sur vos plans (§ 4.3 de la procédure) |
 | H11 — l'indépendance entre deux mesures | Le terme du facteur est **le même** pour toutes les mesures d'une page : il est totalement corrélé. Un total de 20 murs n'a pas une incertitude en √20 mais en 20. À traiter quand les mesures remonteront dans un métré |
+| H10 — une page à deux échelles | Le mécanisme de zone existe et son refus hors zone est testé, mais **rien n'oblige à poser une zone**. Une feuille portant un plan au 1:50 et un détail au 1:20 donne une mesure fausse de 2,5× **sans réserve**. Se lève avec un plan réel à deux échelles |
+| L'unité du bordereau reste celle de la mesure | La reprise convertit **si on le demande**, et conserve sinon. Choisir d'office l'unité d'un poste de métré — mètre pour une longueur, mètre carré pour une surface — est une décision de chiffrage que personne n'a prise |
+| `apps/web` n'a aucun lanceur de tests unitaires | Ni vitest ni jest. Ce n'est plus un prérequis de H5 — la résolution est lue, non calculée — mais c'est ce qui manque pour éprouver une fonction d'écran sans démarrer un navigateur |

@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
+from PIL import PngImagePlugin
+
 from .rendu_de_plan import DOSSIER_RENDUS
 
 #: Le plus grand côté de l'aperçu, en pixels.
@@ -86,6 +88,12 @@ PLAFOND_OCTETS_PNG = 16 * 1024 * 1024
 #: lire un texte et à voir ce qu'il cote autour, et tiennent dans un encart
 #: d'écran sans faire défiler.
 COTE_TUILE = 512
+
+#: Le nom du bloc `tEXt` où la tuile porte la zone qu'elle couvre.
+#:
+#: Préfixé par le produit : la spécification PNG réserve les mots-clés courts
+#: et sans préfixe, et une tuile peut passer sous les yeux d'un autre outil.
+CLE_DE_LA_ZONE = "metreo:zone"
 
 #: Le facteur d'agrandissement maximal d'une tuile.
 #:
@@ -171,6 +179,22 @@ class Apercu:
     #: de la loupe, et le lire comme une hauteur de texte annonçait « 230
     #: pixels, parfaitement lisible » là où le texte en faisait douze.
     hauteur_de_la_zone_px: float | None = None
+    #: La zone que l'image couvre VRAIMENT, dans le repère normalisé de l'écran.
+    #:
+    #: **Et elle n'est pas celle qu'on a demandée.** Un bitmap se compte en
+    #: pixels entiers : PDFium tronque la dimension demandée au pixel inférieur,
+    #: et l'image rendue couvre donc un peu MOINS que la zone. Mesuré sur la
+    #: loupe du plan de bâtiment — zone de 21 × 16 points, facteur 24,38 —
+    #: l'image fait 511 × 389 pixels au lieu de 512 × 390,1, soit **20,96 × 15,96
+    #: points** : 0,2 % de moins en largeur, 0,28 % en hauteur.
+    #:
+    #: L'écran plaçait ses clics en supposant que l'image couvrait exactement la
+    #: zone demandée. L'erreur est petite et elle est SYSTÉMATIQUE : elle ne se
+    #: compense pas entre deux pointages, elle s'ajoute à l'échelle déclarée,
+    #: puis multiplie toutes les mesures de la page.
+    #:
+    #: `None` pour un aperçu pleine page, qui n'est pas une fenêtre.
+    zone_rendue: tuple[float, float, float, float] | None = None
 
 
 def facteur_de_rendu(largeur: float, hauteur: float) -> float:
@@ -428,8 +452,30 @@ def rendre_une_zone(
 
     image = objet.render(scale=facteur, crop=rognage, may_draw_forms=False).to_pil()
 
+    # La zone RÉELLEMENT couverte, déduite du bitmap et non de la demande.
+    #
+    # Elle est ancrée au coin haut gauche demandé — le rognage part de là — et
+    # s'étend de ce que les pixels obtenus représentent. C'est ce couple que
+    # l'écran doit employer pour placer un clic : la zone demandée ne décrit
+    # pas l'image qu'il affiche.
+    zone_rendue = (
+        zx0,
+        zy0,
+        zx0 + (image.width / facteur) / largeur_pt,
+        zy0 + (image.height / facteur) / hauteur_pt,
+    )
+
     tampon = BytesIO()
-    image.save(tampon, format="PNG", optimize=True)
+    # **La zone voyage DANS le PNG**, et non dans un fichier à côté.
+    #
+    # Une tuile est conservée sur le volume et resservie telle quelle, parfois
+    # des semaines plus tard : il faut que sa géométrie lui survive. Un second
+    # fichier doublerait les écritures et pourrait se désynchroniser de
+    # l'image ; un nom de fichier qui porterait les quatre nombres deviendrait
+    # illisible. Un bloc `tEXt` ne peut pas se séparer des pixels qu'il décrit.
+    metadonnees = PngImagePlugin.PngInfo()
+    metadonnees.add_text(CLE_DE_LA_ZONE, " ".join(f"{valeur:.10f}" for valeur in zone_rendue))
+    image.save(tampon, format="PNG", optimize=True, pnginfo=metadonnees)
     octets = tampon.getvalue()
     if len(octets) > PLAFOND_OCTETS_PNG:
         raise RenduRefuse(
@@ -446,4 +492,5 @@ def rendre_une_zone(
         hauteur=image.height,
         pixels_par_point=facteur,
         hauteur_de_la_zone_px=hauteur_de_la_zone_px,
+        zone_rendue=zone_rendue,
     )

@@ -463,6 +463,14 @@ def _constat_pdf_en_dictionnaire(
         "rotations_des_pages": list(constat.rotations),
         "porte_du_texte": constat.porte_du_texte,
         "fragments_lus": len(constat.fragments),
+        # Les FAITS de l'extraction, et non un verdict d'un mot. L'écran les
+        # affiche tels quels : « 4 textes, 27 caractères, 4 tracés » dit ce
+        # qu'on a obtenu ; « probablement scanné » affirmait ce qu'on n'avait
+        # pas vérifié.
+        "caracteres_extraits": constat.caracteres_extraits,
+        "traces_vectoriels": constat.traces,
+        "images_incluses": constat.images,
+        "probablement_scanne": constat.probablement_scanne,
         "apercus": apercus,
         "pages_sans_apercu": pages_sans_apercu,
     }

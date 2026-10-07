@@ -104,6 +104,23 @@ ligne en `verified`.
 Une ligne peut pointer vers `price_item_id` (prix de bibliothèque) ou
 `composite_price_id` (sous-détail). Le sous-détail gagne s'il est présent.
 
+**D'où vient la quantité, quand elle vient d'un plan.** Deux colonnes
+nullables, et chacune pour une raison différente. `source_proposal_id` est le
+**lien** vers la proposition d'extraction reprise : il permet de remonter de la
+ligne de devis au plan, à la page et à la boîte où la mesure a été pointée.
+`source_mesure` est l'**empreinte** figée au moment de la reprise — valeur
+mesurée, valeur retenue, unité, incertitude, décision humaine et son motif.
+
+L'action référentielle est `SET NULL` et non `CASCADE` : la disparition d'une
+proposition ne doit pas emporter un montant de devis. L'empreinte reste alors
+seule, et elle suffit à dire d'où vient le nombre.
+
+`uq_boq_item_source` sur `(boq_id, source_proposal_id)` interdit de reprendre
+**deux fois la même mesure dans un même bordereau**. Le double comptage est
+l'erreur la plus coûteuse d'un métré : chaque ligne y est juste, et seul le
+total est faux. La même mesure peut en revanche alimenter deux bordereaux
+distincts — une variante, par exemple.
+
 ### Estimation
 
 `estimate_versions` est le cœur de la traçabilité :

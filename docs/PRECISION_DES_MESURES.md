@@ -1,9 +1,19 @@
 # Ce que vaut une mesure prise sur un PDF
 
-> **Lu sur** : `/home/user/Devis`, branche `claude/mesures-pdf`, SHA `8a17378`.
+> **Lu sur** : `/home/user/Devis`, branche `claude/corrections-du-candidat`.
+>
+> **Aucun SHA n'est recopié dans ce document.** Un numéro de commit écrit à la
+> main se périme au commit suivant, en silence, et c'est arrivé une fois ici.
+> Le SHA de la livraison est celui que le message de livraison porte ; ce
+> document décrit la branche.
+>
 > **Épreuves relancées pour ce document** :
-> `.venv/bin/python -m pytest apps/api/tests/test_mesures_pdf.py apps/api/tests/test_calibration_de_plan_api.py -q`
-> → **65 passés en 7,9 s** (50 cas pour le module pur, 15 pour le parcours API).
+>
+> ```
+> .venv/bin/python -m pytest apps/api/tests/test_mesures_pdf.py \
+>   apps/api/tests/test_calibration_de_plan_api.py \
+>   apps/api/tests/test_mesure_juste_sur_un_plan.py -q
+> ```
 >
 > La même commande lancée avec le `pytest` du `PATH` ne se rejoue pas : elle
 > échoue avant de collecter, sur `ImportError while loading conftest … No module
@@ -12,15 +22,20 @@
 > convention écrite du dépôt (`docs/TESTING.md` et `README.md` écrivent tous
 > deux `python -m pytest`, venv activé).
 >
+> Et, par le navigateur, à chaque livraison :
+>
+> ```
+> cd apps/web && npx playwright test --config=playwright.premier-devis.config.ts
+> ```
+>
 > Ce document sépare ce qui est **vérifié sur des fixtures fabriquées** de ce
 > qui reste **inconnu sur vos plans**. Il présente les incertitudes avec leurs
-> hypothèses. Il dit, en § 3, ce que le nombre 0,9 est et n'est pas.
+> hypothèses. Il dit, en § 2.0, ce que le « ± » affiché signifie exactement, et
+> en § 3 ce que le nombre 0,9 est et n'est pas.
 >
 > **Renvois.** Les renvois de ce document désignent un fichier et un
 > **symbole** — fonction, constante, test, champ, section — et non un numéro de
-> ligne : un numéro se périme au commit suivant, un nom de symbole non. Le seul
-> endroit où des numéros subsistent est le § 2.7, et ils y sont à lire au SHA
-> déclaré ci-dessus.
+> ligne : un numéro se périme au commit suivant, un nom de symbole non.
 
 ---
 
@@ -41,6 +56,14 @@ fichier, § « Ce qui n'est pas vérifié ici, et pourquoi ») :
 > « La **JUSTESSE** du nombre mesuré ne l'est pas : un clic de souris sur un
 > rendu ne vaut pas une référence, et c'est précisément ce que
 > `docs/COTES_DE_REFERENCE.md` sert à établir. »
+
+**Et c'est ce qui a changé le 7 octobre 2026.** Un second scénario navigateur,
+`apps/web/e2e-premier-devis/suite-mesure-juste-pdf.spec.ts`, mesure par le
+navigateur une géométrie dont les dimensions sont connues **sans passer par
+Metreo**, et **échoue si l'écran s'en écarte** de plus de 1 % en longueur ou 2 %
+en surface. La colonne de droite du tableau ci-dessus reste vraie — une fixture
+n'est pas un plan d'exécution — mais « aucune comparaison » ne l'est plus : il
+y en a une, et elle tombe à chaque livraison.
 
 ### 1.2 Les fixtures : ce sur quoi on mesure
 
@@ -64,12 +87,16 @@ quatre n'en est un. **Plusieurs commentaires du code disent pourtant « A0 »**
 — voir § 6.
 
 > **Où lire la fiche de cotes de référence.** `docs/COTES_DE_REFERENCE.md`
-> **n'existe pas sur `claude/mesures-pdf`** : il arrive par la **PR #88**
-> (branche `claude/cotes-de-reference`). Les chiffres qui en viennent — le
-> tableau des quatre dimensions ci-dessus (son § 4) et le décompte des
-> fragments numériques du § 2.11 H12 (son § 8) — ne sont donc pas vérifiables
-> depuis cette branche prise seule. Pour les lire sans attendre la fusion :
+> **n'existe pas sur cette branche** : il arrive par la **PR #88** (branche
+> `claude/cotes-de-reference`). Les chiffres qui en viennent — le tableau des
+> quatre dimensions ci-dessus (son § 4) et le décompte des fragments numériques
+> du § 2.11 H12 (son § 8) — ne sont donc pas vérifiables depuis cette branche
+> prise seule. Pour les lire sans attendre la fusion :
 > `git show origin/claude/cotes-de-reference:docs/COTES_DE_REFERENCE.md`.
+>
+> **La procédure d'essai, elle, est sur cette branche** :
+> `docs/VALIDATION_SUR_PLANS_REELS.md`. Elle ne dépend d'aucune PR en attente,
+> et c'est elle qu'il faut suivre le jour où les plans seront accessibles.
 
 **Conséquence directe : aucun test du dépôt ne s'exécute sur un plan réel.**
 
@@ -189,6 +216,55 @@ vérifie qu'un pointage grossier dégrade en `a_confirmer`.
 ## 2. Le modèle d'incertitude, formules recopiées du code
 
 Fichier : `apps/api/src/metreo_api/services/mesures_pdf.py`.
+
+### 2.0 Ce que « ± » signifie, exactement
+
+L'écran affiche « 6 001,2 ± 2,3 mm ». Trois lectures de ce « ± » sont possibles,
+et elles n'engagent pas la même chose. Voici laquelle est la bonne.
+
+> **Le « ± » affiché est une incertitude TYPE, à k = 1, propagée au premier
+> ordre depuis une seule grandeur d'entrée : la résolution du pointage.**
+
+Déplié, cela veut dire quatre choses, et chacune se vérifie dans le code.
+
+**1. C'est un écart-type, pas une borne.** `Mesure.incertitude` est le produit
+de `Mesure.incertitude_relative` par la valeur, et la relative est une somme
+**en quadrature** — `math.sqrt(du_facteur² + du_trace²)`, dans `longueur` et
+dans `aire`. Une somme en quadrature est l'opération des écarts-types ; une
+borne s'additionnerait en valeur absolue. **Il n'y a donc aucune garantie que
+la vérité tombe dans `valeur ± incertitude`**, et il n'y en a pas davantage à
+deux ou trois fois cet écart : seule une distribution d'erreur, qui n'est pas
+établie, donnerait un taux de couverture.
+
+**2. Aucun facteur d'élargissement n'est appliqué.** Pas de k = 2, pas de 95 %.
+Qui veut un intervalle plus prudent multiplie lui-même. Le test
+`test_douze_pointages_independants_encadrent_tous_la_cote_connue`
+(`apps/api/tests/test_mesure_juste_sur_un_plan.py`) vérifie la couverture à
+**k = 2**, parce que c'est le seul niveau qu'un test peut exiger sans supposer
+une loi de probabilité.
+
+**3. Une seule grandeur d'entrée y contribue : ε, la résolution du pointage**,
+en points de page par pixel affiché. Elle est **mesurée** sur l'image réellement
+affichée (§ 2.7). Tout le reste est traité comme exact : l'échelle déclarée, la
+planéité de la feuille, l'isotropie des axes, le fait que le trait pointé soit
+bien la cote visée. **Les douze hypothèses du § 2.11 sont hors du ±**, et une
+mesure peut être fausse d'un facteur 2 avec un ± de 0,04 % — c'est exactement
+le cas si l'échelle saisie est fausse.
+
+**4. ε est pris comme l'écart-type du pointage, ce qui est un choix
+conservateur.** Un clic ne rend pas une position continue : il rend un pixel.
+Si l'erreur de pointage n'était que cette quantification, uniforme sur un pixel
+de largeur ε, son écart-type vaudrait ε/√12 ≈ 0,29 ε, et le modèle serait
+**pessimiste d'un facteur 3,5**. Mesuré sur la fixture, douze pointages
+indépendants donnent un rapport de **4,6** entre le ± annoncé et la dispersion
+observée (§ 2.9bis). Cette marge est volontaire : elle couvre en partie la main
+de l'opérateur, qui ne vise pas au pixel. Elle ne couvre **rien** d'un biais.
+
+**Ce que le ± ne dit pas, et qu'il faut dire à côté.** Un biais — cliquer
+toujours le bord extérieur d'un trait épais — ne se voit pas à l'écart-type et
+ne s'annule pas en répétant. C'est l'hypothèse **H7**, et seule une répétition
+sur un vrai dessin la lève : la procédure est au § 4.3 de
+`docs/VALIDATION_SUR_PLANS_REELS.md`.
 
 ### 2.1 Les quatre constantes
 
@@ -328,103 +404,192 @@ fiabilite: Fiabilite = "a_confirmer" if reserves else "mesurable"
 
 **Toute** réserve dégrade, pas seulement celle d'incertitude.
 
-### 2.7 D'où vient ε
+### 2.7 D'où vient ε — et pourquoi il est désormais MESURÉ
 
-`apps/web/src/components/LecturePdf.tsx`, constante `TAILLE_DE_LA_LOUPE` et
-fonction `resolutionDeLaLoupe`. Au SHA déclaré, **la fonction occupe les lignes
-65 à 68** : la déclaration en 65, la multiplication par 0,05 en 66, la division
-par 512 en 67, l'accolade fermante en 68. Un renvoi à `:66-67` ne désignerait
-donc que son **corps**, et c'est pourquoi ce document la nomme plutôt que de la
-situer.
+`apps/web/src/components/LecturePdf.tsx`, fonction `resolutionAffichee`.
 
 ```ts
-const TAILLE_DE_LA_LOUPE = 0.05
-function resolutionDeLaLoupe(largeurDeLaPageEnPoints: number): number {
-  const pointsRendus = largeurDeLaPageEnPoints * TAILLE_DE_LA_LOUPE
-  return pointsRendus / 512
+function resolutionAffichee(
+  image: HTMLImageElement,
+  zone: [number, number, number, number],
+  largeurDeLaPage: number,
+  hauteurDeLaPage: number,
+): number | null {
+  const boite = image.getBoundingClientRect()
+  if (boite.width <= 0 || boite.height <= 0) return null
+  const pointsEnLargeur = (zone[2] - zone[0]) * largeurDeLaPage
+  const pointsEnHauteur = (zone[3] - zone[1]) * hauteurDeLaPage
+  return Math.max(pointsEnLargeur / boite.width, pointsEnHauteur / boite.height)
 }
 ```
 
-Envoyé au serveur comme `resolution_du_pointage` à la calibration, avec
-`largeurDeLaPage = plan.dimensions_des_pages[page - 1]?.[0] ?? 0`. Le 512 est
-`COTE_TUILE` (`rendu_pdf.py`, constante `COTE_TUILE = 512`), et la marge
-parasite est ramenée à zéro (`rendu_pdf.py`, constante `MARGE_DE_TUILE = 0.0`).
+Soit, en notant **Z** le côté de la zone RÉELLEMENT rendue en points de page et
+**W** le côté de l'image RÉELLEMENT affichée en pixels CSS :
 
-Autrement dit, en notant **ℓ la largeur de la loupe en points de page**
-(ℓ = 0,05 × largeur de la page) :
+> **ε = max( Z_largeur / W_largeur , Z_hauteur / W_hauteur )**
 
-> **ε = ℓ / 512**
+**La version précédente le SUPPOSAIT, et de trois façons fausses à la fois.**
+Elle calculait `largeur_de_page × 0,05 ÷ 512` :
+
+| # | Ce qui était supposé | Ce qui est vrai | Sens de l'erreur |
+| --- | --- | --- | --- |
+| 1 | la tuile fait 512 px | un bitmap se compte en pixels **entiers** : une zone de 21 × 16 pt au facteur 24,381 revient en **511 × 389 px**, soit 20,959 × 15,955 pt | la zone est plus petite de **0,2 %** en x et **0,28 %** en y — et le clic était rapporté à la zone *demandée* |
+| 2 | l'image est affichée à sa taille naturelle | le CSS lui donne `width: 100 %` : **417,6 px CSS** pour 511 px de bitmap dans la disposition à deux colonnes | ε sous-estimé d'un facteur 1,22 : l'incertitude était annoncée **plus petite qu'elle n'est** |
+| 3 | la page est en paysage | ε était pris sur la **largeur** seule, alors que le rendu ajuste son facteur sur le **plus grand côté** de la zone | sur une page en portrait, erreur de **1,41** dans le sens optimiste |
+
+Les trois disparaissent en lisant la zone et la taille au lieu de les déduire.
+**Et la zone lue n'est pas celle demandée** : le serveur la déclare, dans
+l'en-tête HTTP `X-Metreo-Zone` **et** dans un bloc `tEXt` du PNG lui-même
+(`rendu_pdf.CLE_DE_LA_ZONE`), pour qu'elle survive au cache de tuiles. Une
+tuile en cache sans sa zone est **re-rendue** plutôt que servie avec une
+géométrie inconnue (`tuiles._zone_du_png`, journal `tuile_sans_zone_rerendue`).
+
+Si l'en-tête manque — serveur plus ancien, proxy filtrant — l'écran retombe sur
+la zone demandée **et le dit** : bandeau `pdf-zone-non-declaree`. Un pointage
+décalé ne reste pas sans explication.
 
 ### 2.8 Le résultat central : l'incertitude propagée est **sans échelle**
 
 Reportons ε dans la formule du § 2.3, en écrivant la base de calibration comme
-une **fraction f de la largeur de la loupe** (d = f · ℓ) :
+une **fraction f du côté de la zone rendue** (d = f · Z) :
 
-> **ε_k / k = √2 · (ℓ/512) / (f · ℓ) = √2 / (512 · f)**
+> **ε_k / k = √2 · (Z/W) / (f · Z) = √2 / (W · f)**
 
-**ℓ disparaît.** L'incertitude relative du facteur ne dépend **ni de la taille
+**Z disparaît.** L'incertitude relative du facteur ne dépend **ni de la taille
 de la page, ni de l'échelle du plan, ni du nombre de millimètres d'ouvrage** :
-elle ne dépend que de la **fraction de la loupe** que couvre la base de
-calibration.
+elle ne dépend que de **W**, le nombre de pixels affichés, et de la **fraction
+de la loupe** que couvre la base de calibration.
 
-Même chose pour une longueur : en notant g la fraction de la loupe couverte par
-le tracé,
+Même chose pour une longueur : en notant g la fraction couverte par le tracé,
 
-> **σ_L / L = (√2 / 512) · √( 1/f² + 1/g² )**
+> **σ_L / L = (√2 / W) · √( 1/f² + 1/g² )**
+
+**Ce qui a changé par rapport à la version précédente de ce document** : le
+dénominateur était écrit `512`, la taille **visée** du bitmap. C'est désormais
+`W`, la taille **affichée**, qui dépend de la fenêtre du navigateur. Une
+conséquence directe et contre-intuitive : **agrandir la fenêtre resserre
+l'incertitude**, parce que le même dessin est pointé sur plus de pixels. C'est
+vrai, et c'est pourquoi ε est relu à chaque clic plutôt que calculé une fois.
 
 ### 2.9 Le tableau reproductible au crayon
 
 Toutes les entrées de la formule sont ici, et aucune autre n'est nécessaire.
 
-**Entrée unique : 1,4142 ÷ 512 = 0,002762, soit 0,2762 %.** Il suffit ensuite
+**Entrée : √2 ÷ W.** Deux valeurs de W comptent, et il faut les distinguer :
+
+| W | Ce que c'est | √2 / W |
+| --- | --- | --- |
+| **512 px** | la taille que le serveur **vise** (`rendu_pdf.COTE_TUILE`) | 0,2762 % |
+| **511 px** | la taille qu'il **produit** sur une zone de 21 × 16 pt — pixels entiers | 0,2768 % |
+| **417,6 px** | la taille **affichée** dans la disposition à deux colonnes, mesurée dans Chromium à 1 440 px de large | **0,3386 %** |
+
+C'est la troisième ligne qui décide de ce que l'écran annonce. Il suffit ensuite
 de diviser par f.
 
-| Base de calibration, en fraction de la largeur de la loupe | √2 / (512 · f) |
+| Base de calibration, en fraction du côté de la zone rendue | √2 / (417,6 · f) |
 | --- | --- |
-| f = 1,00 — toute la loupe | **0,2762 %** |
-| f = 0,90 — les clics du parcours navigateur (fractions 0,05 et 0,95 de la loupe, à l'étape de calibration de `suite-plan-pdf-mesures.spec.ts`) | **0,3069 %** |
-| f = 0,50 — à mi-largeur | **0,5524 %** |
-| f = 0,25 | **1,1049 %** |
-| f = 0,1381 | **2,0000 %** — le seuil est atteint |
+| f = 1,00 — toute la loupe | **0,3386 %** |
+| f = 0,90 | **0,3762 %** |
+| f = 0,50 — à mi-largeur | **0,6772 %** |
+| f = 0,25 | **1,3544 %** |
+| f = 0,1693 | **2,0000 %** — le seuil est atteint |
 
-Vérifié en exécutant `_incertitude_relative_du_facteur` du dépôt sur trois
-largeurs de page très différentes (1 189 mm, 1 690 mm, A3 420 mm) : **0,3069 %
-pour f = 0,90 et 0,5524 % pour f = 0,50 dans les trois cas, à l'identique**.
+**Les chiffres de la version précédente de ce document étaient optimistes d'un
+facteur 1,22**, exactement le rapport 512 / 417,6 : ils décrivaient un écran
+qui aurait affiché la tuile à sa taille naturelle.
 
-Et pour une longueur complète, avec la géométrie exacte du parcours navigateur
-— calibration aux fractions 0,05 / 0,95 de la loupe (f = 0,90) et tracé aux
-fractions 0,25 / 0,75 (g = 0,50) :
+### 2.9bis Les écarts réellement constatés, avant et après correction
 
-> 0,002762 × √( 1/0,90² + 1/0,50² ) = 0,002762 × 2,2878 = **0,6320 %**
+**C'est le § le plus concret de ce document.** Le propriétaire a relevé sur les
+captures un écart que le ± annoncé ne couvrait pas. Les trois causes ont été
+mesurées et corrigées ; voici les deux états, sur la même fixture et le même
+parcours navigateur (`suite-mesure-juste-pdf.spec.ts`, qui écrit ces écarts
+dans son journal).
 
-Également identique sur 1 189 mm, sur 1 690 mm, sur A3 et sur la fixture de
-300 points. Sur une mesure de 1 000 mm d'ouvrage, cela fait **± 6,3 mm**.
+| Grandeur | Attendu | Avant correction | Écart | Après correction | Écart |
+| --- | --- | --- | --- | --- | --- |
+| Longueur de la façade | 6 000 mm | 6 006,3 ± 2,3 mm | **+0,105 %** | **6 001,2 mm** | **+0,020 %** |
+| Surface du séjour | 24,000 m² | 24,060 ± 0,016 m² | **+0,250 %** | **24,012 m²** | **+0,050 %** |
 
-**C'est précisément ce chiffre qui peut tromper.** « ± 0,3 à 0,6 % » a l'air
-d'une précision de métré. Ce n'en est pas une : ce nombre ne couvre **que la
-résolution de pointage**, c'est-à-dire la finesse du pixel sous la souris. Il
-ne couvre aucune des douze hypothèses du § 2.11, et il resterait exactement le
-même si l'échelle déclarée était fausse d'un facteur 2.
+**Cinq fois moins d'écart sur les deux grandeurs**, et surtout : avant, l'écart
+de 6,3 mm **dépassait** le ± de 2,3 mm — la mesure se présentait comme plus
+sûre qu'elle n'était. Après, l'écart de 1,2 mm est **contenu** dans le ±.
+
+**Et une confirmation inattendue de H5**, obtenue en jouant le même scénario
+sous deux configurations dont la seule différence est la **largeur de la
+fenêtre** :
+
+| Fenêtre | Longueur (6 000 mm attendus) | Surface (24,000 m² attendus) |
+| --- | --- | --- |
+| 1 280 px — `playwright.premier-devis.config.ts` | 6 001,2 mm (**+0,020 %**) | 24,012 m² (**+0,050 %**) |
+| 1 440 px — `playwright.captures.config.ts` | **5 999,8 mm** (**−0,0033 %**) | **23,997 m²** (**−0,0125 %**) |
+
+Une fenêtre plus large affiche la loupe sur plus de pixels, donc le même dessin
+est pointé plus finement, donc l'écart diminue — d'un facteur six ici. **C'est
+exactement ce que l'hypothèse H5 niait** en supposant la tuile pointée à sa
+taille native de 512 pixels. Le signe de l'écart change aussi, ce qui est
+cohérent avec une erreur de quantification et non avec un biais résiduel.
+
+**Les trois causes, et la part de chacune.** Elles ont été isolées par un banc
+de diagnostic qui imprime le point visé, la fraction cliquée, les boîtes de
+l'enveloppe et de l'image, et ce que l'API a enregistré
+(`apps/web/captures/diagnostic-pointage.spec.ts`).
+
+| Cause | Mesure du défaut | Part de l'écart | Correction |
+| --- | --- | --- | --- |
+| **La bordure de 1 px** comptée dans la fraction cliquée. `.pdf-apercu` et `.pdf-loupe-image` portent chacune `border: 1px` ; le clic était rapporté à la **boîte de bordure** de l'enveloppe, pas à l'image. Mesuré dans Chromium : enveloppe `x=962,39 w=419,61`, image `x=963,39 w=417,61` | décalage de **+1 px** et erreur d'échelle de **0,3 %** | **dominante** : le facteur de calibration était faux de **+0,088 %**, lu comme « 25,02 mm par point » au lieu de 25,00 | `fractionDansLImage` prend la boîte de l'**image** (`<img>`), et rend `null` hors de celle-ci |
+| **La troncature du bitmap**. La zone demandée de 21 × 16 pt revient en 511 × 389 px, donc couvre 20,959 × 15,955 pt | **−0,2 %** en x, **−0,28 %** en y, systématique et jamais compensée entre deux pointages | secondaire, et de **sens opposé** à la précédente | la tuile **déclare** la zone qu'elle couvre, et le clic est rapporté à **cette** zone |
+| **ε supposé** depuis 512 px et la largeur de page | ε sous-estimé d'un facteur 1,22 en paysage, 1,73 en portrait | **aucune part de l'écart** — mais le ± annoncé était trop étroit, donc la mesure fausse passait pour sûre | `resolutionAffichee` (§ 2.7) |
+
+**Vérification par les coordonnées enregistrées**, et non par le résultat : le
+banc visait `x = 0,142857` et `0,714286` de la page ; l'API a enregistré
+`0,1437245` et `0,7152466`. Soit **+0,0009 de la page sur les deux points**,
+c'est-à-dire **+0,38 pt** — un décalage constant, la signature d'un repère
+translaté d'un pixel, et non d'un bruit de pointage.
+
+**Et la dispersion, mesurée.** Douze pointages indépendants de la même cote sur
+la fixture, chacun sur une grille de pixels décalée
+(`test_douze_pointages_independants_encadrent_tous_la_cote_connue`) :
+
+| Grandeur | Valeur |
+| --- | --- |
+| Attendu | 6 000,000 mm |
+| Moyenne des douze | 6 000,017 mm — **biais de +0,017 mm** |
+| Étendue (min → max) | 5 999,590 → 6 000,820 mm |
+| **Écart-type observé** | **0,49 mm** |
+| **± annoncé** (moyenne) | **2,27 mm**, soit 0,0378 % |
+| Rapport annoncé / observé | **4,6** |
+| Pointages encadrant la vérité à 1 σ | **12 / 12** |
+
+Le ± est donc **large**, et il l'est volontairement : ε est pris comme
+l'écart-type du pointage alors que la seule quantification en pixels donnerait
+ε/√12. Ce qui reste non couvert est le **biais**, ici négligeable parce que la
+grille de pixels est centrée — rien ne dit qu'une main le soit.
 
 ### 2.10 Ce que le plancher de 10 points protège, et ce qu'il ne protège pas
 
 Le plancher est en **points de papier** ; l'incertitude est en **fraction de la
 loupe**. Les deux ne varient pas ensemble, et l'écart est grand.
 
+La dernière colonne vaut √2 / (W · f) avec **W = 417,6 px affichés** (§ 2.9).
+Elle était calculée avec 512 dans la version précédente de ce document, donc
+**optimiste d'un facteur 1,22**.
+
 | Page | Largeur (points) | Loupe = 5 % (points) | 10 points en fraction de la loupe | Incertitude du facteur **au minimum autorisé** |
 | --- | --- | --- | --- | --- |
-| Fixture du dépôt | 300,0 | 15,00 | **66,7 %** | **0,414 %** |
-| A3 (420 mm) | 1 190,6 | 59,53 | 16,8 % | 1,644 % |
-| `etage-1` / `etage-3` (1 189 mm) | 3 370,4 | 168,52 | **5,9 %** | **4,655 %** |
-| `coupe-1-1` (1 480 mm) | 4 195,3 | 209,76 | 4,8 % | 5,794 % |
-| `elevation-nord` (1 690 mm) | 4 790,6 | 239,53 | **4,2 %** | **6,616 %** |
+| Fixture du dépôt | 300,0 | 15,00 | **66,7 %** | **0,508 %** |
+| A3 (420 mm) | 1 190,6 | 59,53 | 16,8 % | 2,016 % |
+| `etage-1` / `etage-3` (1 189 mm) | 3 370,4 | 168,52 | **5,9 %** | **5,707 %** |
+| `coupe-1-1` (1 480 mm) | 4 195,3 | 209,76 | 4,8 % | 7,103 % |
+| `elevation-nord` (1 690 mm) | 4 790,6 | 239,53 | **4,2 %** | **8,112 %** |
 
 Lecture : sur la fixture, le plancher interdit toute calibration dont le
-facteur serait incertain à plus de 0,41 % — il **borde** le test. Sur
+facteur serait incertain à plus de 0,51 % — il **borde** le test. Sur
 `elevation-nord`, le même plancher laisse passer une calibration dont le
-facteur est incertain à 6,6 %. C'est alors le seuil de 2 % qui prend le relais
+facteur est incertain à 8,1 %. C'est alors le seuil de 2 % qui prend le relais
 et bascule la mesure en `a_confirmer` ; le plancher, lui, ne refuse plus rien
-d'utile.
+d'utile. Sur un A3, le plancher est désormais **juste à la limite** du seuil :
+une calibration au minimum autorisé y est refusée de justesse.
 
 **Les tests de seuil s'exécutent donc sur une géométrie où le plancher est
 seize fois plus protecteur que sur `elevation-nord`.** Ce n'est pas un défaut
@@ -432,19 +597,22 @@ du code — c'est une limite de ce que la fixture peut prouver.
 
 ### 2.11 Les hypothèses du modèle, et ce qu'elles coûtent
 
-Chacune est **codée implicitement** et **non vérifiée sur un plan réel**.
+**Cinq des douze sont levées**, et elles sont barrées dans le tableau : H4, H5,
+H6 et H9 le 7 octobre 2026, H8 la veille. Les sept restantes sont **codées
+implicitement** et **non vérifiées sur un plan réel** ; la procédure qui les
+lèverait est `docs/VALIDATION_SUR_PLANS_REELS.md`.
 
 | # | Hypothèse | Où elle est faite | Ce qu'elle coûte si elle est fausse | Par quelle mesure on la lève |
 | --- | --- | --- | --- | --- |
 | **H1** | La cote de calibration saisie est **juste** | hors modèle : `distance_reelle` est une déclaration (`schemas.py`, champ `CalibrationCreate.distance_reelle`) | tout est faux du même facteur, **sans aucune réserve** : l'incertitude de 0,3 % reste affichée | relever la cote sur place, ou la lire dans le DXF du même plan |
 | **H2** | La page **n'est pas déformée** : le facteur est constant partout | `mesures_pdf.facteur` rend **un** scalaire appliqué partout | une erreur qui **croît avec la distance**, invisible sur une cote courte | une **cote longue traversant le plan** (fiche § 3) |
 | **H3** | Les deux axes ont la **même échelle** | `math.hypot` (dans `Calibration.ecart_en_points` et dans `longueur`) et la formule du lacet (dans `aire`) supposent un repère isotrope ; aucun contrôle n'existe | horizontale et verticale justes, **géométrie fausse quand même** ; aire fausse du produit des deux | une **cote oblique** (fiche § 3) — le seul contrôle qu'un facteur juste sur un axe ne peut pas satisfaire |
-| **H4** | La page est en **paysage** | l'écran calcule ε depuis la **largeur** seule (`LecturePdf.tsx`, fonction `resolutionDeLaLoupe`, appelée avec `dimensions_des_pages[page - 1]?.[0]`) ; le serveur fixe le facteur de la tuile sur `max(largeur_zone, hauteur_zone)` (`rendu_pdf.py`, fonction `rendre_une_zone`) | sur une page plus **haute** que large, ε réel = ε déclaré × hauteur/largeur : **l'incertitude annoncée est optimiste** du même rapport | utiliser `max(largeur, hauteur)` dans `resolutionDeLaLoupe`, et un test sur une page en portrait. Les quatre plans connus sont en paysage ; une page en portrait n'a jamais été essayée |
-| **H5** | La tuile est pointée à sa **taille native** de 512 pixels | `resolutionDeLaLoupe` divise par 512 ; le CSS impose `width: 100%` (`globals.css`, règle `.pdf-loupe-image img`) : l'image est étirée ou réduite à la largeur du conteneur | sur un écran où l'image fait **moins** de 512 px CSS, ε est sous-estimé et l'incertitude est optimiste ; au-delà de 512 px, elle est pessimiste | mesurer la largeur CSS réelle du rendu et la passer dans le calcul, puis un test unitaire sur `resolutionDeLaLoupe` — **il n'en existe aucun** : `apps/web` ne contient aucun fichier `*.test.ts*` (voir § 5.3 point 1 pour ce que cela demande d'abord) |
-| **H6** | La fenêtre de la loupe fait bien **5 %** de la page | l'écran la **rogne** aux bords (`LecturePdf.tsx`, calcul de la zone de loupe et handler de clic : `Math.max(0, …)`, `Math.min(1, …)`) sans corriger ε | près d'un bord la fenêtre est plus petite, donc le rendu plus fin : ε déclaré est alors **pessimiste**. Le sens est favorable, mais le lien n'est garanti par aucun test | faire calculer ε depuis la fenêtre effectivement demandée, et non depuis `TAILLE_DE_LA_LOUPE` |
+| **H4** | ~~La page est en **paysage**~~ — **levée le 7 octobre 2026** | `resolutionAffichee` prend le **plus grand** des deux rapports, axe par axe, sur la zone réellement rendue | l'hypothèse était fausse de **1,41** sur une page en portrait, dans le sens qui annonce une mesure plus sûre qu'elle n'est | `test_le_meme_plan_en_portrait_rend_les_memes_longueurs` et `test_le_portrait_n_annonce_pas_une_mesure_plus_sure_que_le_paysage` (`test_mesure_juste_sur_un_plan.py`) |
+| **H5** | ~~La tuile est pointée à sa **taille native** de 512 pixels~~ — **levée le 7 octobre 2026** | `resolutionAffichee` lit `image.getBoundingClientRect()` : la taille **affichée**, pas la taille visée | l'hypothèse était fausse d'un facteur **1,22** dans la disposition à deux colonnes — 417,6 px affichés pour 511 px de bitmap — et dans le sens optimiste | la résolution est désormais **mesurée** à chaque clic ; le parcours navigateur vérifie la justesse du résultat (`suite-mesure-juste-pdf.spec.ts`), et c'est lui qui aurait échoué si ε était faux |
+| **H6** | ~~La fenêtre de la loupe fait bien **5 %** de la page~~ — **levée le 7 octobre 2026** | ε est calculé depuis la zone que le **serveur déclare** avoir rendue (`X-Metreo-Zone`, et le bloc `tEXt` du PNG), rognage aux bords et troncature en pixels entiers compris | l'hypothèse était pessimiste près d'un bord et optimiste de 0,2 % partout ailleurs (la troncature) | `test_a_tile_says_which_zone_it_really_covers`, `test_the_tile_carries_its_zone_inside_the_png`, `test_the_real_zone_survives_the_cache` |
 | **H7** | L'erreur de pointage est **aléatoire**, non systématique | la somme en quadrature (dans `longueur` et dans `aire`) ne vaut que pour des erreurs indépendantes et centrées | un biais constant — cliquer toujours le bord extérieur d'un trait épais — **ne s'annule pas** et n'apparaît nulle part dans le nombre rendu | mesurer la même cote 5 à 10 fois et comparer la dispersion observée à l'incertitude annoncée. Un biais se voit à la moyenne, pas à l'écart-type |
 | **H8** | ~~L'erreur de tracé vaut √2·ε quel que soit le nombre de sommets~~ — **levée le 7 octobre 2026** | `du_trace` est désormais calculée sommet par sommet : `_sensibilite_d_une_longueur` et `_sensibilite_d_une_aire` | l'hypothèse était exacte pour un segment à 2 points et **optimiste d'un facteur allant jusqu'à 10** sur un tracé anguleux à 50 sommets. L'expérience prescrite ici a été jouée, et elle a confirmé le défaut | `test_l_incertitude_de_trace_croit_avec_le_nombre_de_sommets` (2, 5, 20, 50 sommets) et `test_la_croissance_suit_la_racine_du_nombre_de_sommets` |
-| **H9** | La mesure est pointée **à la même finesse** que la calibration | `schemas.MesureCreate` ne porte **aucune** résolution ; `calibration_de_plan._en_calibration` réutilise celle de la calibration | vrai dans l'écran livré, où les deux gestes se font dans la loupe. **Faux pour tout autre client de l'API**, qui obtiendrait une incertitude sous-estimée | ajouter `resolution_du_pointage` à `MesureCreate`, ou écrire le contrat |
+| **H9** | ~~La mesure est pointée **à la même finesse** que la calibration~~ — **levée le 7 octobre 2026** | `schemas.MesureCreate` porte désormais `resolution_du_pointage` ; `calibration_de_plan.mesurer` l'utilise pour le terme de **tracé**, le facteur gardant celle de la calibration | l'hypothèse était vraie dans l'écran livré et **fausse pour tout autre client de l'API**, qui obtenait une incertitude sous-estimée | `test_a_measurement_may_declare_the_resolution_of_its_own_pointing` et `test_a_measurement_without_its_own_resolution_keeps_the_old_behaviour` (`test_calibration_de_plan_api.py`) |
 | **H10** | Une page ne porte **qu'une seule échelle** | `calibration_de_plan._contient` : une calibration **sans zone** s'applique à toute la page | une page portant un plan au 1:50 **et** un détail au 1:20 donne une mesure fausse d'un facteur 2,5, **sans réserve** | éprouver sur un plan réel à deux échelles. Le mécanisme de zone existe et est testé (`test_calibration_de_plan_api.py`, test du refus hors zone), mais **rien n'oblige** à l'utiliser |
 | **H11** | Les incertitudes de deux mesures sont **indépendantes** | non codée, mais supposée par quiconque additionne deux mesures | le terme `du_facteur` est **le même** pour toutes les mesures d'une page : il est totalement **corrélé**. Un total de 20 murs n'a pas une incertitude en √20, mais en 20 | à traiter quand les mesures remonteront dans un métré. Le module ne fait aucune agrégation aujourd'hui |
 | **H12** | Le nombre pointé **est une cote de l'ouvrage** | hors modèle entièrement | la fiche de cotes de référence (§ 8) le dit : sur un des plans, **860 fragments sur 4 351** sont des nombres d'au moins trois chiffres, et le premier est le **code postal du cartouche**. Aucune tolérance ne corrige cela. *(Ce chiffre vient de `docs/COTES_DE_REFERENCE.md`, absent de cette branche — PR #88 ; voir l'encadré du § 1.2.)* | seule une personne qui regarde ce que le nombre cote le peut. C'est pourquoi la validation humaine n'est pas optionnelle |
@@ -567,18 +735,18 @@ la réserve est le fait, le nombre n'en est que le rang. »
 | **Refus d'unité non linéaire, de distance ≤ 0** | Oui | Rien d'inconnu |
 | **Contour qui se recoupe** | Oui, avec contre-exemple carré + L | Les croisements **colinéaires** ne sont pas détectés — limite assumée (`mesures_pdf._se_recoupe`) |
 | **L'incertitude est dans l'unité de la valeur** | Oui | Rien d'inconnu |
-| **L'incertitude décroît avec un pointage plus fin** | Oui — rapport de 2 exactement (`test_a_finer_pointing_gives_a_proportionally_smaller_uncertainty`) | **Le rapport est vérifié, pas son étalonnage** : rien ne dit que σ annoncé corresponde à la dispersion réelle (H7) |
+| **L'incertitude décroît avec un pointage plus fin** | Oui — rapport de 2 exactement (`test_a_finer_pointing_gives_a_proportionally_smaller_uncertainty`) | **L'étalonnage est désormais mesuré sur fixture** : douze pointages indépendants donnent σ observé = 0,49 mm pour un ± annoncé de 2,27 mm, soit un rapport de 4,6 (§ 2.9bis). Ce qui reste inconnu est le **biais** d'une main réelle (H7) |
 | **Une calibration courte empoisonne tout** | Oui — même valeur, incertitude plus grande | Rien d'inconnu : propriété de la formule |
 | **Une aire est 2× plus incertaine qu'une longueur** | Oui | Le facteur 2 s'applique aussi au terme de tracé : **choix de modélisation, non éprouvé** |
-| **Le seuil de 2 % bascule en « à confirmer »** | Oui, avec contre-exemple | **2 % n'est pas votre tolérance.** Le code le dit (commentaire de `SEUIL_D_INCERTITUDE`) ; la fiche § 5.3 attend votre réponse |
+| **Le seuil de 2 % bascule en « à confirmer »** | Oui, avec contre-exemple | **2 % n'est pas votre tolérance.** Le code le dit (commentaire de `SEUIL_D_INCERTITUDE`) ; `docs/VALIDATION_SUR_PLANS_REELS.md` § 4.5 attend votre réponse |
 | **Pointage non déclaré → pessimisme** | Oui (`test_an_undeclared_pointing_resolution_is_treated_pessimistically`) | Rien d'inconnu |
 | **La tuile rend exactement la zone demandée** | Oui, sur les deux axes, à un point près (`test_a_tile_renders_exactly_the_zone_it_was_asked_for`) | Le plafond d'agrandissement reste non éprouvé ; le **portrait l'est désormais** (`test_le_portrait_n_annonce_pas_une_mesure_plus_sure_que_le_paysage`) |
-| **ε = PLUS GRAND CÔTÉ × 0,05 ÷ 512** | La règle est éprouvée côté serveur (`test_mesure_juste_sur_un_plan.py`), et le parcours de captures la joue dans un vrai navigateur | **Corrigée le 7 octobre 2026** : elle portait sur la LARGEUR, et sous-estimait l'incertitude de 1,41 sur toute page en portrait (H4 levée). Restent l'image étirée par `width: 100%` (H5) et la fenêtre rognée au bord (H6) |
+| **ε = zone RENDUE ÷ taille AFFICHÉE** | La règle est éprouvée côté serveur (`test_mesure_juste_sur_un_plan.py`), et le parcours de livraison la joue dans un vrai navigateur sur une géométrie connue (`suite-mesure-juste-pdf.spec.ts`) | **Plus rien d'inconnu sur la formule** : H4, H5 et H6 sont levées le 7 octobre 2026, parce qu'il n'y a plus de formule — la zone est déclarée par le serveur et la taille lue dans le DOM (§ 2.7). Ce qui reste inconnu est la main qui pointe, pas le pixel |
 | **Isotropie des deux axes** | **Non testable sur fixture** — la fixture est isotrope par construction | **Entièrement ouvert.** Levé par la cote oblique (H3) |
 | **Page non déformée** | **Non testable sur fixture** | **Entièrement ouvert.** Levé par la cote longue (H2) |
 | **Erreur aléatoire et non systématique** | **Non** — la quadrature la suppose | **Entièrement ouvert.** Un biais de pointage n'apparaît nulle part (H7) |
 | **Erreur indépendante du nombre de sommets** | **Levée.** La sensibilité est calculée sommet par sommet, et quatre tracés (2, 5, 20, 50 sommets) l'éprouvent | Reste la question du BIAIS, qui n'est pas celle du nombre (H7) |
-| **Calibration et mesure au même zoom** | **Non** — `MesureCreate` ne porte pas de résolution | Vrai dans l'écran livré, **faux pour tout autre client** (H9) |
+| **Calibration et mesure au même zoom** | **Plus supposé** — `MesureCreate` porte `resolution_du_pointage`, et le terme de tracé l'utilise (H9 levée) | Rien d'inconnu : un client qui ne déclare rien obtient le défaut **pessimiste** d'un point de papier par pixel |
 | **Une seule échelle par page** | Le **refus hors zone** est testé (`test_calibration_de_plan_api.py`) | Rien n'oblige à poser une zone : une page à deux échelles donne une mesure fausse **sans réserve** (H10) |
 | **Indépendance entre deux mesures** | **Non** — jamais agrégées | Le terme du facteur est **totalement corrélé** sur une page (H11) |
 | **Le nombre pointé est bien une cote** | **Hors modèle** | 860 fragments numériques sur 4 351 sur un de vos plans, dont un code postal (H12 ; chiffre issu de la fiche de la PR #88) |
@@ -588,35 +756,35 @@ la réserve est le fait, le nombre n'en est que le rang. »
 
 ## 5. Ce qu'il faudrait pour lever l'inconnu
 
-### 5.1 La fiche de cotes de référence
+### 5.1 La procédure d'essai sur vos plans
 
-Le document qui décrit exactement ce qu'il faut fournir s'appelle
-**`docs/COTES_DE_REFERENCE.md`**. Il demande :
+Le document qui dit exactement quels fichiers fournir, quelles cotes relever et
+sous quelle forme rendre le résultat est **`docs/VALIDATION_SUR_PLANS_REELS.md`**,
+sur cette branche. Il porte :
 
-**une paire DXF + PDF du même plan et de la même révision**, et **trois cotes**
-relevées à la main : une **courte** (elle attrape l'imprécision du pointage),
-une **longue** traversant le plan (elle attrape la déformation de la page, H2),
-une **oblique** (elle attrape l'anisotropie, H3 — c'est la décisive, parce
-qu'elle ne peut pas être satisfaite par un facteur juste sur un seul axe).
-Il demande aussi, en § 5.3, **votre tolérance** : « au-delà de quel écart une
-mesure doit-elle rester à vérifier ? ». Cette ligne n'est pas remplie à votre
-place, et c'est volontaire.
+- la **liste des fichiers**, par ordre de ce qu'ils débloquent — le minimum est
+  un seul PDF d'exécution avec son cartouche ;
+- les **trois cotes** à relever : une **courte** (elle attrape l'imprécision du
+  pointage), une **longue** traversant la feuille (H2, la déformation), une
+  **oblique** (H3, l'anisotropie — c'est la décisive, parce qu'elle ne peut pas
+  être satisfaite par un facteur juste sur un seul axe) ;
+- le **tableau attendu / mesuré / écart**, prêt à remplir, avec une section de
+  **répétition** — cinq pointages de la même cote — qui est le seul essai
+  levant H7 ;
+- la ligne **« votre tolérance »**, laissée vide volontairement.
 
-**Où ce fichier se trouve aujourd'hui.** Il **n'est pas sur la branche
-`claude/mesures-pdf`**, ni sur `main` : il vit sur `claude/cotes-de-reference`,
-portée par la **PR #88**, et sur la branche candidate. Vérifié : la PR #88 ne
-contient **qu'un seul fichier**, `docs/COTES_DE_REFERENCE.md`. Pour le lire
-sans attendre la fusion :
-`git show origin/claude/cotes-de-reference:docs/COTES_DE_REFERENCE.md`.
+**Ce qui a changé depuis la version précédente de ce document.** Celle-ci
+renvoyait à `docs/COTES_DE_REFERENCE.md`, qui vit sur `claude/cotes-de-reference`
+(PR #88) et **n'est pas sur cette branche**. Le renvoi était donc pendant.
+`VALIDATION_SUR_PLANS_REELS.md` reprend ce que la fiche demandait, y ajoute la
+conduite de l'essai et les cas de bord, et **vit sur la branche qu'on livre**.
+Les deux ne se contredisent pas ; si la #88 est fusionnée, la fiche reste le
+document de référence sur le FORMAT des cotes, et celui-ci sur la PROCÉDURE.
 
-Deux fichiers livrés le citent déjà :
-`apps/api/src/metreo_api/services/mesures_pdf.py` (commentaire de
-`SEUIL_D_INCERTITUDE`) et
-`apps/web/e2e-premier-devis/suite-plan-pdf-mesures.spec.ts` (en-tête du
-fichier). Ces deux renvois sont **pendants sur cette branche prise seule**, et
-se résolvent dès que la #88 est fusionnée. Les trois renvois de ce document à
-la fiche (§ 1.2 pour les quatre dimensions, § 2.11 H12 et § 4 pour le décompte
-des fragments) sont dans le même cas.
+**L'état de l'essai, en une ligne : il n'a pas eu lieu.** Les quatre plans
+fournis lors d'un échange précédent vivaient dans un espace de session qui a
+disparu avec le conteneur, et ils ne sont plus accessibles. Tout chiffre de ce
+document vient donc d'une **fixture fabriquée**, jamais d'un plan réel.
 
 ### 5.2 Ce que les trois cotes lèvent, et ce qu'elles ne lèvent pas
 
@@ -625,43 +793,60 @@ des fragments) sont dans le même cas.
 | H1 cote de calibration juste | **Oui** — c'est l'objet même de la paire DXF + PDF |
 | H2 page non déformée | **Oui** — la cote longue |
 | H3 isotropie | **Oui** — la cote oblique |
-| H12 le nombre est une cote | **Non**, et la fiche le dit en § 8 |
-| H4, H5, H6 ε déclaré = ε réel | **Non** — cela demande des tests d'écran, pas un plan |
-| H7 biais de pointage | **Non** — cela demande 5 à 10 répétitions de la même cote |
-| H8 nombre de sommets | **Déjà faite**, et sans vos plans : deux tracés de même longueur et de densité différente suffisaient, et le défaut est corrigé |
-| H9, H10, H11 | **Non** — ce sont des décisions de contrat et de produit, pas des mesures |
+| H7 biais de pointage | **Oui, par la RÉPÉTITION** — cinq pointages de la même cote, § 4.3 de la procédure. C'est le seul chiffre que le ± ne contient pas |
+| H10 une seule échelle par page | **Oui, si** un plan à deux échelles est fourni |
+| H12 le nombre est une cote | **Non**, et rien ne le lèvera : seule une personne qui regarde ce que le nombre cote le peut |
+| H11 indépendance entre deux mesures | **Non** — c'est un défaut connu du modèle, pas une inconnue |
+| H4, H5, H6 ε déclaré = ε réel | **Déjà levées**, et sans vos plans — § 5.3 |
+| H8 nombre de sommets | **Déjà levée** — deux tracés de même longueur et de densité différente suffisaient |
+| H9 résolution propre à la mesure | **Déjà levée** — le champ existe au contrat |
 
-### 5.3 Ce qui est à faire dans le dépôt, indépendamment de vos plans
+### 5.3 Ce qui a été fait dans le dépôt, indépendamment de vos plans
 
-1. **Un test unitaire sur `resolutionDeLaLoupe`.** C'est la fonction qui décide
-   de l'incertitude de **toutes** les mesures, et `apps/web` ne contient aucun
-   fichier de test unitaire (vérifié : `find apps/web -name '*.test.ts*'` ne
-   rend rien). Le parcours Playwright l'exerce, mais n'assertit jamais la
-   valeur produite. **Ce n'est pas un simple fichier à ajouter : deux
-   prérequis viennent d'abord**, et ils ne sont pas dans le dépôt aujourd'hui.
-   - **(a) Exporter le symbole.** Dans `LecturePdf.tsx`, `resolutionDeLaLoupe`
-     est déclarée `function resolutionDeLaLoupe(…)` sans `export` — le seul
-     `export` du fichier est `export function LecturePdf(`. Aucun test ne peut
-     donc l'importer en l'état : il faut l'exporter, ou la déplacer dans un
-     module à part.
-   - **(b) Installer un lanceur de tests unitaires.** Les `devDependencies` de
-     `apps/web` sont `@playwright/test`, `@types/node`, `@types/react`,
-     `@types/react-dom` et `typescript` ; ses scripts sont `dev`, `build`,
-     `start`, `lint`, `typecheck`, `e2e`, `e2e:ui` et `e2e:premier-devis`.
-     **Ni vitest ni jest.** Il faut en ajouter un, avec son script, avant
-     d'écrire la première assertion.
-2. **Relier les deux formules de ε.** L'écran divise par 512 depuis la largeur
-   de page (`LecturePdf.tsx`, `resolutionDeLaLoupe`) ; le serveur fixe le
-   facteur sur `max(largeur_zone, hauteur_zone)` (`rendu_pdf.py`,
-   `rendre_une_zone`). Les deux sont écrites dans deux langages et aucun test
-   ne les compare. Un test de bout en bout qui compare
-   `resolution_du_pointage` déclaré à `pixels_par_point` rendu fermerait H4,
-   H5 et H6 d'un coup.
-3. **Décider du contrat de `MesureCreate`** (H9) : ou bien le champ de
-   résolution y entre, ou bien la réutilisation de celle de la calibration est
-   écrite comme un contrat.
+Les trois points que la version précédente de ce document listait comme « à
+faire » sont traités. Voici comment, et ce qui reste.
 
----
+**1. ε n'est plus supposé — il est MESURÉ.** Le point demandait un test
+unitaire sur `resolutionDeLaLoupe`, et notait deux prérequis absents :
+exporter le symbole, et installer un lanceur de tests unitaires (`apps/web`
+n'avait ni vitest ni jest, et n'en a toujours pas). **La fonction a disparu**,
+remplacée par `resolutionAffichee`, qui ne calcule plus rien depuis une
+constante : elle **lit** la boîte de l'image et la zone déclarée par le
+serveur (§ 2.7). Il n'y a donc plus de formule à éprouver en isolation — il y a
+une lecture, et c'est le résultat qui est vérifié de bout en bout.
+
+**2. Les deux formules de ε sont reliées, et par le serveur.** Le point
+demandait un test comparant `resolution_du_pointage` déclaré au rendu réel.
+C'est mieux que cela : **le serveur déclare la zone qu'il a rendue**, en
+en-tête HTTP et dans le PNG lui-même, et l'écran calcule ε depuis cette
+déclaration. Les deux formules n'ont plus à coïncider par chance, puisqu'il n'y
+en a plus qu'une. H4, H5 et H6 tombent ensemble.
+
+**3. Le contrat de `MesureCreate` est tranché.** `resolution_du_pointage` y
+entre, optionnel, avec un défaut **pessimiste** — un point de papier par pixel
+— pour qu'un client qui ne déclare rien obtienne le doute et non la précision
+de la calibration. H9 est levée.
+
+**Et une quatrième chose, qui n'était pas dans la liste.** La vérification
+chiffrée — la mesure affichée comparée à une longueur connue, par le navigateur
+— ne vivait que dans `apps/web/captures/`, qu'aucune configuration de CI ne
+ramasse. Elle est maintenant dans `apps/web/e2e-premier-devis/suite-mesure-juste-pdf.spec.ts`
+et **tombe à chaque livraison** ; les captures en restent une sortie
+complémentaire, produite par le même scénario.
+
+**Ce qui reste à faire dans le dépôt :**
+
+1. **Un lanceur de tests unitaires pour `apps/web`.** Toujours absent. Ce n'est
+   plus un prérequis de H5, mais c'est ce qui manque pour éprouver une fonction
+   d'écran sans démarrer un navigateur.
+2. **H10, le mécanisme de zone.** Il existe et son refus hors zone est testé ;
+   **rien n'oblige à poser une zone**. Tant que ce n'est pas le cas, une page à
+   deux échelles donne une mesure fausse sans réserve.
+3. **H11, la corrélation.** Le jour où des mesures seront additionnées dans un
+   métré, le terme de facteur devra être traité comme commun à toute la page :
+   un total de 20 murs a une incertitude en 20, pas en √20. Aucune agrégation
+   n'est livrée aujourd'hui, et la première reprise d'une mesure dans un
+   bordereau (`services/reprise_de_mesure.py`) **n'additionne rien**.
 
 ## 6. Trois dérives de rédaction, relevées en lisant
 
@@ -707,10 +892,12 @@ Aucune n'affecte un calcul ; toutes affectent la lecture.
    et `scripts/fabriquer_pdf_de_test.py`, où le commentaire de
    `LARGEUR_REFERENCE` invoque un A0 **hypothétique** pour expliquer pourquoi
    la page de référence est petite.
-2. **Une docstring périmée.** `apps/api/tests/test_calibration_de_plan_api.py`,
-   docstring de l'assistant `_calibrer` (`"""Par défaut : la moitié de la
-   largeur de la page, déclarée à 5 000 mm."""`), annonce **5 000 mm**, alors
-   que `DISTANCE_DE_CALIBRATION = "7500"`. Les assertions, elles, sont justes.
+2. **Une docstring périmée — corrigée le 7 octobre 2026.**
+   `apps/api/tests/test_calibration_de_plan_api.py`, docstring de l'assistant
+   `_calibrer`, annonçait **5 000 mm** alors que
+   `DISTANCE_DE_CALIBRATION = "7500"`. Les assertions, elles, étaient justes :
+   seule la phrase mentait, ce qui est le pire des deux cas — on relit la phrase
+   avant le code.
 3. **Deux docstrings portent des chiffres qu'elles ne vérifient pas.**
    `test_a_finer_pointing_gives_a_proportionally_smaller_uncertainty`
    (`test_mesures_pdf.py`) cite dans sa docstring « 12 à 42 mm » et
@@ -723,10 +910,14 @@ Aucune n'affecte un calcul ; toutes affectent la lecture.
 
 ## 7. En une phrase
 
-Metreo calcule juste et sait dire quand il est mal déterminé : c'est éprouvé,
-jusqu'à l'égalité décimale sur le module pur et à 0,01 mm près à travers l'API.
-Il ne sait pas encore s'il **mesure** juste, et le chiffre rassurant de 0,3 à
-0,6 % ne répond pas à cette question — il est sans échelle, et il ne couvre que
-la finesse du pixel sous la souris. Ce qui manque tient dans un fichier : une
-paire DXF + PDF du même plan, de la même révision, et trois cotes relevées à la
-main — une courte, une longue, une oblique.
+Metreo calcule juste, sait dire quand il est mal déterminé, et **retombe
+désormais sur une géométrie connue par le navigateur** : 6 001,2 mm pour 6 000
+attendus, 24,012 m² pour 24,000, à chaque livraison. Le « ± » qu'il affiche est
+une incertitude **type**, à k = 1, propagée depuis la seule finesse du pixel
+sous la souris — il ne couvre **aucune** des sept hypothèses qui restent
+ouvertes, et une mesure peut être fausse d'un facteur 2 avec un ± de 0,04 % si
+l'échelle saisie est fausse. Il ne sait donc toujours pas s'il **mesure** juste
+sur un plan d'exécution. Ce qui manque tient dans un fichier, et la procédure
+est écrite : `docs/VALIDATION_SUR_PLANS_REELS.md` — un PDF d'exécution, trois
+cotes relevées à la main (une courte, une longue, une oblique), et cinq
+répétitions de la courte.

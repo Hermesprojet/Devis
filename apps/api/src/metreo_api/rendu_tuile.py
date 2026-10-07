@@ -128,11 +128,19 @@ def main(argv: list[str] | None = None) -> int:
 
     sortie = Path(arguments.sortie)
     sortie.write_bytes(tuile.png)
-    # La hauteur que la zone demandée atteint dans l'image, que le parent
-    # conserve avec la tuile : quand cette zone est la boîte d'une cote, c'est
-    # elle qui dit si la cote est relisible, et elle serait perdue si seul le
-    # PNG traversait.
-    print(f"{tuile.largeur} {tuile.hauteur} {tuile.hauteur_de_la_zone_px or 0:.2f}")
+    # Sept nombres, et pas trois.
+    #
+    # La hauteur que la zone demandée atteint dans l'image dit si une cote y
+    # est relisible. Les quatre suivants sont la zone que l'image couvre
+    # VRAIMENT — elle n'est pas celle qu'on a demandée, un bitmap se comptant
+    # en pixels entiers — et c'est elle que l'écran doit employer pour placer
+    # un clic. Elle voyage aussi dans le PNG, pour survivre au cache ; ici,
+    # elle évite au parent de rouvrir l'image qu'il vient d'écrire.
+    zone = tuile.zone_rendue or (0.0, 0.0, 1.0, 1.0)
+    print(
+        f"{tuile.largeur} {tuile.hauteur} {tuile.hauteur_de_la_zone_px or 0:.2f} "
+        + " ".join(f"{valeur:.10f}" for valeur in zone)
+    )
     return SORTIE_OK
 
 

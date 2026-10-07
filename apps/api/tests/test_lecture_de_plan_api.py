@@ -446,6 +446,21 @@ def test_a_pdf_is_imported_previewed_and_its_texts_extracted(
     assert corps["fragments_lus"] == len(pdf_fixtures.PLACEMENTS_DU_PLAN)
     assert corps["anomalies"] == []
 
+    # 2 bis. **Les faits de l'extraction arrivent jusqu'à l'écran.**
+    #
+    # Ce contrôle existe parce qu'ils n'y arrivaient pas. `_plan_lu` recopie
+    # l'artefact champ par champ, et les quatre nouveaux champs y avaient été
+    # oubliés : `PlanLu` leur donne des défauts — 0, 0, 0, faux — et l'écran
+    # affichait donc « 4 fragment(s), 0 caractère(s) · 0 tracé(s) vectoriel(s) »
+    # sur un document qui en porte cinquante-sept. Aucune erreur, aucun
+    # avertissement : un champ oublié prend une valeur plausible.
+    #
+    # Le nombre n'est pas recopié ici : il est recalculé depuis la fixture,
+    # pour qu'il ne puisse pas se périmer avec elle.
+    attendus = sum(len(texte) for texte, _, _ in pdf_fixtures.PLACEMENTS_DU_PLAN)
+    assert corps["caracteres_extraits"] == attendus
+    assert corps["probablement_scanne"] is False
+
     # 3. Aucune mesure, et c'est la bonne réponse.
     assert corps["mesurable"] is False
     assert corps["unite_source"] is None
@@ -488,13 +503,19 @@ def test_a_scanned_pdf_stays_previewable_and_says_why_it_has_no_text(
     Refuser serait le mauvais geste — le propriétaire a le droit de VOIR son
     plan scanné et de le mesurer à la main. L'anomalie nomme la reconnaissance
     optique comme l'étape qui manque, sans promettre qu'elle existe.
+
+    **La fixture est une page qui ne porte QU'UNE IMAGE.** Elle l'est devenue
+    en corrigeant ce test : il employait `page_sans_texte()`, qui trace une
+    ligne vectorielle, et acceptait donc comme « scan » une page qui n'en est
+    pas un. Le verdict passait, le diagnostic était faux — et c'est exactement
+    le défaut que le propriétaire a relevé sur l'écran.
     """
     admin = login(seeded_client, "admin@dubois.demo")
     document, revision = _plan_depose(
         seeded_client,
         admin,
         "PLAN-SCAN",
-        contenu=pdf_fixtures.page_sans_texte(),
+        contenu=pdf_fixtures.page_scannee(),
         nom="scan.pdf",
         type_annonce="application/pdf",
     )
@@ -503,10 +524,49 @@ def test_a_scanned_pdf_stays_previewable_and_says_why_it_has_no_text(
     assert corps["refuse"] is False
     assert corps["porte_du_texte"] is False
     assert corps["fragments_lus"] == 0
+    # Les trois faits comptés, et pas le seul verdict : c'est ce qui rend le
+    # diagnostic vérifiable.
+    assert corps["caracteres_extraits"] == 0
+    assert corps["traces_vectoriels"] == 0
+    assert corps["images_incluses"] == 1
+    assert corps["probablement_scanne"] is True
     assert [a["code"] for a in corps["anomalies"]] == ["texte_absent"]
+    assert "reconnaissance optique" in corps["anomalies"][0]["message"]
     # L'aperçu, lui, est bien là : c'est tout l'intérêt de ne pas refuser.
     assert corps["apercus"] == [1]
     assert _image(seeded_client, admin, document, revision).status_code == 200
+
+
+def test_a_vector_pdf_without_text_is_not_announced_as_a_scan(
+    seeded_client: TestClient,
+) -> None:
+    """Le contre-exemple du test précédent, et il est nécessaire.
+
+    Sans lui, un lecteur qui dirait « probablement scanné » sur TOUT document
+    sans texte passerait le test du scan. Ce qui distingue les deux n'est pas
+    la quantité de texte, c'est ce que la page porte comme dessin : des tracés
+    vectoriels d'un côté, une image et rien d'autre de l'autre.
+    """
+    admin = login(seeded_client, "admin@dubois.demo")
+    document, revision = _plan_depose(
+        seeded_client,
+        admin,
+        "PLAN-VECTORIEL",
+        contenu=pdf_fixtures.page_sans_texte(),
+        nom="trace-sans-texte.pdf",
+        type_annonce="application/pdf",
+    )
+
+    corps = _analyser(seeded_client, admin, document, revision).json()
+    assert corps["refuse"] is False
+    assert corps["porte_du_texte"] is False
+    assert corps["traces_vectoriels"] == 1
+    assert corps["images_incluses"] == 0
+    assert corps["probablement_scanne"] is False
+
+    message = corps["anomalies"][0]["message"]
+    assert "ce n'est pas un scan" in message
+    assert "reconnaissance optique" not in message
 
 
 def test_an_encrypted_pdf_is_refused_with_a_readable_reason_kept_on_the_volume(

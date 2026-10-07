@@ -1447,6 +1447,27 @@ class BoqItem(TimestampMixin, Base):
             name="fk_boq_items_composite_price_tenant",
             ondelete="SET NULL (composite_price_id)",
         ),
+        # D'où vient la quantité de cette ligne, quand elle vient d'un plan.
+        #
+        # `SET NULL` et non `CASCADE` : si une proposition disparaît un jour —
+        # purge par document, rétention par révision, rien de tel n'existe
+        # encore — un montant de devis ne doit pas disparaître avec elle.
+        # L'empreinte `source_mesure` reste alors seule, et elle suffit à dire
+        # ce qui a été repris. Comme pour les deux clés ci-dessus, l'action de
+        # la clé composite appartient aux migrations : sur PostgreSQL elle
+        # nomme sa colonne, sinon elle viderait aussi `organization_id`.
+        ForeignKeyConstraint(
+            ["organization_id", "source_proposal_id"],
+            ["extraction_proposals.organization_id", "extraction_proposals.id"],
+            name="fk_boq_items_source_proposal_tenant",
+            ondelete="SET NULL (source_proposal_id)",
+        ),
+        # Une mesure ne se reprend qu'UNE FOIS par bordereau. Deux reprises
+        # compteraient deux fois la même quantité d'ouvrage, et le double
+        # comptage est l'erreur la plus coûteuse d'un métré. La même mesure
+        # peut en revanche alimenter deux bordereaux distincts — une variante,
+        # par exemple — et c'est pourquoi la contrainte porte sur `boq_id`.
+        UniqueConstraint("boq_id", "source_proposal_id", name="uq_boq_item_source"),
         CheckConstraint(
             "price_item_id IS NULL OR composite_price_id IS NULL",
             name="ck_boq_item_single_price_source",
@@ -1492,6 +1513,25 @@ class BoqItem(TimestampMixin, Base):
     composite_price_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("composite_prices.id", ondelete="SET NULL")
     )
+    #: La proposition d'extraction reprise, si cette ligne vient d'un plan.
+    #:
+    #: C'est le LIEN : il permet de remonter de la ligne de devis au plan, à la
+    #: page et à la boîte où la mesure a été pointée. Il peut passer à `NULL`
+    #: si la révision citée est purgée ; `source_mesure` prend alors le relais.
+    source_proposal_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("extraction_proposals.id", ondelete="SET NULL")
+    )
+    #: Ce que valait la mesure à l'instant de la reprise, figé.
+    #:
+    #: Valeur mesurée, unité, incertitude, décision humaine et son motif. C'est
+    #: l'EMPREINTE, et elle survit à la disparition de la proposition : un
+    #: montant de devis ne perd pas sa justification parce que le lien a été
+    #: dénoué.
+    #:
+    #: Elle ne remplace pas la citation et ne sert à aucun calcul : la quantité
+    #: qui compte est `quantity`, dans `unit_code`. Ce champ dit d'où elle
+    #: vient, et il est écrit une fois pour toutes.
+    source_mesure: Mapped[dict | None] = mapped_column(SAJSON)
 
 
 # --------------------------------------------------------------------------
