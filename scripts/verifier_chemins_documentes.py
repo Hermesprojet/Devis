@@ -26,6 +26,7 @@ Sortie 0 si tout chemin cité se résout, 1 sinon, avec la liste.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -65,6 +66,13 @@ TOLERES: frozenset[str] = frozenset(
 )
 
 
+#: Une branche nommée par un document, dans la forme que ce dépôt emploie.
+#:
+#: Sert à la seconde règle de résolution ci-dessous. Volontairement restreinte
+#: aux préfixes réellement utilisés : `main`, et les branches de travail.
+BRANCHE = re.compile(r"\b(?:origin/)?((?:claude|codex)/[A-Za-z0-9_.-]+|main)\b")
+
+
 def resoudre(chemin: str) -> Path | None:
     """Le fichier ou dossier désigné, ou `None` si aucun ne correspond.
 
@@ -88,18 +96,83 @@ def resoudre(chemin: str) -> Path | None:
     return None
 
 
+def fabriquee_a_la_demande(chemin: str) -> bool:
+    """Vrai si une fabrique du dépôt déclare produire ce fichier.
+
+    **Le défaut que cette règle ferme.** `fixtures/plans/plan_cote.pdf` est un
+    PDF fabriqué par `scripts/fabriquer_plans_de_test.py` et volontairement non
+    commité — un binaire commité devient un bloc que personne n'ouvre. Il existe
+    donc sur la machine de qui a lancé la fabrique, et nulle part ailleurs. Un
+    document qui le cite passait ce contrôle chez l'auteur et le faisait tomber
+    sur un dépôt propre : exactement le genre d'écart que ce script existe pour
+    attraper, retourné contre lui.
+
+    La règle plutôt qu'une exception : la fabrique DÉCLARE ce qu'elle produit
+    dans son tuple `ATTENDUS`, et c'est cette déclaration qui est lue. Un
+    fichier qu'aucune fabrique ne promet reste refusé.
+    """
+    nom = Path(chemin).name
+    for fabrique in sorted((RACINE / "scripts").glob("fabriquer_*.py")):
+        texte = fabrique.read_text(encoding="utf-8")
+        declaration = re.search(r"ATTENDUS[^=]*=\s*\(([^)]*)\)", texte, re.S)
+        if declaration and f'"{nom}"' in declaration.group(1):
+            return True
+    return False
+
+
+def porte_par_une_branche_citee(chemin: str, branches: frozenset[str]) -> str | None:
+    """La branche, parmi celles que le DOCUMENT nomme, qui porte ce chemin.
+
+    **Pourquoi cette seconde règle existe.** Un dépôt qui travaille par demandes
+    de fusion empilées a des documents qui parlent, à juste titre, de fichiers
+    vivant sur une autre branche : `docs/MISE_EN_LIGNE_LECTURE_DE_PLANS.md` décrit
+    la mise en ligne et doit citer `ops/verifier_deploiement.sh`, qui arrive par
+    une autre demande. Refuser cette citation forcerait le document à taire
+    l'outil même dont il parle.
+
+    **Pourquoi elle reste stricte.** Elle n'accepte pas « ce fichier existe
+    quelque part » : elle exige que le document NOMME la branche qui le porte,
+    et vérifie que cette branche l'a vraiment. Un lecteur qui ne trouve pas le
+    fichier lit donc, dans le même document, où le chercher — ce qui est
+    exactement la propriété que ce contrôle défend. Et une citation dont la
+    branche n'est pas nommée reste refusée.
+
+    Rend le nom de la branche, pour que la sortie puisse le dire.
+    """
+    if not branches:
+        return None
+    for branche in sorted(branches):
+        for prefixe in ("", "apps/api/src/metreo_api/", "docs/"):
+            acces = subprocess.run(
+                ["git", "cat-file", "-e", f"{branche}:{prefixe}{chemin}"],
+                cwd=RACINE,
+                capture_output=True,
+            )
+            if acces.returncode == 0:
+                return branche
+    return None
+
+
 def introuvables() -> dict[Path, set[str]]:
     manquants: dict[Path, set[str]] = {}
     for document in DOCUMENTS:
         if not document.exists():
             continue
         texte = document.read_text(encoding="utf-8")
+        # Les branches que CE document nomme, et elles seules : la seconde règle
+        # de résolution ne regarde pas plus loin que ce que le document dit.
+        branches = frozenset(BRANCHE.findall(texte))
         for trouve in CITATION.finditer(texte):
             chemin = trouve.group(1)
             if chemin in TOLERES:
                 continue
-            if resoudre(chemin) is None:
-                manquants.setdefault(document, set()).add(chemin)
+            if resoudre(chemin) is not None:
+                continue
+            if fabriquee_a_la_demande(chemin):
+                continue
+            if porte_par_une_branche_citee(chemin, branches) is not None:
+                continue
+            manquants.setdefault(document, set()).add(chemin)
     return manquants
 
 

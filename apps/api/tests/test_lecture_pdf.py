@@ -520,7 +520,8 @@ def test_a_detail_tile_magnifies_a_fragment_enough_to_read_it(
     """Un aperçu de page ne permet pas de RELIRE une cote ; une tuile si.
 
     Mesuré sur les quatre plans réels : à 2 000 pixels de grand côté, la
-    hauteur médiane d'un texte est de 3,5 à 4,4 pixels. Or le propriétaire
+    hauteur médiane d'une ligne de texte est de 2,4 à 3,6 pixels. Or le
+    propriétaire
     doit confirmer ou corriger une mesure, ce qui demande de la lire.
 
     La tuile vise `COTE_TUILE` sur son grand côté, et rend la hauteur que le
@@ -546,58 +547,88 @@ def test_a_detail_tile_magnifies_a_fragment_enough_to_read_it(
 
     assert tuile.png[:8] == b"\x89PNG\r\n\x1a\n"
     assert max(tuile.largeur, tuile.hauteur) <= rendu_pdf.COTE_TUILE
-    assert tuile.hauteur_du_texte_px is not None
-    assert tuile.hauteur_du_texte_px > 4.0, (
+    assert tuile.hauteur_de_la_zone_px is not None
+    assert tuile.hauteur_de_la_zone_px > 4.0, (
         "si la tuile ne rend pas le texte plus grand que l'aperçu, elle ne sert à rien"
     )
 
     # Et le plein aperçu, lui, ne prétend pas rendre un texte lisible.
     apercu = rendu_pdf.rendre(chemin)
-    assert apercu.hauteur_du_texte_px is None
+    assert apercu.hauteur_de_la_zone_px is None
 
 
-def test_a_tile_shows_the_drawing_around_the_text_not_only_the_text(
+def test_a_window_around_a_text_shows_the_drawing_and_not_only_the_text(
     tmp_path: Path,
 ) -> None:
-    """La marge est prise sur la HAUTEUR du texte, pas sur la taille du cadre.
+    """Le contexte autour d'une cote se demande, il ne s'ajoute pas tout seul.
 
-    **Vu à l'œil avant d'être écrit ici.** Avec une marge d'une demie du
-    cadre, la tuile d'un « 1040 » d'un plan réel montrait « - 1040 E » et pas
-    un trait du dessin : le propriétaire y lisait la cote sans pouvoir juger
-    CE QU'ELLE cote, ce qui est précisément la question qu'on lui pose. (Ce
-    « 1040 », d'ailleurs, était le code postal d'Etterbeek dans le cartouche.)
+    **Vu à l'œil avant d'être écrit ici.** La tuile de la boîte NUE d'un
+    « 1040 » d'un plan réel montre « - 1040 E » et pas un trait du dessin : le
+    propriétaire y lit la cote sans pouvoir juger CE QU'ELLE cote, ce qui est
+    précisément la question qu'on lui pose. (Ce « 1040 », d'ailleurs, était le
+    code postal d'Etterbeek dans le cartouche.)
 
-    La tuile doit donc être nettement plus large que le texte lui-même.
+    La réponse a d'abord été une marge ajoutée par le rendu, et c'était faux :
+    l'écran, qui place ses clics dans la tuile, croyait que l'image couvrait la
+    zone qu'il avait demandée. La réponse est donc une FENÊTRE demandée autour
+    de la cote — ce que l'écran fait déjà quand on clique « montrer » : une
+    fenêtre de 5 % de page centrée sur la mesure, jamais sa boîte nue.
+
+    Ce test vérifie que cette fenêtre-là montre bien autre chose que le texte,
+    **sur une page à la taille d'un plan**. La page de 300 × 220 points des
+    autres fixtures ne peut pas le dire : 5 % de 220 points font 11 points, et
+    un texte de 12 points y occupe 79 % de la hauteur. Ce n'est pas un défaut
+    du rendu, c'est une fraction fixe appliquée à une page de la taille d'une
+    carte postale. La fixture est donc dimensionnée en A0 — 3 370 × 2 384
+    points — qui est la taille des plans que le propriétaire dépose.
     """
     from metreo_api.services import rendu_pdf
 
-    chemin = _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "plan.pdf")
+    #: La fenêtre que l'écran demande, en fraction de page.
+    #: `TAILLE_DE_LA_LOUPE` dans `LecturePdf.tsx` — recopiée ici parce qu'une
+    #: constante du front n'est pas importable, et nommée pour qu'on sache où
+    #: la tenir d'accord.
+    fenetre = 0.05
+
+    # Un A0, et les mêmes textes étirés dessus. `page_avec_plusieurs_textes`
+    # expose ses placements précisément pour ce genre de cas.
+    facteur = 3370.0 / 300.0
+    places = tuple((texte, x * facteur, y * facteur) for texte, x, y in fabrique.PLACEMENTS_DU_PLAN)
+    chemin = _ecrire(
+        tmp_path,
+        fabrique.page_avec_plusieurs_textes(places, largeur=3370.0, hauteur=2384.0),
+        "plan.pdf",
+    )
     constat = lecture_pdf.lire(chemin)
     fragment = next(f for f in constat.fragments if f.texte == "5000")
     assert fragment.cadre is not None
-    hauteur_du_cadre = fragment.cadre.y1 - fragment.cadre.y0
 
+    centre_x = (fragment.cadre.x0 + fragment.cadre.x1) / 2
+    centre_y = (fragment.cadre.y0 + fragment.cadre.y1) / 2
+    demi = fenetre / 2
     tuile = rendu_pdf.rendre_une_zone(
         chemin,
         page=fragment.page,
         zone=(
-            fragment.cadre.x0,
-            fragment.cadre.y0,
-            fragment.cadre.x1,
-            fragment.cadre.y1,
+            max(0.0, centre_x - demi),
+            max(0.0, centre_y - demi),
+            min(1.0, centre_x + demi),
+            min(1.0, centre_y + demi),
         ),
     )
-    assert tuile.hauteur_du_texte_px is not None
 
-    # La hauteur montrée vaut au moins dix fois celle du texte : la marge est
-    # de huit fois de chaque côté, donc dix-sept fois en tout, rognée par les
-    # bords de la page.
-    part_du_texte = tuile.hauteur_du_texte_px / tuile.hauteur
-    assert part_du_texte < 0.1, (
-        f"le texte occupe {part_du_texte:.0%} de la hauteur de la tuile : "
-        "elle ne montre pas assez de dessin autour pour juger la cote"
+    # La hauteur du texte dans la tuile, rapportée à la hauteur de la tuile.
+    # `hauteur_de_la_zone_px` porte ici la hauteur de la FENÊTRE, pas celle du
+    # texte : c'est le facteur qui convertit.
+    hauteur_de_la_page = constat.dimensions[fragment.page - 1][1]
+    hauteur_du_texte_px = (
+        (fragment.cadre.y1 - fragment.cadre.y0) * hauteur_de_la_page * tuile.pixels_par_point
     )
-    assert hauteur_du_cadre > 0
+    part_du_texte = hauteur_du_texte_px / tuile.hauteur
+    assert part_du_texte < 0.2, (
+        f"le texte occupe {part_du_texte:.0%} de la hauteur de la tuile : la "
+        "fenêtre ne montre pas assez de dessin autour pour juger la cote"
+    )
 
 
 def test_a_measurement_whose_position_is_unknown_cannot_be_shown(
@@ -615,3 +646,73 @@ def test_a_measurement_whose_position_is_unknown_cannot_be_shown(
     with pytest.raises(rendu_pdf.RenduRefuse) as refus:
         rendu_pdf.rendre_une_zone(chemin, page=1, zone=(0.5, 0.5, 0.5, 0.9))
     assert refus.value.code == "zone_invalide"
+
+
+def test_a_tile_renders_exactly_the_zone_it_was_asked_for(tmp_path: Path) -> None:
+    """L'étendue rendue EST l'étendue demandée. C'est l'invariant de l'écran.
+
+    **Le défaut que ce test ferme, et pourquoi il était grave.** Une tuile
+    élargissait la zone d'une marge de huit fois sa hauteur. Pour la boîte d'un
+    texte c'était l'intention ; pour les 5 % de page que demande la loupe, cela
+    faisait rendre 51 à 67 % × 85 % de la page sur 512 pixels — moins fin que
+    l'aperçu lui-même.
+
+    Et la finesse n'était que le symptôme. **L'écran croyait que l'image
+    couvrait la zone demandée** : il y plaçait les clics, y dessinait les
+    points, et en déduisait `resolution_du_pointage`, c'est-à-dire
+    l'incertitude de toutes les mesures. Les trois étaient faux du même
+    facteur, sans un mot. Deux clics aux cinquièmes de la loupe désignaient
+    9 points d'écart au lieu de 101.
+
+    La marge appartient donc à l'appelant — et l'écran la prenait déjà, en
+    demandant une fenêtre centrée sur ce qui l'intéresse plutôt que la boîte
+    nue. Le test vérifie l'égalité sur les DEUX axes, parce qu'une marge qui ne
+    jouerait que sur un seul passerait un contrôle sur le grand côté.
+
+    `pixels_par_point` est rendu par le code lui-même : le test ne recopie
+    aucune formule. Une vérification qui réimplémente ce qu'elle vérifie ne
+    vérifie rien, et c'est l'erreur qui avait laissé passer la marge.
+    """
+    from metreo_api.services import rendu_pdf
+
+    chemin = _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "plan.pdf")
+    constat = lecture_pdf.lire(chemin)
+    largeur_pt, hauteur_pt = constat.dimensions[0]
+
+    zone = (0.40, 0.40, 0.45, 0.45)
+    tuile = rendu_pdf.rendre_une_zone(chemin, page=1, zone=zone)
+
+    attendu_x = (zone[2] - zone[0]) * largeur_pt
+    attendu_y = (zone[3] - zone[1]) * hauteur_pt
+    rendu_x = tuile.largeur / tuile.pixels_par_point
+    rendu_y = tuile.hauteur / tuile.pixels_par_point
+    # Un point de tolérance : le bitmap est un nombre ENTIER de pixels, et le
+    # dernier pixel d'un bord est arrondi.
+    assert abs(rendu_x - attendu_x) <= 1.0 and abs(rendu_y - attendu_y) <= 1.0, (
+        f"la tuile rend {rendu_x:.1f} × {rendu_y:.1f} points pour une zone "
+        f"demandée de {attendu_x:.1f} × {attendu_y:.1f} : l'écran placerait "
+        "ses clics au mauvais endroit"
+    )
+
+
+def test_a_tile_of_a_loupe_sized_zone_is_finer_than_the_preview(
+    tmp_path: Path,
+) -> None:
+    """Agrandir doit agrandir, et ce n'est plus une conséquence d'un plafond.
+
+    Sans marge, la finesse d'une tuile est entièrement le choix de l'appelant :
+    512 pixels sur 5 % de page valent vingt fois l'aperçu, qui en met 2 000 sur
+    la page entière. Le test le constate plutôt que de le supposer, parce que
+    c'est la raison d'être de la tuile — et qu'une tuile moins fine que
+    l'aperçu a déjà été livrée une fois.
+    """
+    from metreo_api.services import rendu_pdf
+
+    chemin = _ecrire(tmp_path, fabrique.page_avec_plusieurs_textes(), "plan.pdf")
+    apercu = rendu_pdf.rendre(chemin)
+    tuile = rendu_pdf.rendre_une_zone(chemin, page=1, zone=(0.40, 0.40, 0.45, 0.45))
+
+    assert tuile.pixels_par_point > apercu.pixels_par_point, (
+        f"la tuile rend {tuile.pixels_par_point:.3f} pixel par point et l'aperçu "
+        f"{apercu.pixels_par_point:.3f} : l'agrandissement travaille contre lui-même"
+    )

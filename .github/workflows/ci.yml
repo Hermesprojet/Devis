@@ -63,7 +63,15 @@ jobs:
           # dans le manifeste, mais la CI
           # l'installe : sans lui, les tests de lecture de plans se
           # SAUTERAIENT, et une suite qui saute ne prouve rien.
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans]"
+          #
+          # `pdf` pour exactement la même raison, et il a manqué pendant
+          # plusieurs tranches : `pypdfium2` absent, les quatre-vingts tests du
+          # lecteur PDF, de la mesure, de la calibration et du cache de tuiles
+          # se sautaient ici en silence pendant que l'atelier affichait vert.
+          # `test_extras_de_lecture_de_plans.py` refuse désormais ce fichier
+          # s'il manque un extra, et `METREO_REQUIRE_PLAN_EXTRAS` fait d'un
+          # ignoré une erreur.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,pdf]"
       - name: Format et lint
         # scripts/ y est joint : il porte désormais de la logique — le
         # contrôle d'installation propre et celui des skills — et non plus
@@ -95,6 +103,11 @@ jobs:
           mypy scripts
       - name: Tests
         working-directory: apps/api
+        # METREO_REQUIRE_PLAN_EXTRAS : l'atelier vient d'installer `plans` et
+        # `pdf`. Un test de lecture de plans qui se SAUTERAIT ici est donc un
+        # mensonge sur ce qui a été éprouvé, et non un ignoré légitime.
+        env:
+          METREO_REQUIRE_PLAN_EXTRAS: "1"
         run: pytest -q
 
   api-postgres:
@@ -123,7 +136,7 @@ jobs:
       - name: Installer
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,postgres]"
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,pdf,postgres]"
       - name: Aller-retour des migrations, dans une base créée par ce run
         # Le service PostgreSQL est éphémère — il meurt avec le job — mais
         # l'aller-retour ne s'appuie pas là-dessus : il crée sa propre base au
@@ -172,6 +185,9 @@ jobs:
         # transactionnel.
         env:
           METREO_TEST_DATABASE_URL: postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
+          # Même raison que dans l'atelier SQLite : les extras sont installés,
+          # donc un ignoré pour extra manquant devient rouge.
+          METREO_REQUIRE_PLAN_EXTRAS: "1"
         run: pytest -q
       - name: Les tests PostgreSQL-only ont réellement tourné
         working-directory: apps/api
@@ -245,7 +261,11 @@ jobs:
           # Python : le banc fabrique une fixture de plan COTÉE avec ezdxf, et
           # sans l'extra elle manquait — le parcours échouait sur un fichier
           # absent, après avoir passé dix-sept scénarios.
-          pip install -c constraints/api.txt ./packages/domain "./apps/api[plans]"
+          #
+          # Et `pdf` de même : sans `pypdfium2`, le serveur REFUSE un PDF à
+          # l'analyse, l'écran de lecture PDF ne s'affiche jamais, et le
+          # parcours échoue sur un élément introuvable — ce qui est arrivé.
+          pip install -c constraints/api.txt ./packages/domain "./apps/api[plans,pdf]"
       - name: Installer le web (verrouillé)
         working-directory: apps/web
         run: npm ci

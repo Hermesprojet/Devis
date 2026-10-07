@@ -38,7 +38,12 @@ install: ## Créer l'environnement virtuel et installer les dépendances
 	# valident un jeu de versions qui n'est pas celui livré en production.
 	# Les outils de développement n'y figurent pas — une contrainte ne force
 	# aucune installation, elle ne fait que borner ce qui l'est.
-	$(PIP) install -c constraints/api.txt -e $(DOMAIN) -e $(CONTRACTS) -e "apps/api[dev,postgres]"
+	# `plans` et `pdf` y sont, et ce n'est pas un confort : sans eux, les
+	# tests de lecture de plans se SAUTENT, et un développeur qui lance
+	# `make test` sur un clone neuf voit une suite verte qui n'a pas éprouvé
+	# le lecteur de plans. C'est ce qui s'est produit pendant plusieurs
+	# tranches, en local comme en intégration continue.
+	$(PIP) install -c constraints/api.txt -e $(DOMAIN) -e $(CONTRACTS) -e "apps/api[dev,postgres,plans,pdf]"
 	cd apps/web && npm ci
 
 # -- vérifications élémentaires -------------------------------------------
@@ -153,7 +158,7 @@ lock: ## Régénérer constraints/api.txt depuis une résolution propre
 	trap 'rm -rf $$tmp' EXIT; \
 	python3 -m venv $$tmp/venv; \
 	$$tmp/venv/bin/python -m pip install --quiet --upgrade pip; \
-	$$tmp/venv/bin/pip install --quiet ./packages/domain ./packages/contracts "./apps/api[postgres]"; \
+	$$tmp/venv/bin/pip install --quiet ./packages/domain ./packages/contracts "./apps/api[postgres,plans,pdf]"; \
 	{ echo "# Verrou de résolution des dépendances d'EXÉCUTION, régénéré par : make lock"; \
 	  echo "#"; \
 	  echo "# Ne contient délibérément pas les outils de développement (pytest, ruff,"; \

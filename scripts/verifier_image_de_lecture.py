@@ -490,15 +490,37 @@ def controler_la_lecture_du_pdf(dossier: Path) -> None:
 
     # La tuile de détail : sans elle, « confirmer ou corriger » demanderait
     # d'ouvrir le PDF hors de Metreo. Mesuré sur les plans réels : à 2 000 px
-    # de grand côté, un texte fait 3,5 à 4,4 pixels de haut.
+    # de grand côté, une ligne de texte fait 2,4 à 3,6 pixels de haut.
     tuile = rendre_une_zone(chemin, page=1, zone=(cadre.x0, cadre.y0, cadre.x1, cadre.y1))
     exiger(
         tuile.png[:8] == b"\x89PNG\r\n\x1a\n"
-        and tuile.hauteur_du_texte_px is not None
-        and tuile.hauteur_du_texte_px > 4.0,
+        and tuile.hauteur_de_la_zone_px is not None
+        and tuile.hauteur_de_la_zone_px > 4.0,
         "une tuile de détail agrandit le texte assez pour le relire",
-        f"{tuile.largeur}×{tuile.hauteur} px, texte "
-        f"{tuile.hauteur_du_texte_px:.0f} px, {len(tuile.png)} octets",
+        f"{tuile.largeur}×{tuile.hauteur} px, zone "
+        f"{tuile.hauteur_de_la_zone_px:.0f} px, {len(tuile.png)} octets",
+    )
+
+    # **L'invariant sur lequel repose tout l'écran de mesure** : la tuile rend
+    # EXACTEMENT la zone demandée. L'écran y place les clics, y dessine les
+    # points et en déduit la résolution du pointage — donc l'incertitude de
+    # toutes les mesures. Une marge ajoutée par le rendu rendrait les trois
+    # faux du même facteur, en silence. C'est arrivé une fois : huit fois la
+    # hauteur de la zone, et deux clics désignaient 9 points au lieu de 101.
+    #
+    # Vérifié dans l'IMAGE, et pas seulement dans les tests, parce que c'est
+    # une propriété du rendu de PDFium autant que du code : `crop` s'applique
+    # après rotation, et une version de la bibliothèque qui changerait cela
+    # déplacerait toutes les mesures sans faire échouer un seul test de forme.
+    largeur_pt, hauteur_pt = constat.dimensions[0]
+    demande_x = (cadre.x1 - cadre.x0) * largeur_pt
+    demande_y = (cadre.y1 - cadre.y0) * hauteur_pt
+    rendu_x = tuile.largeur / tuile.pixels_par_point
+    rendu_y = tuile.hauteur / tuile.pixels_par_point
+    exiger(
+        abs(rendu_x - demande_x) <= 1.0 and abs(rendu_y - demande_y) <= 1.0,
+        "une tuile rend exactement la zone demandée, sans marge ajoutée",
+        f"demandé {demande_x:.1f}×{demande_y:.1f} pt, rendu {rendu_x:.1f}×{rendu_y:.1f} pt",
     )
 
     # Un PDF chiffré : le refus doit NOMMER le chiffrement, et Metreo ne doit

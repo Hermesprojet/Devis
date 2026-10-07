@@ -423,6 +423,88 @@ export const api = {
    */
   imageDuPlan: (documentId: string, revisionId: string): Promise<Blob> =>
     octetsAuthentifies(`/documents/${documentId}/revisions/${revisionId}/plan/image`),
+  /** Les textes extraits d'un PDF, situés sur son aperçu. */
+  textesDuPlan: (documentId: string, revisionId: string, page?: number) =>
+    request<TextesDePlan>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/textes` +
+        (page ? `?page=${page}` : ''),
+    ),
+
+  /** L'aperçu d'une PAGE. Le DXF ignore le paramètre : il n'en a qu'une. */
+  renduDeLaPage: (documentId: string, revisionId: string, page: number) =>
+    octetsAuthentifies(
+      `/documents/${documentId}/revisions/${revisionId}/plan/image?page=${page}`,
+    ),
+
+  /**
+   * L'agrandissement d'une zone, pour la RELIRE.
+   *
+   * **Lente la première fois, instantanée ensuite.** Mesuré sur quatre plans
+   * réels : 0,2 à 5,3 secondes au premier appel — le chargement de la page par
+   * PDFium — puis 0,3 milliseconde depuis le cache du volume. L'écran doit
+   * donc annoncer l'attente, et ne pas la relancer à chaque mouvement de
+   * souris.
+   */
+  tuileDuPlan: (
+    documentId: string,
+    revisionId: string,
+    page: number,
+    zone: [number, number, number, number],
+  ) =>
+    octetsAuthentifies(
+      `/documents/${documentId}/revisions/${revisionId}/plan/tuile` +
+        `?page=${page}&x0=${zone[0]}&y0=${zone[1]}&x1=${zone[2]}&y1=${zone[3]}`,
+    ),
+
+  /** Les échelles déclarées et les mesures prises sur un PDF. */
+  mesuresDuPdf: (documentId: string, revisionId: string) =>
+    request<MesuresDePdf>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/mesures`,
+    ),
+
+  /**
+   * Déclarer l'échelle d'une page.
+   *
+   * `resolution_du_pointage` n'est pas un détail : c'est elle qui décide de la
+   * confiance accordée à toutes les mesures qui suivront. Mesuré, un pixel de
+   * l'aperçu pleine page d'un A0 vaut 12 à 42 mm d'ouvrage ; sur une tuile
+   * agrandie, 0,6 à 6 mm.
+   */
+  calibrerLePlan: (
+    documentId: string,
+    revisionId: string,
+    body: {
+      page: number
+      premier: PointDEcran
+      second: PointDEcran
+      distance_reelle: string
+      unite: string
+      resolution_du_pointage: string
+      motif: string
+      zone?: [number, number, number, number]
+    },
+  ) =>
+    request<CalibrationDePlan>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/calibration`,
+      { method: 'POST', body },
+    ),
+
+  /** Mesurer un segment ou une surface sur un PDF calibré. */
+  mesurerSurLePdf: (
+    documentId: string,
+    revisionId: string,
+    body: {
+      page: number
+      type: 'segment' | 'surface'
+      points: PointDEcran[]
+      libelle: string
+    },
+  ) =>
+    request<MesureDePdf>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/mesures`,
+      { method: 'POST', body },
+    ),
+
   /**
    * La décision humaine sur une proposition d'extraction.
    *
@@ -905,6 +987,83 @@ export interface PlanLu {
   anomalies: PlanAnomalie[]
   image_disponible: boolean
   mesures: PlanMesure[]
+
+  /** `dxf` ou `pdf`. À lire AVANT le reste : les champs de l'autre format
+   * valent `null` ou une liste vide, et un écran qui l'ignorerait afficherait
+   * « sans unité » pour un PDF — ce qui est vrai, et trompeur. */
+  format: 'dxf' | 'pdf'
+  /** Zéro pour un DXF. */
+  pages: number
+  /** Largeur et hauteur de chaque page, en points PostScript. */
+  dimensions_des_pages: number[][]
+  /** Faux pour un document scanné : l'aperçu sert, l'extraction non. */
+  porte_du_texte: boolean
+  fragments_lus: number
+  /** Les pages qui ont un aperçu. Une absente n'est pas affichable. */
+  apercus: number[]
+}
+
+/** Un point désigné sur l'aperçu : [0,1], origine en haut à gauche. */
+export type PointDEcran = { x: number; y: number }
+
+/** Un fragment de texte d'un PDF, et où il se trouve. */
+export type FragmentDeTexte = {
+  texte: string
+  page: number
+  /** `null` quand la position n'a pas pu être établie — voir `position`. */
+  cadre: PlanCadre | null
+  /** `exacte`, `recadree` ou `inconnue`. */
+  position: string
+}
+
+export type TextesDePlan = {
+  revision_id: string
+  /** Le total de la SÉLECTION, pas de la tranche rendue. */
+  total: number
+  page: number | null
+  fragments: FragmentDeTexte[]
+  extracteur: string
+}
+
+/** Une échelle déclarée par une personne sur une page de PDF. */
+export type CalibrationDePlan = {
+  id: string
+  page: number
+  distance_reelle: string
+  unite: string
+  /** « 50 mm par point ». À LIRE, jamais à recalculer. */
+  facteur_lisible: string
+  resolution_du_pointage: string
+  motif: string
+  zone: string[] | null
+  created_at: string
+}
+
+/** Une mesure prise sur un PDF, avec de quoi la juger et la retrouver. */
+export type MesureDePdf = {
+  proposal_id: string
+  citation_id: string
+  page: number
+  type: string
+  libelle: string
+  valeur: string
+  unite: string
+  /** Dans la MÊME unité que la valeur. */
+  incertitude: string
+  incertitude_relative: string
+  fiabilite: string
+  reserves: string[]
+  points: PointDEcran[]
+  cadre: PlanCadre | null
+  calibration: Record<string, unknown>
+  decision: string | null
+  valeur_corrigee: string | null
+}
+
+export type MesuresDePdf = {
+  revision_id: string
+  calibrations: CalibrationDePlan[]
+  mesures: MesureDePdf[]
 }
 
 export type DecisionHumaine = 'accepted' | 'corrected' | 'rejected'

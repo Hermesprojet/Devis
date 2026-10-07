@@ -83,12 +83,15 @@ make install
 `make install` crée le venv et installe **depuis les manifestes**, sous le
 verrou du dépôt. Il n'existe pas de troisième liste de dépendances : les
 `pyproject.toml` et `apps/web/package-lock.json` font foi, et c'est ce que la
-CI installe. Sans `make`, exactement la même chose :
+CI installe. Sans `make`, exactement la même chose — **extras `plans` et `pdf`
+compris** : sans eux, les tests de lecture de plans se SAUTENT, et une suite
+verte qui saute ne prouve rien. C'est arrivé.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
-pip install -c constraints/api.txt -e packages/domain -e "apps/api[dev,postgres]"
+pip install -c constraints/api.txt -e packages/domain \
+  -e "apps/api[dev,postgres,plans,pdf]"
 (cd apps/web && npm ci)
 ```
 

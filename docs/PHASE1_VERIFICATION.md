@@ -176,7 +176,8 @@ make install
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install -c constraints/api.txt -e packages/domain -e "apps/api[dev,postgres]"
+.venv/bin/pip install -c constraints/api.txt -e packages/domain \
+  -e "apps/api[dev,postgres,plans,pdf]"
 cd apps/web && npm ci
 ```
 

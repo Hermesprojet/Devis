@@ -210,8 +210,10 @@ const fr: Dictionary = {
 
   'documents.formats':
     'PDF, PNG, JPEG, DXF, CSV, XLSX ou DOCX. Le contenu est vérifié à la réception : '
-    + 'l’extension seule ne suffit pas. Un plan AutoCAD .dwg est REFUSÉ — '
-    + 'exportez-le en DXF (le format lu par Metreo) ou en PDF.',
+    + 'l’extension seule ne suffit pas. Metreo LIT les plans DXF et PDF, et pas de '
+    + 'la même façon : un DXF porte ses cotes et son unité, un PDF demande que vous '
+    + 'désigniez deux points et déclariez leur distance réelle. Un plan AutoCAD '
+    + '.dwg est REFUSÉ — exportez-le en DXF ou en PDF.',
   'documents.readPlan': 'Lire le plan',
 
   // --- lecture d'un plan DXF ---------------------------------------------
@@ -272,6 +274,82 @@ const fr: Dictionary = {
   'plan.zoomOut': 'Réduire',
   'plan.zoomFit': 'Ajuster',
   'plan.zoomLevel': 'Échelle d’affichage',
+
+  // --- L'écran d'un plan PDF -------------------------------------------
+  //
+  // Un PDF n'a pas d'unité : tout ce vocabulaire tourne autour de ce fait.
+  // « Échelle » y désigne une DÉCLARATION humaine, jamais une lecture.
+  'plan.pdf.titre': 'Plan PDF',
+  'plan.pdf.pages': 'Pages',
+  'plan.pdf.pagesLabel': 'Pages',
+  'plan.pdf.pageSur': 'Page {page} sur {total}',
+  'plan.pdf.pageCourte': 'p. {page}',
+  'plan.pdf.outils': 'Outils',
+  'plan.pdf.texteLabel': 'Textes lus',
+  'plan.pdf.sansTexte': 'aucun — plan probablement scanné',
+  'plan.pdf.echelleLabel': 'Échelle déclarée',
+  'plan.pdf.sansEchelle': 'aucune : rien ne peut être mesuré',
+  'plan.pdf.sansApercu':
+    "Cette page n'a pas d'aperçu. Le fichier reste déposé et téléchargeable.",
+  'plan.pdf.apercuAlt': 'Aperçu de la page du plan',
+  'plan.pdf.loupe': 'Loupe',
+  'plan.pdf.loupeAlt': 'Agrandissement de la zone désignée',
+  'plan.pdf.loupeEnCours':
+    "Agrandissement en cours. La première ouverture d'une page prend quelques secondes ; les suivantes sont immédiates.",
+  'plan.pdf.pointsPoses': '{nombre} point(s) posé(s)',
+  'plan.pdf.confirmerEchelle': "Confirmer l'échelle de cette page",
+  'plan.pdf.aideEchelle':
+    "Vous venez de désigner deux points. Saisissez la distance RÉELLE qui les sépare sur l'ouvrage — pas le rapport d'échelle du cartouche, qui ne vaut plus si le PDF a été exporté « ajusté à la page ».",
+  'plan.pdf.distanceReelle': 'Distance réelle entre les deux points',
+  'plan.pdf.unite': 'Unité',
+  'plan.pdf.motif': 'Sur quoi avez-vous calibré ?',
+  'plan.pdf.motifExemple': 'ex. cote 5000 de la façade sud',
+  'plan.pdf.confirmer': "Confirmer l'échelle",
+  'plan.pdf.nommerLongueur': 'Nommer cette longueur',
+  'plan.pdf.nommerSurface': 'Nommer cette surface',
+  'plan.pdf.libelle': 'Ce que vous mesurez',
+  'plan.pdf.libelleExemple': 'ex. mur nord, dalle du séjour',
+  'plan.pdf.mesurer': 'Mesurer',
+  'plan.pdf.sansEchelleMesure':
+    "Aucune échelle n'a été confirmée pour cette page. Un PDF ne porte pas d'unité : déclarez d'abord une échelle sur une cote connue.",
+  'plan.pdf.aucuneMesure': 'Aucune mesure prise sur ce plan.',
+  'plan.pdf.mesuresPrises': 'Mesures prises',
+  'plan.pdf.colLibelle': 'Ouvrage',
+  'plan.pdf.colValeur': 'Valeur',
+  'plan.pdf.colFiabilite': 'Fiabilité',
+  'plan.pdf.colDecision': 'Décision',
+  'plan.pdf.colActions': 'Actions',
+  'plan.pdf.longueur': 'longueur',
+  'plan.pdf.surface': 'surface',
+  'plan.pdf.mesurable': 'mesurable',
+  'plan.pdf.aVerifier': 'à vérifier',
+  'plan.pdf.depuis': 'Échelle : {motif}',
+  'plan.pdf.montrer': 'Montrer sur le plan',
+  'plan.pdf.confirmerMesure': 'Confirmer',
+  'plan.pdf.corriger': 'Corriger',
+  // « Rejeter » et non « Supprimer » : la proposition de la machine reste en
+  // base avec sa citation. C'est la DÉCISION qui est enregistrée, pas un
+  // effacement — sans quoi le dossier cesserait d'être auditable.
+  'plan.pdf.rejeter': 'Rejeter',
+  'plan.pdf.aideRejeter':
+    'À utiliser quand la mesure ne veut rien dire — mauvais endroit, points mal '
+    + 'posés, échelle douteuse. La proposition reste consultable ; elle ne sera '
+    + 'simplement jamais reprise.',
+  'plan.pdf.motifDecision': 'Motif',
+  'plan.pdf.valeurCorrigee': 'Valeur retenue',
+  'plan.pdf.corrigeeEn': 'corrigée en',
+  'plan.pdf.textesLus': '{rendus} textes affichés sur {total} lus',
+  // Les réserves, nommées. Une réserve sans phrase ne s'afficherait pas, et
+  // l'utilisateur verrait « à vérifier » sans savoir pourquoi.
+  'plan.pdf.reserve.incertitude_elevee':
+    "Le pointage était trop grossier pour cette distance : agrandissez davantage et reprenez.",
+  'plan.pdf.reserve.contour_qui_se_recoupe':
+    'Le contour se croise lui-même : la surface calculée ne correspond à rien de dessiné.',
+  'plan.decision.accepted': 'confirmée',
+  'plan.decision.corrected': 'corrigée',
+  'plan.decision.rejected': 'rejetée',
+  'common.close': 'Fermer',
+  'common.saving': 'Enregistrement…',
 
   'plan.measures': 'Mesures proposées',
   'plan.measuresToCheck': 'Mesures à vérifier',

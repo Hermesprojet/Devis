@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ErrorNotice, Loading } from '@/components/Feedback'
+import { LecturePdf } from '@/components/LecturePdf'
 import {
   ApiError,
   api,
@@ -304,13 +305,29 @@ export function LecturePlan({
       ) : plan ? (
         <>
           <ConstatDuPlan plan={plan} />
-          <MesuresDuPlan
-            documentId={documentId}
-            revisionId={revisionId}
-            plan={plan}
-            peutValider={peutValider}
-            onDecide={charger}
-          />
+          {/*
+            Deux écrans, parce que deux formats ne demandent pas le même geste.
+            Un DXF porte ses cotations et son unité : on les LIT, et l'écran
+            propose de les confirmer. Un PDF ne porte rien de tel : on y POINTE,
+            après avoir déclaré une échelle. Fondre les deux produirait un
+            écran dont la moitié des commandes serait grisée selon le format.
+          */}
+          {plan.format === 'pdf' ? (
+            <LecturePdf
+              documentId={documentId}
+              revisionId={revisionId}
+              plan={plan}
+              onRelire={charger}
+            />
+          ) : (
+            <MesuresDuPlan
+              documentId={documentId}
+              revisionId={revisionId}
+              plan={plan}
+              peutValider={peutValider}
+              onDecide={charger}
+            />
+          )}
         </>
       ) : null}
     </div>

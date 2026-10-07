@@ -75,3 +75,6 @@ fixtures/plans/faux.dwg
 # Et celle-ci est du texte, mais trois mille lignes de bloc de cotation :
 # le code qui la fabrique se relit, le fichier non.
 fixtures/plans/mur_cote.dxf
+# Le plan PDF de deux pages du parcours de mesure : des octets, table
+# d'offsets comprise. Même raison.
+fixtures/plans/plan_cote.pdf
