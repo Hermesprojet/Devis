@@ -7,10 +7,13 @@
 > fait pour être lu en marchant. La méthode de validation chiffrée, avec son
 > tableau attendu / mesuré / écart, est dans `docs/VALIDATION_SUR_PLANS_REELS.md`.
 >
-> **Rien de ceci n'a été joué sur vos plans.** Les fichiers ne sont pas
-> accessibles dans l'environnement de travail. Tout ce qui suit est vérifié sur
-> des fixtures fabriquées dont la géométrie est connue d'avance ; l'écart entre
-> une fixture et un plan d'exécution est précisément ce que cet essai mesure.
+> **Un premier essai a été joué sur un de vos plans**, un plan d'étage au 1/50
+> livré en PDF et en DXF du même dessin, sur une pile locale isolée. Son compte
+> rendu et ses captures montrent des extraits du plan : ils sont restés hors du
+> dépôt, et vous ont été remis directement. Le § 5 dit comment le rejouer sur un
+> autre plan. Ce premier essai ne remplace pas le vôtre : il a été pointé par un
+> automate, au pixel près, et la main d'une personne ajoute une erreur qu'il ne
+> mesure pas.
 
 ---
 
@@ -269,3 +272,38 @@ et que la quantité tranchée arrive intacte jusqu'au PDF du devis.
 
 Le prototype réalise une **mesure assistée**. Sa justesse sur vos plans est
 exactement ce que cet essai existe pour établir, et rien d'autre ne le fera.
+
+---
+
+## 5. Rejouer l'essai sur une pile locale isolée
+
+Tout se passe sur votre machine, sur la boucle locale, et rien n'entre dans le
+dépôt. Les plans restent dans un dossier privé en droits 700, hors du clone.
+
+```
+ops/essai_local.sh up            # migrations, amorçage, interface, API — sur 127.0.0.1
+cp vos-plans/*.pdf vos-plans/*.dxf ~/.metreo-essai/plans/
+```
+
+Puis, dans l'ordre :
+
+1. **Déposer et lire** chaque plan, et relever ce que Metreo en comprend :
+   `scripts/essai_sur_plans_reels.py deposer`, puis `dxf` pour un DXF — il
+   compare les cotations proposées à un recensement indépendant du fichier, et
+   liste les types d'entités qui ne deviennent pas des mesures.
+2. **Écrire le plan d'essai**, un fichier JSON privé : les deux extrémités de
+   la cote de calibration, les cotes courte, longue et oblique, les coins d'une
+   surface, les cinq répétitions, la mesure à reprendre. Les points s'écrivent
+   en fractions de page, origine en haut à gauche, comme l'écran les compte.
+   `textes` et `tuile` aident à les situer.
+3. **Rejouer le parcours au navigateur**, qui photographie chaque étape :
+   `apps/web/playwright.essai.config.ts`. Il refuse de démarrer si ses sorties
+   ou le plan d'essai sont dans le dépôt, et aucune configuration de CI ne le
+   ramasse.
+4. **Rédiger le compte rendu** : `scripts/essai_sur_plans_reels.py rapport`
+   compare chaque mesure à sa référence, à la cotation DXF de même handle, et
+   suit la quantité reprise jusqu'au texte du PDF émis.
+
+`ops/essai_local.sh effacer --confirmer` détruit la base, le stockage et les
+résultats de l'essai, et ne touche jamais au dossier des plans.
+

@@ -88,6 +88,12 @@ jobs:
         # démonstration se contrôlent SANS démon Docker : ce sont les fichiers
         # qui décident, et c'est eux qu'on lit.
         run: pytest ops/tests/test_demonstration.py -q
+      - name: Garde-fous de l'essai sur plans réels
+        # L'essai manipule des plans clients. Ces tests lisent les fichiers :
+        # la pile n'écoute que sur 127.0.0.1, rien n'atterrit dans le dépôt,
+        # aucune configuration de CI ne ramasse le parcours, et le harnais ne
+        # parle qu'à une API locale. Aucun plan réel n'est lu ici.
+        run: pytest ops/tests/test_essai_local.py -q
       - name: Scripts d'exploitation syntaxiquement valides
         # `bash -n` analyse sans exécuter. Un script de sauvegarde qui ne
         # s'analyse pas échoue à sa première exécution réelle, c'est-à-dire la
