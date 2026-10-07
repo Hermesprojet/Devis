@@ -99,7 +99,7 @@ def nombre_francais(valeur: Decimal, decimales: int) -> str:
     chiffres = f"{abs(arrondie):.{decimales}f}"
     entiere, _, fraction = chiffres.partition(".")
 
-    groupes = []
+    groupes: list[str] = []
     while len(entiere) > 3:
         groupes.insert(0, entiere[-3:])
         entiere = entiere[:-3]
