@@ -55,8 +55,18 @@ pouvez la calculer depuis deux cotes du plan.
 - un **bordereau** créé, même vide ;
 - une **bibliothèque de prix** publiée, avec au moins un prix à l'unité de la
   mesure que vous reprendrez ;
-- votre compte doit porter `document:write` pour déposer, `document:validate`
-  pour trancher une mesure, et `boq:write` pour reprendre au bordereau.
+### Le rôle qu'il faut, et pourquoi « métreur » ne suffit pas
+
+Le parcours complet demande six droits : `document:write` pour déposer,
+`document:validate` pour trancher une mesure, `boq:write` pour reprendre au
+bordereau, `estimate:write` pour l'étude, **`estimate:freeze` pour geler** et
+l'émission pour le devis.
+
+**`estimator` — « Métreur / deviseur » — ne porte pas `estimate:freeze`.** Un
+métreur mène donc l'essai jusqu'à la ligne de bordereau chiffrée, et s'arrête
+là : il ne peut ni geler ni émettre. Pour aller jusqu'au PDF, conduisez l'essai
+avec un compte **`org_admin`** ou **`estimating_manager`** — ou faites geler
+par quelqu'un qui le peut, ce qui est d'ailleurs le découpage voulu.
 
 ---
 
@@ -145,17 +155,27 @@ en commun.
 > côté de celle mesurée sur le PDF. Un écart supérieur à votre tolérance pointe
 > le pointage, pas le dessin.
 
-> **Deux réserves, dites franchement.**
+> **Quatre réserves, dites franchement.**
 >
 > 1. **Metreo n'apparie pas les deux formats.** Une révision de document porte
->    un seul `media_type` ; votre PDF et votre DXF sont donc deux documents (ou
->    deux révisions) distincts, et le rapprochement se fait par vous, à l'œil,
->    sur deux onglets. Apparier automatiquement un PDF et son DXF est une
->    fonctionnalité qui n'existe pas et qui n'a pas été décidée.
+>    un seul `media_type`, lu dans les octets ; votre PDF et votre DXF sont donc
+>    deux documents (ou deux révisions) distincts, et le rapprochement se fait
+>    par vous, à l'œil, sur deux onglets. Il n'existe en outre **aucun champ
+>    pour l'indice de révision du cartouche** : « la même révision » est une
+>    affirmation humaine, que le logiciel ne peut pas vérifier.
 > 2. **Une cotation DXF ne se reprend pas encore dans un bordereau.** Seules les
 >    mesures prises sur un plan PDF le peuvent aujourd'hui, et la route le
 >    refuse en le disant. Le DXF sert donc de **référence**, pas de source de
 >    quantités.
+> 3. **Aucune surface n'est comparable.** L'écran DXF ne propose que des
+>    cotations linéaires : le fichier ne porte pas d'aire. La surface mesurée
+>    sur le PDF n'a donc pas de contrepartie, et se contrôle contre votre propre
+>    relevé.
+> 4. **Une cotation sans identifiant n'est pas proposée.** Metreo exige qu'une
+>    cotation porte son `handle` DXF, pour qu'on puisse la retrouver et la
+>    vérifier. Si votre DXF porte ses cotes « éclatées » — des traits et un
+>    texte, et non des entités de cotation —, l'écran n'en proposera aucune.
+>    C'est un constat sur le fichier, pas une panne.
 
 ### 6 — Trancher, puis reprendre au bordereau
 
@@ -238,6 +258,14 @@ et que la quantité tranchée arrive intacte jusqu'au PDF du devis.
   pas une incertitude en √20 mais en 20 ;
 - quoi que ce soit sur le **serveur de préproduction** : cet essai se joue dans
   l'application, pas sur la machine.
+
+> **Un essai n'est pas annulable côté schéma.** Dès la **première mesure
+> enregistrée**, la descente du schéma est fermée : une migration refuse de
+> redescendre s'il reste une citation ancrée par page et boîte. Ce n'est pas un
+> défaut, c'est la garde qui empêche de détruire silencieusement les mesures
+> d'un essai — mais il faut le savoir avant de commencer, et c'est pourquoi la
+> sauvegarde se prend **avant**. Le détail des trois voies de retour arrière est
+> dans `docs/MISE_EN_LIGNE_LECTURE_DE_PLANS.md`.
 
 Le prototype réalise une **mesure assistée**. Sa justesse sur vos plans est
 exactement ce que cet essai existe pour établir, et rien d'autre ne le fera.
