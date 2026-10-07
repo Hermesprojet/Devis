@@ -128,12 +128,16 @@ def preparer(
     unite_source = mesure.unite_retenue or mesure.unite
     quantite, unite = _convertir(Decimal(mesure.valeur_retenue), unite_source, unite_cible)
 
-    # **L'incertitude suit la même conversion**, et elle sert à décider à quelle
-    # décimale la quantité s'arrête. Sans elle, « 4,1806800000 m » s'afficherait
-    # pour une mesure dont on sait qu'elle est incertaine au millimètre : dix
-    # chiffres qui affirment une précision qu'on vient soi-même de déclarer
-    # absente. C'est la règle de `lisible.decimales_utiles`, appliquée ici
-    # comme elle l'est sur la mesure elle-même.
+    # **L'incertitude suit la même conversion**, et elle part dans l'empreinte.
+    # Elle ne décide plus l'écriture de la quantité : cet aperçu annonce ce que
+    # la LIGNE DE BORDEREAU portera, et une ligne de bordereau s'écrit comme le
+    # devis l'écrira — deux décimales au moins, celles de la valeur au-delà.
+    # Annoncer « 6,0200 m » puis écrire « 6,02 m » serait annoncer autre chose
+    # que ce qu'on fait ; c'est le défaut que les captures ont montré.
+    #
+    # La précision de la MESURE n'est pas perdue pour autant : elle reste à
+    # l'écran sur la ligne de mesure, avec son « ± », et dans
+    # `provenance_lisible` juste au-dessous.
     incertitude = _en_decimal(mesure.incertitude)
     if incertitude is not None:
         incertitude, _ = _convertir(incertitude, unite_source, unite_cible)
@@ -141,8 +145,13 @@ def preparer(
     return Reprise(
         quantite=quantite,
         unite=unite,
-        quantite_lisible=lisible.quantite_lisible(quantite, unite, incertitude=incertitude),
-        source_mesure=_empreinte(mesure, unite_source=unite_source, unite_reprise=unite),
+        quantite_lisible=lisible.quantite_de_document_lisible(quantite, unite),
+        source_mesure=_empreinte(
+            mesure,
+            unite_source=unite_source,
+            unite_reprise=unite,
+            incertitude_reprise=incertitude,
+        ),
         provenance_lisible=(
             f"Mesure de plan, page {mesure.page}, "
             f"{_DECISION_LISIBLE.get(mesure.decision or '', 'tranchée')} : "
@@ -232,7 +241,11 @@ def _convertir(valeur: Decimal, unite_source: str, unite_cible: str | None) -> t
 
 
 def _empreinte(
-    mesure: calibration_de_plan.MesureALire, *, unite_source: str, unite_reprise: str
+    mesure: calibration_de_plan.MesureALire,
+    *,
+    unite_source: str,
+    unite_reprise: str,
+    incertitude_reprise: Decimal | None = None,
 ) -> dict[str, object]:
     """Ce que valait la mesure à l'instant de la reprise, figé.
 
@@ -257,6 +270,15 @@ def _empreinte(
         "valeur_mesuree": mesure.valeur,
         "unite_mesuree": mesure.unite,
         "incertitude": mesure.incertitude,
+        #: La même incertitude, dans l'unité RETENUE pour la ligne.
+        #:
+        #: `incertitude` est dans l'unité de la mesure ; quand la reprise
+        #: convertit, les deux ne sont plus comparables, et relire la provenance
+        #: six mois plus tard obligerait à refaire la conversion de tête — avec
+        #: le facteur d'une table qui aura peut-être bougé. Absente des lignes
+        #: écrites avant cette version, et c'est sans conséquence : la ligne
+        #: porte déjà `incertitude` et `unite_mesuree`.
+        "incertitude_reprise": (None if incertitude_reprise is None else str(incertitude_reprise)),
         "incertitude_relative": mesure.incertitude_relative,
         "fiabilite": mesure.fiabilite,
         "reserves": list(mesure.reserves),

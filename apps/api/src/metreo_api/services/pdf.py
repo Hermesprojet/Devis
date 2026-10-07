@@ -213,12 +213,20 @@ def largeur_texte(texte: str, police: str, taille: float) -> float:
 
     Un caractère hors table retombe sur la largeur d'un « m », la plus large
     des minuscules : mieux vaut réserver trop de place que déborder.
+
+    **Les deux espaces insécables sont nommément ramenés à l'espace.** Un
+    nombre belge porte un séparateur de milliers insécable, et la décomposition
+    NFD ne le réduit pas : sans cette ligne, « 1 250,50 » réserverait la
+    largeur d'un « m » pour son séparateur, et un total aligné à droite se
+    décalerait de trois points sans que rien ne le signale.
     """
     if police in (COURIER, COURIER_GRAS):
         return len(texte) * taille * CHASSE_COURIER
     table = _LARGEURS_HELVETICA_GRAS if police == HELVETICA_GRAS else _LARGEURS_HELVETICA
     total = 0
     for caractere in texte:
+        if caractere in (" ", " "):
+            caractere = " "
         largeur = table.get(caractere)
         if largeur is None:
             base = unicodedata.normalize("NFD", caractere)[:1]

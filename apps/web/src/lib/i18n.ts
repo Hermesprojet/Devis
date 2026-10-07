@@ -130,6 +130,14 @@ const fr: Dictionary = {
   'projects.region': 'Profil réglementaire',
   'projects.created': 'Projet créé.',
 
+  // Les six états d'un chantier, tels que les borne `ProjectUpdate.status`.
+  'projects.status.draft': 'Brouillon',
+  'projects.status.studying': 'À l’étude',
+  'projects.status.submitted': 'Remis',
+  'projects.status.won': 'Obtenu',
+  'projects.status.lost': 'Perdu',
+  'projects.status.archived': 'Archivé',
+
   'boq.title': 'Bordereau',
   'boq.position': 'Poste',
   'boq.designation': 'Désignation',
@@ -137,11 +145,25 @@ const fr: Dictionary = {
   'boq.approved': 'Approuvé',
   'boq.empty': 'Ce bordereau est vide.',
 
+  // Les quatre états d'une ligne de bordereau, tels que les borne
+  // `ck_boq_item_status`. Ils étaient affichés en anglais, directement depuis
+  // la colonne : un utilisateur belge lisait « proposed » sur un écran
+  // autrement entièrement français. Le code reste la valeur stockée ; seul son
+  // libellé change.
+  'boq.status.proposed': 'Proposé',
+  'boq.status.verified': 'Vérifié',
+  'boq.status.approved': 'Approuvé',
+  'boq.status.rejected': 'Rejeté',
+
   'priceBook.title': 'Bibliothèque de prix',
   'priceBook.code': 'Code',
   'priceBook.label': 'Libellé',
   'priceBook.family': 'Famille',
   'priceBook.unitPrice': 'Prix unitaire',
+  // Les deux états d'une version de bibliothèque. Publiée, elle ne bouge plus :
+  // un devis gelé la cite, et la réécrire changerait un document déjà remis.
+  'priceBook.versionStatus.draft': 'Brouillon',
+  'priceBook.versionStatus.published': 'Publiée',
   'priceBook.supplier': 'Fournisseur',
   'priceBook.import': 'Importer un CSV',
   'priceBook.demoFlag': 'Donnée fictive',

@@ -1,251 +1,250 @@
-# Faire atterrir la migration de fusion `f3a4b5c60708`
+# Le graphe des migrations tient sur une seule tête
 
-> **Mise à jour du 7 octobre 2026 — le second parent a changé DEUX fois.** La
-> tranche des plans a reçu deux révisions de plus, dans cet ordre :
->
-> 1. `a4b5c6d70809` — une purge autorisée peut détruire une révision publiée ;
-> 2. `b5c6d7e8090a` — une ligne de bordereau peut dire de quelle mesure de plan
->    elle vient.
->
-> `e2f3a4b50607` puis `a4b5c6d70809` ont donc cessé d'être des têtes, et la
-> migration de fusion doit citer **`("d1e2f3a40506", "b5c6d7e8090a")`**. Citer
-> l'une des deux précédentes laisserait le reste de la tranche à part, et la
-> base repartirait à **deux têtes** — exactement ce que cette migration existe
-> pour empêcher.
->
-> **On cite la tête de la tranche, pas un de ses maillons.** C'est la règle à
-> retenir, et elle a déjà servi deux fois : à chaque révision ajoutée à la
-> tranche, le second parent de la fusion se décale. Le contrôle de l'étape 6
-> (`alembic heads`) est ce qui le dit, et il faut le relancer après chaque
-> ajout.
->
-> Le reste du document vaut tel quel : seul le nom du second parent change.
+- **Écrit le** : 2026-10-06, pour organiser l'atterrissage de la migration de
+  fusion `f3a4b5c60708` sur `main`. **Refait le** : 2026-10-07, quand cet
+  atterrissage a cessé d'être à faire.
+- **Ce que ce document dit** : où est la migration de fusion aujourd'hui,
+  pourquoi elle existe, ce qui détecte deux têtes dans ce dépôt, et ce qu'il ne
+  faut pas faire au graphe.
+- **Ce qu'il n'est pas** : une voie de livraison. Il n'y en a qu'une, et elle
+  est dans `docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md`. Le détail d'exploitation
+  est dans `docs/EXPLOITATION.md`.
 
-- **Écrit le** : 2026-10-06
-- **Pourquoi ce document existe** : la migration de fusion n'existe aujourd'hui
-  que sur `claude/candidat-complet`, la branche de la **#90**, qui est un
-  brouillon destiné à ne jamais être fusionné. Si elle y reste, elle disparaît
-  avec le brouillon, et `main` se retrouve à deux têtes sans que personne
-  n'ait rien fait de mal.
-- **Ce qu'il n'est pas** : une procédure de déploiement. Voir
-  `docs/EXPLOITATION.md` pour cela.
+> **La séquence des onze fusions de demandes empilées est retirée de ce
+> document, et pas parce qu'elle avait vieilli.** Elle était inexécutable : la
+> migration de fusion cite `b5c6d7e8090a`, et aucune des onze étapes n'amenait
+> cette révision sur `main`. Jouée telle qu'elle était écrite, elle rendait
+> `KeyError: 'b5c6d7e8090a'`. Les étapes, leurs commandes de transfert de
+> fichier et leur « preuve » ont disparu d'ici : il n'y a rien à y récupérer, et
+> corriger le tableau aurait été lui redonner l'air d'une procédure.
 
 ---
 
-## 1. L'état, relevé et non supposé
+## 1. Où est la migration de fusion, et pourquoi elle n'a plus à atterrir
 
-`main` porte **17 migrations**, et sa tête est `c7d8e9fa0102`.
+Ce document existait parce que
+`apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py` ne vivait que
+sur `claude/candidat-complet`, la branche du brouillon #90 : il disparaissait
+avec le brouillon, et `main` repartait à deux têtes sans que personne n'ait rien
+fait de mal.
 
-Quatre migrations n'y sont pas, et deux branches partent du même point :
+Relevé sur `2d18299ee08b2a66bb54573d665f233a72aaf6ee`, par `git cat-file -e` sur
+chaque référence :
+
+| Référence | Le fichier de fusion y est-il ? |
+| --- | --- |
+| `claude/candidat-integre` — la branche de la demande de livraison | **oui** |
+| `claude/candidat-complet` — le brouillon #90 | oui |
+| `main` | non, et c'est normal : la livraison ne l'a pas encore apportée |
+
+Et `claude/candidat-complet` (`daeb7f0`) est **ancêtre** du candidat — vérifié
+par `git merge-base --is-ancestor`, comme `claude/candidat-corrige` (`483176a`)
+et `claude/corrections-du-candidat` (`0618d27`). Le fichier est donc dans la
+branche que la demande de livraison fusionne. **Aucun transfert de fichier
+d'une branche à une autre n'est à faire.**
+
+> « Ne pas fusionner la #90 » porte sur la demande de fusion, jamais sur son
+> contenu. Le contenu est dans le candidat.
+
+`claude/integration-cinq-pr` (le brouillon #84) n'est **pas** ancêtre : celui-là
+est réellement hors du candidat.
+
+### Le graphe, lu dans les fichiers
+
+Vingt-trois fichiers de migration, **une seule tête**. Le point de branchement
+est `c7d8e9fa0102` — le schéma de `39ad8d0`, ce qui tourne en préproduction.
+Six révisions sont au-dessus :
 
 ```
-                                  c7d8e9fa0102  (tête de main)
-                                   │
-                 ┌─────────────────┴─────────────────┐
-                 │                                   │
-        d1e8…  d1e2f3a40506                  d8e9fa010203
-        réauthentification                   citation de plan
-        #81  claude/codes-de-connexion       #78  claude/parcours-plan-essayable
-                 │                                   │
-                 │                            e2f3a4b50607
-                 │                            calibration d'un PDF
-                 │                            #89  claude/mesures-pdf
-                 │                                   │
-                 └─────────────────┬─────────────────┘
-                                   │
-                            f3a4b5c60708
-                            migration de FUSION
-                            #90  claude/candidat-complet  ← brouillon
+                    c7d8e9fa0102   ← le schéma de 39ad8d0, ce qui tourne
+                         │
+        ┌────────────────┴────────────────┐
+        │                                 │
+  d1e2f3a40506                      d8e9fa010203
+  tranche de la connexion                 │
+  (seule de sa branche,              e2f3a4b50607
+   donc elle est sa tête)                 │
+        │                            a4b5c6d70809
+        │                                 │
+        │                            b5c6d7e8090a   ← tête de la tranche
+        └────────────────┬────────────────┘             des plans
+                         │
+                   f3a4b5c60708   ← tête unique du graphe
+                   migration de FUSION, vide
 ```
 
-| Révision | Ce qu'elle fait | Seules branches qui la portent |
-| --- | --- | --- |
-| `d1e2f3a40506` | ajoute `login_transactions.reauthentication_requested` | `codes-de-connexion`, `candidat-complet` |
-| `d8e9fa010203` | citations de plan et étapes de plan | `parcours-plan-essayable` et tout ce qui est au-dessus |
-| `e2f3a4b50607` | crée `plan_calibrations`, élargit l'ancrage d'une citation | `mesures-pdf`, `candidat-complet` |
-| `a4b5c6d70809` | une purge autorisée peut détruire une révision publiée | `corrections-du-candidat`, `candidat-corrige` |
-| `b5c6d7e8090a` | **la tête de la tranche** : une ligne de bordereau dit de quelle mesure de plan elle vient (deux colonnes nullables, purement additive) | `corrections-du-candidat` |
-| `f3a4b5c60708` | **ne fait rien** : elle réunit les deux têtes | **`candidat-complet` seulement** |
+| Révision | Ce qu'elle fait |
+| --- | --- |
+| `d1e2f3a40506` | ajoute `login_transactions.reauthentication_requested` |
+| `d8e9fa010203` | citations de plan et étapes de plan |
+| `e2f3a4b50607` | crée `plan_calibrations`, élargit l'ancrage d'une citation au cas page + boîte |
+| `a4b5c6d70809` | une purge autorisée peut détruire une révision publiée |
+| `b5c6d7e8090a` | **la tête de la tranche des plans** : une ligne de bordereau dit de quelle mesure de plan elle vient (deux colonnes nullables, purement additive) |
+| `f3a4b5c60708` | **ne fait rien** : elle réunit les deux têtes. `down_revision = ("d1e2f3a40506", "b5c6d7e8090a")` |
 
-La fusion est vide à dessein : ses deux parents touchent des tables disjointes.
-Le jour où deux tranches toucheraient la même colonne, une fusion vide serait un
-mensonge, et c'est là qu'il faudrait écrire la réconciliation.
+### Pourquoi elle existe, et pourquoi elle est vide
+
+Deux tranches ont avancé en parallèle et aucune ne doit rien à l'autre. Elles
+arrivent donc avec deux têtes, ce qui laisse l'ordre d'application indéterminé :
+deux déploiements pourraient appliquer le même schéma dans deux ordres
+différents. La réponse prévue par Alembic pour ce cas est une migration de
+fusion — elle déclare les deux parents, ne touche à rien, et rend l'ordre
+déterminé.
+
+Elle n'a ni `upgrade` ni `downgrade`, et c'est une propriété, pas un oubli : les
+deux tranches modifient des tables disjointes — `login_transactions` d'un côté,
+`plan_calibrations` et `source_citations` de l'autre. Leur rencontre ne demande
+aucune réconciliation.
+
+> Le jour où deux tranches toucheraient la même colonne, une fusion vide serait
+> un mensonge, et c'est dans ce fichier qu'il faudrait écrire la
+> réconciliation.
 
 ---
 
 ## 2. Ce qui est déjà protégé, et ce qui ne l'est pas
 
-**Deux têtes ne passent pas inaperçues.** `conftest.alembic_head()` et
-`test_referential_action_drift.py` lisent la chaîne et affirment
-`len(heads) == 1`. Vérifié sur un arbre à deux têtes : **6 échecs et 1 erreur**
-dans la seule suite ordinaire, sans PostgreSQL. `scripts/schema_drift_gate.py`
-les refuse également, et la CI tourne sur `push` de **toute** branche.
+Les quatre contrôles nommés ici ont été relus dans le code le 7 octobre 2026 :
+ils existent tous, et voici dans quel atelier ils tournent.
+
+| Contrôle | Ce qu'il affirme | Atelier |
+| --- | --- | --- |
+| `apps/api/tests/conftest.py`, fonction `alembic_head()` | `assert len(heads) == 1`, message « la chaîne des migrations a N têtes » | « API (SQLite, sans service) » et « API (PostgreSQL + PostGIS) », par `pytest -q` |
+| `apps/api/tests/test_referential_action_drift.py` | `assert len(tetes) == 1`, message « la chaîne a N têtes » | les deux mêmes |
+| `scripts/schema_drift_gate.py` | refuse et **sort en 3** : « la chaîne des migrations a N têtes » | « API (PostgreSQL + PostGIS) », étape « Le schéma migré correspond aux modèles » |
+| `scripts/epreuve_montee_depuis_preproduction.py` | « ÉCHEC — N tête(s) » après avoir monté une base portant le schéma en service | « API (PostgreSQL + PostGIS) », étape « Montée depuis le schéma en service » |
+
+`alembic_head()` ne sert pas qu'aux tests qui la citent : `schema_fingerprint()`
+l'appelle pour décider si le gabarit SQLite est encore valide. Deux têtes font
+donc échouer la **préparation** de tout test qui a besoin d'une base, et non
+seulement les assertions sur la chaîne.
+
+La CI tourne sur `push` de **toute** branche : `.github/workflows/ci.yml` porte
+`push: branches: ["**"]`, puis `pull_request:`.
+
+### Mesuré, et non plus hérité
+
+Même machine, même commande — `pytest -q` dans `apps/api` —, le 7 octobre 2026.
+L'arbre à deux têtes a été obtenu en faisant citer à la migration de fusion
+`a4b5c6d70809`, c'est-à-dire **le maillon qui précède la tête**, dans un arbre
+de travail jetable :
+
+| Arbre | Résultat |
+| --- | --- |
+| intact, `("d1e2f3a40506", "b5c6d7e8090a")` | **1714 passés, 60 ignorés** (6 min 33) |
+| à deux têtes, `("d1e2f3a40506", "a4b5c6d70809")` | **20 échecs, 930 erreurs**, 767 passés, 57 ignorés (4 min 24) |
+
+> **La version précédente de cette section annonçait « 6 échecs et 1 erreur ».
+> Le chiffre était faux**, et on voit d'où il venait : le message
+> « la chaîne des migrations a 2 têtes » apparaît exactement 6 fois dans la
+> sortie. Ce sont des occurrences du message, pas des tests. Le compte réel est
+> ci-dessus.
+
+Les 930 erreurs sont le gabarit : elles se produisent au montage de la base de
+test, avant que le test lui-même ne commence. Les 20 échecs sont les assertions
+sur la chaîne, dans `apps/api/tests/test_platform.py` et
+`apps/api/tests/test_referential_action_drift.py`.
 
 Le risque n'est donc pas qu'une `main` à deux têtes passe inaperçue. Le risque
 est qu'elle **bloque tout** : `main` rouge, et chaque demande de fusion ouverte
 rouge avec elle, jusqu'à ce que la fusion arrive.
 
-Ce qui n'est pas protégé : rien n'empêche aujourd'hui une migration de fusion de
-rester dans un brouillon. Un contrôle le pourrait difficilement — il devrait
-connaître l'intention de fusionner. C'est ce document qui tient ce rôle.
+### Ce qui n'est pas protégé
+
+**Le geste lui-même est silencieux.** Mesuré sur l'arbre à deux têtes :
+
+```
+$ alembic heads
+f3a4b5c60708 (head)
+b5c6d7e8090a (head)
+code de sortie : 0
+```
+
+Deux lignes, et **sortie 0**. Rien ne refuse, rien n'avertit : c'est à la
+personne de compter les lignes. Le refus dur n'arrive qu'à l'emploi —
+`alembic upgrade head` sort en **255** sur « Multiple head revisions are present
+for given argument 'head' ».
+
+Reste hors de portée d'un contrôle : l'intention. Aucun atelier ne sait qu'une
+migration de fusion *devait* accompagner une tranche, ni laquelle. C'est ce
+document qui tient ce rôle.
 
 ---
 
-## 3. Les trois façons dont on pourrait croire s'en sortir, et pourquoi elles échouent
+## 3. La règle de la tête — une fusion cite la tête de chaque tranche, jamais un de ses maillons
 
-Chacune a été essayée, pas raisonnée.
+Cette règle a été enfreinte **deux fois** dans ce dépôt, les deux fois par la
+même mécanique : la tranche des plans a reçu une révision de plus, et le second
+parent de la fusion a cessé d'être une tête sans que le fichier de fusion ne
+change. `e2f3a4b50607` d'abord, `a4b5c6d70809` ensuite.
 
-| Idée | Ce qui se passe réellement |
-| --- | --- |
-| Une PR « migrations seules » vers `main`, portant les trois fichiers | `KeyError: 'd8e9fa010203'` — `e2f3a4b50607` descend d'une migration qui est elle-même sur une autre branche. Et même en l'ajoutant, la porte de dérive refuserait : la migration créerait `plan_calibrations` sans que `models.py` la déclare, donc Alembic proposerait un `DROP`. **Une migration ne voyage pas sans son modèle.** |
-| Mettre la fusion dans la #89 telle quelle | `KeyError: 'd1e2f3a40506'` — l'arbre de la #89 ne contient pas la parente de la connexion. |
-| Mettre la fusion dans la #81 telle quelle | `KeyError: 'e2f3a4b50607'` — symétriquement. |
+**Ce qui se passe quand on cite un maillon.** La fusion se raccroche au milieu
+de la tranche. Ce qui est au-dessus du maillon reste à part, et le graphe
+repart à **deux têtes** — précisément ce que cette migration existe pour
+empêcher. Rien ne proteste au moment de l'écriture : le fichier est valide,
+`alembic heads` sort en 0, et le défaut ne se voit qu'en lisant ses deux lignes.
 
-**Conclusion :** la migration de fusion ne peut vivre dans aucune demande de
-fusion tant que l'une des deux chaînes n'est pas sur `main`.
+**Ce qui le rattrape.** Les quatre contrôles de la section « Ce qui est déjà
+protégé, et ce qui ne l'est pas », dès le `push`. Parmi eux,
+`scripts/epreuve_montee_depuis_preproduction.py` est le seul à jouer le geste du
+déploiement — appliquer les migrations du candidat à une base qui porte le
+schéma en service — et donc le seul à tomber pour cette raison-là et non pour
+une autre.
 
----
-
-## 4. L'ordre qui marche, et il n'y en a qu'un de propre
-
-> **La pile des plans d'abord, la connexion ensuite, et c'est la #81 qui apporte
-> la fusion.**
-
-Le point qu'il faut avoir en tête : **la bifurcation naît dès que `d8e9fa010203`
-et `d1e2f3a40506` sont toutes deux sur `main`** — c'est-à-dire dès la #78 et la
-#81, et non à la #89 comme on pourrait le croire.
-
-### Étape par étape
-
-| # | Action | Tête de `main` ensuite |
-| --- | --- | --- |
-| 1 | fusionner **#77** `claude/lecture-de-plans` | `c7d8e9fa0102` (inchangée) |
-| 2 | fusionner **#78** `claude/parcours-plan-essayable` | `d8e9fa010203` |
-| 3 | fusionner **#80**, **#85**, **#87** | inchangée |
-| 4 | fusionner **#89** `claude/mesures-pdf` | `b5c6d7e8090a` |
-| 5 | fusionner `main` dans `codex/login-account-choice`, puis dans `claude/codes-de-connexion` | — |
-| 6 | **déplacer `20261006_0009_fusion_des_deux_tetes.py`** depuis `claude/candidat-complet` vers `claude/codes-de-connexion`, et l'y committer | — |
-| 7 | fusionner **#73** `codex/login-account-choice` | inchangée |
-| 8 | fusionner **#81** `claude/codes-de-connexion` | `f3a4b5c60708` |
-
-**Une seule tête à chaque étape.** `main` n'est jamais rouge.
-
-À l'étape 6, la #81 contient alors `d1e2f3a40506` (la sienne), `b5c6d7e8090a`
-(venue de `main`, avec toute la tranche) et la fusion : sa propre CI est donc verte, et elle devient
-exactement ce qu'il faut — **une demande de fusion destinée à être fusionnée,
-portant la migration de fusion et ses deux parentes**.
-
-### Les commandes de l'étape 6 — le transfert effectif
-
-Relevé le 7 octobre 2026 : `20261006_0009_fusion_des_deux_tetes.py` existe
-**sur `claude/candidat-complet` et nulle part ailleurs** — ni sur `main`, ni
-sur `pr/73`, ni sur `pr/81`, ni sur `pr/89` (vérifié par `git cat-file -e` sur
-les cinq références). La #90 étant un brouillon qui ne sera pas fusionné, ce
-fichier n'atteindra jamais `main` tant que ce transfert n'a pas eu lieu.
-
-À jouer **après l'étape 4** — c'est-à-dire une fois la #89 fusionnée et
-`main` à `b5c6d7e8090a` — et **avant l'étape 7** :
-
-```bash
-git fetch origin main codex/login-account-choice \
-    claude/codes-de-connexion claude/candidat-complet
-
-# 5a — remonter main dans la base de la #81
-git checkout -B codex/login-account-choice origin/codex/login-account-choice
-git merge --no-ff origin/main -m "Fusion de 'main' dans la base du choix de compte"
-git push -u origin codex/login-account-choice
-
-# 5b — puis dans la #81 elle-même
-git checkout -B claude/codes-de-connexion origin/claude/codes-de-connexion
-git merge --no-ff codex/login-account-choice \
-    -m "Fusion de la base dans les codes de connexion"
-
-# 6 — LE TRANSFERT : le fichier quitte le brouillon pour une PR fusionnable
-git checkout origin/claude/candidat-complet -- \
-    apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py
-git add apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py
-git commit -m "Les deux têtes se rejoignent sur la branche qui sera fusionnée"
-```
-
-**Le contrôle qui décide si le transfert a réussi**, à faire AVANT de pousser :
-
-```bash
-cd apps/api && PYTHONPATH=src python -m alembic heads
-```
-
-- **une seule ligne, `f3a4b5c60708 (head)`** → le transfert est bon, poussez ;
-- **deux lignes** → `main` n'a pas encore été remontée dans la branche :
-  reprenez à 5b ;
-- **`KeyError: 'b5c6d7e8090a'`** (ou `'a4b5c6d70809'`) → l'étape 4 n'a pas eu
-  lieu, ou la remontée de `main` a été sautée. Ne poussez pas : la CI de la #81
-  tomberait, et le diagnostic serait plus coûteux là-bas qu'ici.
-- **une seule ligne, mais `b5c6d7e8090a (head)`** → la fusion n'a pas été
-  transférée, ou son second parent cite un maillon et non la tête. Relisez
-  `down_revision` dans `20261006_0009_fusion_des_deux_tetes.py`.
-
-```bash
-git push -u origin claude/codes-de-connexion
-```
-
-La #81 porte alors `d1e2f3a40506` (la sienne), `e2f3a4b50607` (venue de `main`)
-et la fusion. Ce qu'il faut vérifier sur sa page avant de la fusionner : sa
-description doit annoncer la migration de fusion, et ses ateliers doivent être
-verts **après** ce commit, pas avant.
-
-### L'ordre inverse coûte cher
-
-Si la connexion passe en premier, `main` est à deux têtes **de l'étape #78
-jusqu'à l'étape #89**, soit quatre fusions durant lesquelles `main` et toutes
-les demandes ouvertes sont rouges. C'est jouable et c'est laid ; ce n'est pas à
-faire sans raison.
-
-### Preuve
-
-L'enchaînement a été simulé sur un arbre réel — `main`, puis `mesures-pdf`, puis
-`login-account-choice` et `codes-de-connexion`, puis la fusion :
-
-```
-après la pile des plans          : e2f3a4b50607 (head)
-après la connexion, sans fusion  : d1e2f3a40506 (head)
-                                   e2f3a4b50607 (head)      ← deux têtes
-après ajout de la fusion         : f3a4b5c60708 (head)
-```
-
-et, sur un PostgreSQL 16 + PostGIS réel :
-
-```
-porte franchie : une tête, montée propre, aucune opération proposée.
-aller-retour des migrations valide — 36 tables.
-```
-
-Aucun conflit de fusion n'est apparu entre les deux chaînes.
+**Ce qu'il faut faire.** À chaque révision ajoutée à une tranche, relire
+`down_revision` dans le fichier de fusion et le décaler sur la nouvelle tête.
+Le contrôle est `alembic heads`, et il faut **lire sa sortie** : une seule
+ligne, `f3a4b5c60708 (head)`.
 
 ---
 
-## 5. L'alternative, et pourquoi elle n'est pas retenue
+## 4. L'alternative, et pourquoi elle n'est pas retenue
 
-On pourrait **supprimer la fusion** et re-chaîner `d1e2f3a40506` derrière
-`e2f3a4b50607`. Une seule tête, toujours, sans fichier supplémentaire.
+On pourrait **supprimer la fusion** et re-chaîner `d1e2f3a40506` derrière la
+tête de la tranche des plans. Une seule tête, toujours, sans fichier
+supplémentaire.
 
 Le prix est précisément celui que le commentaire de
-`20261002_0008_calibration_d_un_plan_pdf.py` refuse de payer : la branche placée
-en second devient **immigrable à elle seule** — sa CI tomberait sur une révision
-absente de son arbre — et l'ordre de fusion cesse d'être libre alors qu'aucune
-contrainte de schéma ne le justifie. La calibration d'un plan ne doit rien à
-`max_age`.
+`apps/api/alembic/versions/20261002_0008_calibration_d_un_plan_pdf.py` refuse de
+payer : la branche placée en second devient **immigrable à elle seule** — sa CI
+tomberait sur une révision absente de son arbre — et l'ordre de fusion cesse
+d'être libre alors qu'aucune contrainte de schéma ne le justifie. La calibration
+d'un plan ne doit rien à `max_age`.
 
-La fusion coûte un fichier vide ; le re-chaînage coûte une dépendance qui n'existe
-pas. On garde la fusion.
+La fusion coûte un fichier vide ; le re-chaînage coûte une dépendance qui
+n'existe pas. On garde la fusion.
+
+> C'est la réponse à la prochaine personne tentée de supprimer
+> `apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py` parce qu'il
+> « ne fait rien ».
 
 ---
 
-## 6. Si l'ordre a déjà été inversé par accident
+## 5. Si `main` se retrouve à deux têtes
 
-`main` est à deux têtes, rouge. Le retour à une tête unique est une demande de
-fusion ordinaire contenant le seul fichier
-`20261006_0009_fusion_des_deux_tetes.py`, **à condition que les deux parentes
-soient déjà sur `main`** — ce qui est le cas dans cette situation, puisque c'est
-elle qui l'a créée. Sa CI sera verte, et elle referme la bifurcation.
+Le cas couvert ici : deux têtes sont arrivées sur `main`, qui est rouge, et
+chaque demande de fusion ouverte est rouge avec elle. Peu importe comment —
+une tranche fusionnée sans sa fusion, un ordre inversé par accident, une fusion
+citant un maillon.
+
+Le retour à une tête unique est une demande de fusion ordinaire contenant le
+seul fichier
+`apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py`, **à
+condition que les deux parentes soient déjà sur `main`** — ce qui est le cas
+dans cette situation, puisque c'est elle qui l'a créée. Sa CI sera verte, et
+elle referme la bifurcation.
 
 Aucune base déjà migrée n'est à reprendre : une migration de fusion vide ne
 change aucune table. `alembic upgrade head` la marque appliquée, et c'est tout.
+
+---
+
+## 6. Ce qu'il ne faut pas faire au graphe
+
+| À ne pas faire | Pourquoi |
+| --- | --- |
+| Rejouer la séquence des onze fusions de demandes empilées | Elle est inexécutable, et elle n'est plus écrite nulle part. La voie est dans `docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md` |
+| Supprimer le fichier de fusion parce qu'il est vide | Voir « L'alternative, et pourquoi elle n'est pas retenue » |
+| Faire citer à la fusion un maillon de tranche | Deux têtes, silencieusement. Voir « La règle de la tête — une fusion cite la tête de chaque tranche, jamais un de ses maillons » |
+| Transférer le fichier de fusion d'une branche à une autre | Il est déjà dans la branche que la livraison fusionne. Voir « Où est la migration de fusion, et pourquoi elle n'a plus à atterrir » |
+| Renvoyer à un autre document par un numéro de ligne | Ces renvois étaient déjà faux dans les deux sens. On nomme le **titre de section** |

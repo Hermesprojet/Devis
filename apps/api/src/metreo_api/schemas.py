@@ -1633,6 +1633,26 @@ class BoqItemOut(DecimalOut):
     source_proposal_id: str | None = None
     source_mesure: dict[str, Any] | None = None
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def quantity_lisible(self) -> str:
+        """La quantité et son unité, écrites pour être lues.
+
+        **Rendue par le serveur, et non par l'écran.** C'est la règle du dépôt :
+        deux arrondis — un en Python, un en TypeScript — finiraient par diverger
+        d'un chiffre, et c'est le genre d'écart qu'on ne voit jamais venir. La
+        valeur exacte reste rendue à côté, dans `quantity`, et c'est elle qu'on
+        reprend pour calculer.
+
+        Une section n'a pas de quantité à montrer : son `0` n'est pas une
+        mesure, c'est l'absence de ligne.
+        """
+        from .services import lisible
+
+        if self.kind == "section":
+            return ""
+        return lisible.quantite_de_document_lisible(self.quantity, self.unit_code)
+
 
 class ApercuDeRepriseCreate(BaseModel):
     """Ce qu'il faut pour CALCULER une reprise sans l'écrire.

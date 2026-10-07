@@ -220,8 +220,41 @@ def devis(seeded_client: TestClient, admin: dict[str, str], sans_marge: None) ->
 
 def _texte(octets: bytes) -> str:
     """Le texte imprimé, espaces normalisés — un saut de ligne ne doit pas
-    défaire l'adjacence d'un libellé et de son montant."""
-    return re.sub(r"\s+", " ", moteur_pdf.extraire_le_texte(octets))
+    défaire l'adjacence d'un libellé et de son montant.
+
+    **La classe est écrite en clair, et non `\\s`.** En Python, `\\s` couvre
+    aussi l'espace insécable, qui est le séparateur de milliers du document :
+    `re.sub(r"\\s+", " ", …)` transformait « 2 220,00 » en « 2 220,00 » et
+    rendait invérifiable le caractère même qui empêche un montant de se couper
+    en deux en fin de colonne. On ne normalise donc que les blancs de mise en
+    page.
+    """
+    return re.sub(r"[ \t\n\r\f\v]+", " ", moteur_pdf.extraire_le_texte(octets))
+
+
+def _imprime(montant: Decimal | str) -> str:
+    """L'écriture EXACTE d'un montant sur le PDF remis au client.
+
+    Le document part chez un client belge : « 5620.00 » n'est pas une
+    orthographe qu'on lui remet. Le moteur a décidé la valeur et ses
+    décimales ; le document les écrit à la virgule, milliers groupés.
+
+    **Transcrite ici à la main, et non empruntée au code qui imprime.** Un test
+    qui demanderait à l'implémentation ce qu'elle doit produire serait vert
+    quoi qu'elle produise.
+
+    L'espace est U+00A0 et non l'espace fine U+202F de l'écran : les polices de
+    base d'un PDF sont encodées en WinAnsi, qui ne porte pas la seconde — elle
+    s'imprimerait en point d'interrogation au milieu du total.
+    """
+    entiere, _, fraction = str(montant).partition(".")
+    groupes: list[str] = []
+    while len(entiere) > 3:
+        groupes.insert(0, entiere[-3:])
+        entiere = entiere[:-3]
+    groupes.insert(0, entiere)
+    groupee = "\u00a0".join(groupes)
+    return f"{groupee},{fraction}" if fraction else groupee
 
 
 def _suivi_de(texte: str, libelle: str, montant: Decimal | str) -> bool:
@@ -260,12 +293,18 @@ def test_1_le_pdf_emis_porte_chaque_montant_colle_a_son_libelle(
     for position, designation, _, _, _, total_ligne in LIGNES:
         assert position in texte
         assert designation[:20] in texte
-        assert total_ligne in texte, f"le total de la ligne {position} manque"
+        assert _imprime(total_ligne) in texte, f"le total de la ligne {position} manque"
 
     # Et les totaux du DOCUMENT, chacun accolé à son intitulé.
-    assert _suivi_de(texte, "Total HT", TOTAL_HT), texte[-400:]
-    assert _suivi_de(texte, "TVA 21 %", MONTANT_TVA), texte[-400:]
-    assert _suivi_de(texte, "TOTAL À PAYER TTC", TOTAL_TTC), texte[-400:]
+    assert _suivi_de(texte, "Total HT", _imprime(TOTAL_HT)), texte[-400:]
+    assert _suivi_de(texte, "TVA 21 %", _imprime(MONTANT_TVA)), texte[-400:]
+    assert _suivi_de(texte, "TOTAL À PAYER TTC", _imprime(TOTAL_TTC)), texte[-400:]
+
+    # Et le document ne porte NULLE PART l'orthographe machine : un devis qui
+    # écrirait « 5 620,00 » dans son bloc de totaux et « 5620.00 » dans son
+    # tableau donnerait à relire deux nombres pour un seul montant.
+    for montant in (TOTAL_HT, MONTANT_TVA, TOTAL_TTC):
+        assert str(montant) not in texte, f"le PDF imprime encore « {montant} »"
 
     # Le défaut d'origine, nommé : le mot était là, le montant valait zéro.
     assert not _suivi_de(texte, "Total HT", "0"), "« Total HT » suivi de zéro"
@@ -318,8 +357,8 @@ def test_4_le_document_telecharge_par_le_client_est_le_meme_fichier(
     # Et il porte bien les montants : un fichier identique à un fichier faux
     # serait identiquement faux.
     texte = _texte(public)
-    assert _suivi_de(texte, "Total HT", TOTAL_HT)
-    assert _suivi_de(texte, "TOTAL À PAYER TTC", TOTAL_TTC)
+    assert _suivi_de(texte, "Total HT", _imprime(TOTAL_HT))
+    assert _suivi_de(texte, "TOTAL À PAYER TTC", _imprime(TOTAL_TTC))
 
 
 # --------------------------------------------------------------------------

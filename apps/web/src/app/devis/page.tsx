@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { api, ApiError, type PublicQuoteView, type PublicReceipt } from '@/lib/api'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 /**
  * La page que le destinataire d'un devis ouvre, sans compte Metreo.
@@ -245,9 +246,9 @@ export default function PublicQuotePage() {
                 <td className="mono">{ligne.position}</td>
                 <td>{ligne.designation}</td>
                 <td>{ligne.unit}</td>
-                <td className="num">{ligne.quantity}</td>
-                <td className="num">{ligne.unit_price_ht}</td>
-                <td className="num">{ligne.total_ht}</td>
+                <td className="num">{ecrireEnFrancais(ligne.quantity)}</td>
+                <td className="num">{ecrireEnFrancais(ligne.unit_price_ht)}</td>
+                <td className="num">{ecrireEnFrancais(ligne.total_ht)}</td>
               </tr>
             ))}
           </tbody>
@@ -259,21 +260,21 @@ export default function PublicQuotePage() {
           <tr>
             <td>Total HT</td>
             <td className="num">
-              {devis.total_ht} {devis.currency}
+              {ecrireEnFrancais(devis.total_ht)} {devis.currency}
             </td>
           </tr>
           {devis.taxes.map((taxe, index) => (
             <tr key={index}>
               <td>{taxe.label}</td>
               <td className="num">
-                {taxe.amount} {devis.currency}
+                {ecrireEnFrancais(taxe.amount)} {devis.currency}
               </td>
             </tr>
           ))}
           <tr className="grand">
             <td>Total TTC</td>
             <td className="num" data-testid="total-ttc-public">
-              {devis.total_ttc} {devis.currency}
+              {ecrireEnFrancais(devis.total_ttc)} {devis.currency}
             </td>
           </tr>
         </tbody>
@@ -336,7 +337,7 @@ export default function PublicQuotePage() {
                   pas « Accepter » sans voir ce qu'on accepte. */}
               <div className="notice warning" role="alert" data-testid="confirmation">
                 Je confirme répondre au devis {devis.number}, d&apos;un montant de{' '}
-                {devis.total_ttc} {devis.currency}.
+                {ecrireEnFrancais(devis.total_ttc)} {devis.currency}.
               </div>
               <div className="row">
                 <div className="field">

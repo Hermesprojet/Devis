@@ -135,3 +135,53 @@ export function texteDuPdf(pdf: Buffer): string {
   }
   return Buffer.from(morceaux.join('\n'), 'latin1').toString('latin1')
 }
+
+/** L'espace fine insécable, séparateur de milliers à l'écran. */
+export const ESPACE_ECRAN = '\u202f'
+
+/** L'espace insécable ordinaire, seul que WinAnsi porte — donc celui du PDF. */
+export const ESPACE_PDF = '\u00a0'
+
+/**
+ * L'écriture belge d'un nombre que le moteur a déjà arrêté.
+ *
+ * **Transcrite ici à la main, et non importée de `src/lib/nombres`.** Un
+ * scénario qui demanderait à l'application ce qu'elle doit afficher serait
+ * vert quoi qu'elle affiche. Le harnais pose l'attendu ; le produit doit s'y
+ * conformer.
+ *
+ * Rien n'est arrondi : les décimales sont celles de la chaîne canonique
+ * reçue. « 23080.10 » devient « 23 080,10 ».
+ *
+ * `espace` vaut l'espace fine insécable U+202F à l'écran, et l'espace
+ * insécable ordinaire U+00A0 dans un PDF — les polices de base d'un PDF sont
+ * encodées en WinAnsi, qui ne porte pas la première.
+ */
+export function enBelge(canonique: string, espace: string = ESPACE_ECRAN): string {
+  const [entiereBrute = '', fraction] = canonique.split('.')
+  const groupes: string[] = []
+  let entiere = entiereBrute
+  while (entiere.length > 3) {
+    groupes.unshift(entiere.slice(-3))
+    entiere = entiere.slice(0, -3)
+  }
+  groupes.unshift(entiere)
+  const groupee = groupes.join(espace)
+  return fraction === undefined ? groupee : `${groupee},${fraction}`
+}
+
+/** Le même nombre, tel qu'un PDF l'imprime. */
+export function enBelgeDansLePdf(canonique: string): string {
+  return enBelge(canonique, ESPACE_PDF)
+}
+
+/**
+ * Le nombre derrière une chaîne affichée en belge, pour refaire une addition.
+ *
+ * `Number('23 080,10')` rend `NaN` : un scénario qui additionnerait des
+ * montants lus à l'écran sans repasser par ici comparerait des `NaN`, et un
+ * `NaN` comparé à un `NaN` ne tombe pas — le test passerait à tort.
+ */
+export function nombreLu(affiche: string): number {
+  return Number(affiche.replace(/[  \s]/g, '').replace(',', '.'))
+}

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { expect, test, type Download, type Page } from '@playwright/test'
 
 import { ADMIN } from './banc'
-import { seConnecter, texteDuPdf } from './parcours'
+import { enBelge, enBelgeDansLePdf, seConnecter, texteDuPdf } from './parcours'
 import { LONGUEUR, mesurerLePlanConnu, SURFACE, ligneDeMesure } from '../mesure-pdf/plan-connu'
 
 /**
@@ -55,19 +55,17 @@ const PRIX = { code: 'ML-MUR', label: 'Mur au mètre linéaire', unite: 'm', uni
 const QUANTITE_ATTENDUE = '6,02'
 
 /**
- * La même quantité, telle que le PDF du devis l'écrit.
+ * La même quantité, telle que le PDF du devis l'écrit : « 6,02 ».
  *
- * **Avec un POINT**, et c'est un constat, pas un choix de ce scénario : le
- * devis imprime « 6.02 », « 25.00 » et « 150.50 EUR ». L'écran, lui, écrit en
- * français — « 6,02 m ». Les deux écritures coexistent dans le produit livré,
- * et le parcours principal l'assertait déjà ainsi (`MONTANTS.totalHT` y vaut
- * `'23080.10'`).
+ * Elle portait un POINT, et l'écran une virgule — deux orthographes d'un seul
+ * nombre, sur deux surfaces du même devis. Le document remis à un client belge
+ * écrit désormais à la belge, comme l'écran.
  *
- * Ce test ne tranche pas la question : il constate ce qui est imprimé. La
- * trancher reviendrait à changer le document remis au client, et c'est une
- * décision qui ne se prend pas dans un fichier de test.
+ * Ce qui reste à l'orthographe machine est le CSV, et lui seul : il est relu
+ * par un tableur et par la répétition de préproduction. Voir
+ * `docs/ARRONDI_DES_DOCUMENTS.md`, « L'orthographe des nombres ».
  */
-const QUANTITE_DANS_LE_PDF = '6.02'
+const QUANTITE_DANS_LE_PDF = enBelgeDansLePdf('6.02')
 
 async function octets(telechargement: Download): Promise<Buffer> {
   const chemin = await telechargement.path()
@@ -173,8 +171,12 @@ test('une mesure corrigée sur un plan devient une ligne de bordereau, puis un m
   // s'affiche avant toute écriture.
   await formulaire.getByTestId('pdf-reprise-unite').selectOption('m')
   const apercu = page.getByTestId('pdf-apercu-quantite')
-  await expect(apercu).toContainText(QUANTITE_ATTENDUE, { timeout: 20_000 })
-  await expect(apercu).toContainText('m')
+  // **Exactement ce que la ligne portera**, et pas « quelque chose qui
+  // commence par 6,02 ». L'aperçu annonçait « 6,0200 m » — les décimales de la
+  // MESURE, tirées de son incertitude — là où le bordereau écrivait « 6.02 » :
+  // deux orthographes pour un seul nombre, à deux clics l'une de l'autre.
+  // L'aperçu annonce désormais ce qu'il écrit.
+  await expect(apercu).toHaveText(`${QUANTITE_ATTENDUE} ${PRIX.unite}`, { timeout: 20_000 })
 
   // Et la provenance dit d'où vient ce nombre : la page, et le fait qu'une
   // personne l'a corrigé. Sans elle, « 6,02 m » est un nombre sans auteur.
@@ -220,7 +222,7 @@ test('une mesure corrigée sur un plan devient une ligne de bordereau, puis un m
   await expect(ligne).toContainText(DESIGNATION)
   await expect(ligne).toContainText(PRIX.unite)
   // La quantité, écrite par personne : elle vient de la décision humaine.
-  await expect(ligne).toContainText('6.02')
+  await expect(ligne).toContainText(`${QUANTITE_ATTENDUE} ${PRIX.unite}`)
   await expect(ligne.getByTestId('boq-provenance')).toBeVisible()
 
   // ---- 7. le prix, l'étude, le gel, l'émission
@@ -270,7 +272,7 @@ test('une mesure corrigée sur un plan devient une ligne de bordereau, puis un m
   }
   expect(
     Object.entries(totaux).map(([cle, valeur]) => `${cle}=${valeur}`).join(' | '),
-  ).toContain('150.50')
+  ).toContain(enBelge('150.50'))
 
   await page.getByRole('button', { name: 'Geler cette version' }).click()
   await page.getByRole('button', { name: /confirmer/i }).click()

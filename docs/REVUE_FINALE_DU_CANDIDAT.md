@@ -1,15 +1,23 @@
 # Revue du candidat, et ce que la correction a changé
 
-**Deux versions, et il faut les distinguer d'emblée.**
+**Trois versions, et il faut les distinguer d'emblée.**
 
 | | |
 | --- | --- |
 | **Version de référence**, inchangée | `daeb7f0d7c2a12d47e1b941c0d79932a1e20d464`, branche `claude/candidat-complet` (#90, brouillon) |
-| **Candidat corrigé** | branche `claude/candidat-corrige`, bâtie sur `claude/new-session-jdj11s` — SHA en tête de `docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md` |
+| **État intermédiaire** | `483176adde03dbc7413196581d565f2c8adce4c7`, branche `claude/candidat-corrige` — la première passe de corrections, conservée pour la comparaison |
+| **Version éprouvée, celle qu'on livre** | `2d18299ee08b2a66bb54573d665f233a72aaf6ee`, branche `claude/candidat-integre` |
 
-`daeb7f0` n'a pas bougé d'un octet. Les corrections vivent sur une branche
-dédiée, et le candidat corrigé est une seconde branche qui l'assemble : la
-comparaison entre les deux reste donc possible, commit par commit.
+`daeb7f0` n'a pas bougé d'un octet. `daeb7f0` et `483176a` sont tous deux
+**ancêtres** de `2d18299` — mesuré par `git merge-base --is-ancestor` : la
+comparaison entre les trois reste donc possible, commit par commit. Dire que la
+demande #90 n'est pas fusionnée ne veut pas dire que son contenu est dehors :
+il est dans le candidat.
+
+`docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md` est le seul document qui décrive la
+voie de livraison. Cette fiche ne recopie **aucun** SHA de candidat, et elle dit
+pourquoi : le renvoi « SHA en tête de la fiche » qui figurait dans ce tableau
+était donc pendant — il envoyait chercher un numéro que la fiche n'écrit pas.
 
 **Ce que relire veut dire ici.** Les douze ateliers de CI étaient verts sur
 `daeb7f0`, et sa suite d'API rejouée donnait 1 605 réussites. Cette revue n'a
@@ -598,11 +606,29 @@ depuis cette date n'est une observation.
 
 Ce qui a été éprouvé de la mise en ligne l'a été **hors machine** : la voie A
 sur deux processus Python et un fichier SQLite, le refus de migrer de
-l'ancienne image, le comportement du schéma. Ce qui ne l'est pas : le
-comportement de `docker compose` derrière le proxy, les déclencheurs
-PostgreSQL de la migration `a4b5c6d70809` — SQLite et PostgreSQL n'ont pas les
-mêmes, et seule la CI les éprouve sur un vrai PostgreSQL — et la restauration
-d'une sauvegarde réelle.
+l'ancienne image, le comportement du schéma. Ce qui ne l'est pas : les
+déclencheurs PostgreSQL de la migration `a4b5c6d70809` ailleurs qu'en CI —
+SQLite et PostgreSQL n'ont pas les mêmes, et seule la CI les éprouve sur un
+vrai PostgreSQL.
+
+**Ce que la répétition de préproduction a changé, et ce qu'elle n'a pas
+changé.** La « Répétition de préproduction » a tourné **verte sur
+`2d18299ee08b2a66bb54573d665f233a72aaf6ee`**
+([exécution 37629959343](https://github.com/Hermesprojet/Devis/actions/runs/37629959343),
+déclenchée à la main). `ops/repetition_staging.sh` monte une préproduction
+complète — PostgreSQL, migrations en tâche séparée, API, front, proxy, stockage
+persistant, fournisseur d'identité — la fait travailler, redémarre les
+conteneurs, sauvegarde, restaure ailleurs et vérifie ce qui est revenu. **Ce
+qui est éprouvé de la mise en ligne** s'en trouve augmenté de deux choses qui
+n'y étaient pas : le comportement de `docker compose` derrière le proxy, et la
+restauration d'une sauvegarde — toutes deux sur un exécuteur de CI.
+
+**Ce qui est éprouvé du VPS reste rien.** La répétition ne touche pas le
+serveur : rien n'y sort de l'exécuteur, aucun port ne quitte 127.0.0.1, aucune
+image n'est publiée, et le fournisseur d'identité est un faux. Elle ne dit donc
+rien du VPS lui-même — ni de sa base, ni de son volume, ni de son proxy de
+devant, ni de ses secrets. La phrase d'ouverture de cette section tient mot pour
+mot : aucune observation du serveur n'est postérieure au 16 septembre 2026.
 
 ---
 

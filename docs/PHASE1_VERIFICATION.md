@@ -63,7 +63,7 @@ Ce document atteste les deux premiers, pas le troisième.
 | CI indépendante de ce code | [push 33012064509](https://github.com/Hermesprojet/Devis/actions/runs/33012064509) et [pull_request 33012069125](https://github.com/Hermesprojet/Devis/actions/runs/33012069125) — **10 jobs sur 10 verts, sur les deux déclencheurs** |
 | Dernier commit contrôlé depuis un clone propre | `070afe7` — `release-gate` complète, base de porte créée vide juste avant |
 | Procédure | `make install` puis les onze étapes ci-dessous, depuis un clone vide |
-| Branche | `claude/new-session-jdj11s` |
+| Branche | `main` — `070afe7` y est **ancêtre**, mesuré par `git merge-base --is-ancestor`, comme il l'est du candidat `claude/candidat-integre`. La branche de session sur laquelle cette vérification a tourné n'identifie plus rien ; le commit nommé ci-dessus, lui, est resté |
 | Tête Alembic | `e2be18fcac1b` — quatre révisions à ce jour, la dernière imposant une source de prix unique par poste |
 
 ## Contrôle indépendant de la tête de code `6d05eb4`

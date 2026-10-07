@@ -11,6 +11,7 @@ import {
   type TypeDeComposant,
 } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 /**
  * Le constructeur d'un sous-détail de prix.
@@ -464,7 +465,7 @@ function Apercu({ apercu }: { apercu: CompositePreview | null }) {
       <p>
         <strong>{t('composites.unitCost')}</strong>{' '}
         <span className="mono" data-testid="cout-unitaire">
-          {apercu.unit_cost_display} {apercu.currency} / {apercu.unit_code}
+          {ecrireEnFrancais(apercu.unit_cost_display)} {apercu.currency} / {apercu.unit_code}
         </span>
       </p>
       {!apercu.scales_linearly && (
@@ -484,7 +485,7 @@ function Apercu({ apercu }: { apercu: CompositePreview | null }) {
             <tr key={nature.resource_kind}>
               <td>{nature.label}</td>
               <td className="num mono">
-                {nature.amount_display} {apercu.currency}
+                {ecrireEnFrancais(nature.amount_display)} {apercu.currency}
               </td>
             </tr>
           ))}

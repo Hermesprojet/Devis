@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { ADMIN, PILE_EXTERNE, redemarrerApiEtWeb } from './banc'
-import { BOUTON_CONNEXION } from './parcours'
+import { BOUTON_CONNEXION, enBelge } from './parcours'
 
 /**
  * Le devis gelé survit-il à un redémarrage des serveurs ?
@@ -29,7 +29,7 @@ test('le premier devis survit au redémarrage de l’API et du web', async ({ pa
   await page.waitForURL(/\/estimations\//)
   const urlDevis = page.url()
   const avant = await page.locator('table.totals').innerText()
-  expect(avant).toContain('23080.10')
+  expect(avant).toContain(enBelge('23080.10'))
 
   await redemarrerApiEtWeb()
 

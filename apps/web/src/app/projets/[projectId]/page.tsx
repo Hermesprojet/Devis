@@ -25,6 +25,7 @@ import {
   type Project,
 } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { ecrireEnFrancais } from '@/lib/nombres'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
 
@@ -279,10 +280,10 @@ export default function ProjectPage() {
                       <ProvenanceDuPoste item={item} />
                     </td>
                     <td>{item.kind === 'section' ? '' : item.unit_code}</td>
-                    <td className="num">{item.kind === 'section' ? '' : item.quantity}</td>
+                    <td className="num">{item.quantity_lisible}</td>
                     <td>
                       <span className={`badge ${item.status === 'approved' ? 'success' : ''}`}>
-                        {item.status}
+                        {t(`boq.status.${item.status}`)}
                       </span>
                     </td>
                     <td>
@@ -441,7 +442,7 @@ export default function ProjectPage() {
                           : undefined
                       }
                     >
-                      {version.total_selling_price_ht_display ?? t('common.none')}
+                      {ecrireEnFrancais(version.total_selling_price_ht_display) || t('common.none')}
                     </td>
                     <td>
                       <Link href={`/estimations/${estimate.id}/${version.id}`}>Ouvrir</Link>
@@ -578,7 +579,7 @@ function PrixDuPoste({
           <span className="badge">{t('priceSource.library')}</span>{' '}
           <span className="mono">{article.code}</span> — {article.label}{' '}
           <span className="mono">
-            {article.unit_price} {article.currency}/{article.unit_code}
+            {ecrireEnFrancais(article.unit_price)} {article.currency}/{article.unit_code}
           </span>
         </span>
       ) : item.price_item_id ? (

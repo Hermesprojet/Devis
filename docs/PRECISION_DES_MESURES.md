@@ -1,6 +1,6 @@
 # Ce que vaut une mesure prise sur un PDF
 
-> **Lu sur** : `/home/user/Devis`, branche `claude/corrections-du-candidat`.
+> **Lu sur** : `/home/user/Devis`, branche `claude/candidat-integre`.
 >
 > **Aucun SHA n'est recopié dans ce document.** Un numéro de commit écrit à la
 > main se périme au commit suivant, en silence, et c'est arrivé une fois ici.
@@ -86,17 +86,12 @@ l'écran, et il est chiffrable »), et la fiche de cotes de référence (§ 4, v
 quatre n'en est un. **Plusieurs commentaires du code disent pourtant « A0 »**
 — voir § 6.
 
-> **Où lire la fiche de cotes de référence.** `docs/COTES_DE_REFERENCE.md`
-> **n'existe pas sur cette branche** : il arrive par la **PR #88** (branche
-> `claude/cotes-de-reference`). Les chiffres qui en viennent — le tableau des
-> quatre dimensions ci-dessus (son § 4) et le décompte des fragments numériques
-> du § 2.11 H12 (son § 8) — ne sont donc pas vérifiables depuis cette branche
-> prise seule. Pour les lire sans attendre la fusion :
-> `git show origin/claude/cotes-de-reference:docs/COTES_DE_REFERENCE.md`.
->
-> **La procédure d'essai, elle, est sur cette branche** :
-> `docs/VALIDATION_SUR_PLANS_REELS.md`. Elle ne dépend d'aucune PR en attente,
-> et c'est elle qu'il faut suivre le jour où les plans seront accessibles.
+**Où lire la fiche de cotes de référence.** `docs/COTES_DE_REFERENCE.md`.
+Deux chiffres de ce document en viennent, et s'y vérifient : le tableau des
+quatre dimensions ci-dessus (son § 4) et le décompte des fragments numériques
+du § 2.11 H12 (son § 8). La procédure d'essai est à côté,
+`docs/VALIDATION_SUR_PLANS_REELS.md` : c'est elle qu'il faut suivre le jour où
+les plans seront accessibles.
 
 **Conséquence directe : aucun test du dépôt ne s'exécute sur un plan réel.**
 
@@ -615,7 +610,7 @@ lèverait est `docs/VALIDATION_SUR_PLANS_REELS.md`.
 | **H9** | ~~La mesure est pointée **à la même finesse** que la calibration~~ — **levée le 7 octobre 2026** | `schemas.MesureCreate` porte désormais `resolution_du_pointage` ; `calibration_de_plan.mesurer` l'utilise pour le terme de **tracé**, le facteur gardant celle de la calibration | l'hypothèse était vraie dans l'écran livré et **fausse pour tout autre client de l'API**, qui obtenait une incertitude sous-estimée | `test_a_measurement_may_declare_the_resolution_of_its_own_pointing` et `test_a_measurement_without_its_own_resolution_keeps_the_old_behaviour` (`test_calibration_de_plan_api.py`) |
 | **H10** | Une page ne porte **qu'une seule échelle** | `calibration_de_plan._contient` : une calibration **sans zone** s'applique à toute la page | une page portant un plan au 1:50 **et** un détail au 1:20 donne une mesure fausse d'un facteur 2,5, **sans réserve** | éprouver sur un plan réel à deux échelles. Le mécanisme de zone existe et est testé (`test_calibration_de_plan_api.py`, test du refus hors zone), mais **rien n'oblige** à l'utiliser |
 | **H11** | Les incertitudes de deux mesures sont **indépendantes** | non codée, mais supposée par quiconque additionne deux mesures | le terme `du_facteur` est **le même** pour toutes les mesures d'une page : il est totalement **corrélé**. Un total de 20 murs n'a pas une incertitude en √20, mais en 20 | à traiter quand les mesures remonteront dans un métré. Le module ne fait aucune agrégation aujourd'hui |
-| **H12** | Le nombre pointé **est une cote de l'ouvrage** | hors modèle entièrement | la fiche de cotes de référence (§ 8) le dit : sur un des plans, **860 fragments sur 4 351** sont des nombres d'au moins trois chiffres, et le premier est le **code postal du cartouche**. Aucune tolérance ne corrige cela. *(Ce chiffre vient de `docs/COTES_DE_REFERENCE.md`, absent de cette branche — PR #88 ; voir l'encadré du § 1.2.)* | seule une personne qui regarde ce que le nombre cote le peut. C'est pourquoi la validation humaine n'est pas optionnelle |
+| **H12** | Le nombre pointé **est une cote de l'ouvrage** | hors modèle entièrement | la fiche de cotes de référence (§ 8) le dit : sur un des plans, **860 fragments sur 4 351** sont des nombres d'au moins trois chiffres, et le premier est le **code postal du cartouche**. Aucune tolérance ne corrige cela. *(La fiche est `docs/COTES_DE_REFERENCE.md`.)* | seule une personne qui regarde ce que le nombre cote le peut. C'est pourquoi la validation humaine n'est pas optionnelle |
 
 Deux limites supplémentaires, assumées et écrites dans le code :
 
@@ -749,7 +744,7 @@ la réserve est le fait, le nombre n'en est que le rang. »
 | **Calibration et mesure au même zoom** | **Plus supposé** — `MesureCreate` porte `resolution_du_pointage`, et le terme de tracé l'utilise (H9 levée) | Rien d'inconnu : un client qui ne déclare rien obtient le défaut **pessimiste** d'un point de papier par pixel |
 | **Une seule échelle par page** | Le **refus hors zone** est testé (`test_calibration_de_plan_api.py`) | Rien n'oblige à poser une zone : une page à deux échelles donne une mesure fausse **sans réserve** (H10) |
 | **Indépendance entre deux mesures** | **Non** — jamais agrégées | Le terme du facteur est **totalement corrélé** sur une page (H11) |
-| **Le nombre pointé est bien une cote** | **Hors modèle** | 860 fragments numériques sur 4 351 sur un de vos plans, dont un code postal (H12 ; chiffre issu de la fiche de la PR #88) |
+| **Le nombre pointé est bien une cote** | **Hors modèle** | 860 fragments numériques sur 4 351 sur un de vos plans, dont un code postal (H12 ; chiffre issu de `docs/COTES_DE_REFERENCE.md`, § 8) |
 | **Confiance 0,9** | **Non** — aucun test ne l'assertit (§ 3.2) | **Sans objet** : ce n'est pas une précision, c'est un rang de provenance |
 
 ---
@@ -773,13 +768,14 @@ sur cette branche. Il porte :
   levant H7 ;
 - la ligne **« votre tolérance »**, laissée vide volontairement.
 
-**Ce qui a changé depuis la version précédente de ce document.** Celle-ci
-renvoyait à `docs/COTES_DE_REFERENCE.md`, qui vit sur `claude/cotes-de-reference`
-(PR #88) et **n'est pas sur cette branche**. Le renvoi était donc pendant.
-`VALIDATION_SUR_PLANS_REELS.md` reprend ce que la fiche demandait, y ajoute la
-conduite de l'essai et les cas de bord, et **vit sur la branche qu'on livre**.
-Les deux ne se contredisent pas ; si la #88 est fusionnée, la fiche reste le
-document de référence sur le FORMAT des cotes, et celui-ci sur la PROCÉDURE.
+**Les deux documents, et ce que chacun porte.**
+`docs/COTES_DE_REFERENCE.md` et `docs/VALIDATION_SUR_PLANS_REELS.md` sont tous
+deux sur le candidat. Ils ne se contredisent pas et ne se remplacent pas : la
+fiche est la référence sur le FORMAT des cotes à relever,
+`VALIDATION_SUR_PLANS_REELS.md` porte la PROCÉDURE — la conduite de l'essai, les
+cas de bord, le tableau à remplir. Une version précédente de ce document
+renvoyait à la fiche en la disant absente de la branche de travail ; ce renvoi
+était pendant, il ne l'est plus.
 
 **L'état de l'essai, en une ligne : il n'a pas eu lieu.** Les quatre plans
 fournis lors d'un échange précédent vivaient dans un espace de session qui a

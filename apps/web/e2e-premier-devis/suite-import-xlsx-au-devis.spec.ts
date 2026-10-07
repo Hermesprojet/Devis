@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN } from './banc'
 import { classeurFictif } from './classeur-fictif'
-import { seConnecter, texteDuPdf } from './parcours'
+import { enBelgeDansLePdf, seConnecter, texteDuPdf } from './parcours'
 
 /**
  * D'un classeur de fournisseur au PDF remis au client, DANS LE NAVIGATEUR.
@@ -166,7 +166,14 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   // à ce qu'un nombre saisi dans le tableur d'un fournisseur arrive juste sur
   // le papier que le client reçoit.
   const texte = texteDuPdf(octets)
-  for (const attendu of [POSTE.position, POSTE.designation, '148.60', TOTAL_ATTENDU]) {
+  for (const attendu of [
+    POSTE.position,
+    POSTE.designation,
+    // Le document part chez un client belge : il écrit « 148,60 » et
+    // « 5 944,00 », jamais l'orthographe machine du moteur.
+    enBelgeDansLePdf('148.60'),
+    enBelgeDansLePdf(TOTAL_ATTENDU),
+  ]) {
     expect(texte, `le PDF doit imprimer « ${attendu} »`).toContain(attendu)
   }
 })

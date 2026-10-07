@@ -1,35 +1,48 @@
-# Revue, fusion, déploiement : le chemin de cette tranche
+# Déployer la lecture de plans, et revenir en arrière
 
-- **Écrit le** : 2026-10-06, depuis la branche `claude/mesures-pdf`
-  (`8a173783a3352a9067ddd7052f2d140b80b49b52`).
+- **Écrit le** : 2026-10-07, depuis la branche `claude/candidat-integre`
+  (`2d18299ee08b2a66bb54573d665f233a72aaf6ee`).
+- **Les contrôles invoqués ici** : **douze contrôles distincts sont verts sur ce
+  SHA**, et tous sur lui — les onze ateliers de `.github/workflows/ci.yml`
+  (<https://github.com/Hermesprojet/Devis/actions/runs/37629113133>) et
+  « Répétition de préproduction », déclenchée à la main
+  (<https://github.com/Hermesprojet/Devis/actions/runs/37629959343>).
 - **Dernières observations de la machine** : **16 septembre 2026**. Tout ce que
   ce document dit de l'état du serveur date de ce jour-là. Trois semaines ont
   passé ; la préproduction a pu bouger sans que rien ici ne le sache.
 - **Rien de ce document n'a été exécuté, et rien ne doit l'être sans votre
-  accord.** Aucune écriture dans le dépôt, aucun `git` ni `gh` en écriture,
-  aucune image construite ni publiée, aucun contact avec le VPS. Les commandes
-  sont écrites pour être relues par vous avant d'être tapées.
-- **Ce qu'il n'est pas** : une procédure d'exploitation courante. Voir
-  `docs/EXPLOITATION.md` — dont ce document dit, section 1, ce qui est devenu
-  faux.
+  accord.** Aucune image construite ni publiée, aucun contact avec le VPS. Les
+  commandes sont écrites pour être relues par vous avant d'être tapées.
+
+> **La voie de livraison est ailleurs, et il n'y en a qu'une.**
+> `docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md` la décrit : une demande de fusion de
+> `claude/candidat-integre` vers `main`, treize gestes, chacun avec son
+> contrôle. **Ce document-ci en est le détail — les commandes, les cas de panne,
+> le retour arrière — et non une alternative.** Il ne décrit aucun ordre de
+> fusion : il n'y en a plus qu'un, et c'est celui de la fiche. Si les deux se
+> contredisent, c'est la fiche qui a raison et ce document qui est à corriger.
+
+**Ce qu'il n'est pas** : une procédure d'exploitation courante. Celle-là est
+`docs/EXPLOITATION.md`, qui a été réécrit depuis et dit désormais la même chose
+que ce document sur le retour arrière.
 
 Tout chiffre ci-dessous porte son fichier, et son **symbole** — constante,
-fonction, bloc — quand j'ai rouvert le fichier pour le vérifier. Les numéros de
-ligne ont été remplacés par des noms partout où ils désignaient du code : un
-numéro se périme au commit suivant, un nom non. Ce qui n'a pas été mesuré est
-écrit « non mesuré » ; ce qui n'a pas été exécuté sur la machine, « non vérifié
-sur cette pile ».
+fonction, bloc — quand j'ai rouvert le fichier pour le vérifier. Les renvois
+vers un autre document nomment sa **section**, jamais un numéro de ligne : un
+numéro se périme au commit suivant, et les renvois par ligne de ce document
+étaient déjà faux dans les deux sens. Ce qui n'a pas été mesuré est écrit « non
+mesuré » ; ce qui n'a pas été exécuté sur la machine, « non vérifié sur cette
+pile ».
 
 ---
 
 ## 1. Le point qui domine tout le reste, et qu'il faut lire avant la première commande
 
-> Le retour arrière par image, tel que `docs/EXPLOITATION.md` le décrit
-> aujourd'hui, **ne remet pas l'API en service** après cette tranche. Et dès la
-> première mesure enregistrée, le schéma ne peut plus redescendre. La seule
-> sortie est alors **la restauration de la sauvegarde prise avant le
-> déploiement** — ce qui fait de cette sauvegarde non pas une précaution, mais
-> la condition du déploiement.
+> Le retour arrière **par image seule ne remet pas l'API en service** après
+> cette tranche. Et dès la première mesure enregistrée, le schéma ne peut plus
+> redescendre. La seule sortie est alors **la restauration de la sauvegarde
+> prise avant le déploiement** — ce qui fait de cette sauvegarde non pas une
+> précaution, mais la condition du déploiement.
 
 ### Pourquoi, mécaniquement
 
@@ -67,53 +80,61 @@ condition d'`api` n'est jamais satisfaite, donc **l'API ne démarre jamais**.
 
 Ce n'est pas une hypothèse sur l'état de `main` : la tête de `main` est
 aujourd'hui `39ad8d0721e18d539064883c70881f40c8a32c00`, c'est le commit que la
-préproduction sert, et son arbre porte **17 migrations** s'arrêtant à
+préproduction sert, et son arbre porte **17 fichiers de migration** s'arrêtant à
 `c7d8e9fa0102` (`git ls-tree -r 39ad8d0 -- apps/api/alembic/versions/`). Aucune
-des quatre révisions de l'ensemble de la fusion n'y figure.
+des six révisions que le candidat ajoute n'y figure.
 
-**Deux ensembles, qu'il faut distinguer, sans quoi la suite de ce document se
-lit comme une contradiction.** L'**ensemble de la fusion** compte **quatre**
-révisions — `d8e9fa010203`, `e2f3a4b50607`, `a4b5c6d70809`, `d1e2f3a40506`,
-`f3a4b5c60708` —,
-réparties sur trois branches. La **branche de travail `claude/mesures-pdf`**,
-elle, n'en porte que **deux** : `d8e9fa010203`
-(`20261002_0007_citation_de_plan_et_etapes_de_plan.py`, désormais `…0007…`,
-apportée par la #78) et `e2f3a4b50607`
-(`20261002_0008_calibration_d_un_plan_pdf.py`, désormais `…0008…`, apportée par
-la #89). `d1e2f3a40506` vit sur `claude/codes-de-connexion`
-(`20260901_0007_reauthentification_demandee.py`) et `f3a4b5c60708` seulement sur
-`claude/candidat-complet` (vérifié : `git ls-tree -r --name-only <branche> --
-apps/api/alembic/versions/` donne 17 fichiers sur `main`, 18 sur
-`claude/codes-de-connexion`, 19 sur `claude/mesures-pdf`, 21 sur
-`claude/candidat-complet`). Partout ci-dessous, « les deux migrations de la
-tranche » désigne les deux de cette branche ; « les quatre révisions »,
-l'ensemble de la fusion.
+**Ce que le candidat ajoute, et où il n'y a plus qu'une tête.** Le graphe du
+candidat porte **23 fichiers** de migration, soit six de plus que `39ad8d0`, et
+une **seule** tête — `f3a4b5c60708`. Le point de branchement est
+`c7d8e9fa0102`, le schéma de ce qui tourne. Deux tranches en partent :
+
+- la **tranche des plans** — `d8e9fa010203` → `e2f3a4b50607` →
+  `a4b5c6d70809` → `b5c6d7e8090a` ;
+- la **tranche de la connexion** — `d1e2f3a40506`, seule de sa branche.
+
+La migration de fusion `f3a4b5c60708` réunit les deux **têtes** :
+`down_revision = ("d1e2f3a40506", "b5c6d7e8090a")`. C'est cette citation, et
+non celle d'un maillon intermédiaire, qui laisse une seule tête ;
+`docs/FUSION_DES_MIGRATIONS.md` dit ce qui le détecte. La montée depuis
+`39ad8d0` est éprouvée sur SQLite **et** sur PostgreSQL —
+`c7d8e9fa0102 → f3a4b5c60708`, six révisions, une tête — par
+`scripts/epreuve_montee_depuis_preproduction.py`, que l'atelier
+« API (PostgreSQL + PostGIS) » rejoue à chaque commit.
 
 **Le code applicatif ancien, lui, tournerait très bien sur le schéma avancé** —
-mais il faut dire exactement ce que les deux migrations de cette branche font,
+mais il faut dire exactement ce que les migrations de la tranche des plans font,
 parce qu'une version précédente de ce paragraphe parlait de colonnes ajoutées
-qui n'existent pas. Inventaire relu dans les deux fichiers (`grep -n
-'add_column'` ne rend rien, ni dans l'un ni dans l'autre) :
+qui n'existent pas. Inventaire relu dans les fichiers :
 
-- **une table ajoutée**, et une seule : `plan_calibrations` — le seul
-  `op.create_table` des deux fichiers, dans l'`upgrade()` de `…0008…` ;
-- **aucune colonne ajoutée.** Ce qui bouge sur les colonnes est l'inverse d'un
-  ajout : **sept colonnes existantes deviennent nullables** (`…0007…`, tuple
-  `COLONNES_DE_TEXTE` — `page`, `char_start`, `char_end`, `x0`, `y0`, `x1`,
-  `y1` — et la boucle `lot.alter_column(…, nullable=True)` de son `upgrade()`) ;
+- **deux tables ajoutées** : `plan_calibrations` (le seul `op.create_table` de
+  `…0008…`, dans son `upgrade()`) ; et aucune dans `…0007…`.
+- **aucune colonne ajoutée par `…0007…`.** Ce qui bouge sur les colonnes y est
+  l'inverse d'un ajout : **sept colonnes existantes deviennent nullables**
+  (tuple `COLONNES_DE_TEXTE` — `page`, `char_start`, `char_end`, `x0`, `y0`,
+  `x1`, `y1` — et la boucle `lot.alter_column(…, nullable=True)` de son
+  `upgrade()`).
+- **deux colonnes ajoutées par `…0011…`** (`b5c6d7e8090a`) :
+  `boq_items.source_proposal_id` et `boq_items.source_mesure`, toutes deux
+  `nullable=True` (les deux `op.add_column` de son `upgrade()`). L'ancien code
+  ne les écrit pas, et rien ne l'y oblige.
 - **trois contraintes `CHECK` NOUVELLES** sur `source_citations`, posées par
   `…0007…` (tuple `CONTRAINTES_CITATION`) : `ck_source_citation_ancrage`,
   `ck_source_citation_bbox_complete`, `ck_source_citation_reperes_cao_nonempty`.
   **Ce sont les seules qui pourraient refuser une écriture de l'ancien code**,
   donc exactement celles qu'il fallait nommer pour établir la conclusion de ce
-  paragraphe ;
+  paragraphe.
 - **deux relâchements sémantiques** : `ck_document_step_run_step` passe de onze
   à quinze étapes (`…0007…`, tuple `ETAPES`), et `ck_source_citation_ancrage`
-  passe de `ANCRAGE_AVANT` à `ANCRAGE_APRES` (`…0008…`) ;
+  passe de `ANCRAGE_AVANT` à `ANCRAGE_APRES` (`…0008…`).
 - **trois réécritures par `CAST`**, qui ne changent pas ce qui est permis mais
   le rendent vrai sur les deux moteurs : `ck_source_citation_bbox`,
   `ck_source_citation_confidence`, `ck_extraction_proposal_confidence`
   (`…0007…`, `CONDITION_BBOX_APRES` et `CONDITION_CONFIANCE_APRES`).
+- **un déclencheur relâché** par `…0010…` (`a4b5c6d70809`) : une révision de
+  document publiée devient **supprimable**, à la seule condition d'une purge en
+  `executing` encore autorisée selon l'horloge de la base. La **modification**
+  reste refusée sans exception.
 
 La conclusion se vérifie sur les trois contraintes neuves, et c'est là qu'il
 fallait la vérifier : l'ancien code écrivait `page`, `char_start`, `char_end` et
@@ -122,75 +143,6 @@ retiré, rien n'est renommé, aucun `NOT NULL` n'est posé à la montée. Le blo
 n'est donc pas un blocage de compatibilité : c'est **le service `migrate` seul**
 qui empêche le retour arrière.
 
-### Ce qui, dans `docs/EXPLOITATION.md`, est désormais faux
-
-Quatre passages, cités tels qu'ils sont sur cette branche.
-
-**(a) `:437` — la phrase qui fonde toute la section « Retour arrière » :**
-
-> « son SHA de commit. Il ne touche pas à la base. »
-
-Vrai sur la base, faux sur le service : le retour arrière ne touche pas à la
-base, et c'est précisément pour cela qu'il échoue — `migrate` retrouve une base
-en avance sur son arbre.
-
-**(b) `:456` puis `:459-461` — le cas qui dit « rien d'autre à faire » :**
-
-> `:456` « **Les migrations.** Le service `migrate` a déjà tourné, et le schéma est en »
-> `:459` « 1. **La migration n'ajoute que des colonnes ou des tables** — le cas de toutes »
-> `:461` « suffit, rien d'autre à faire. »
-
-C'est le passage le plus dangereux du document, parce qu'il décrit exactement
-notre cas — des migrations additives — et conclut qu'il n'y a rien à faire.
-La prémisse est juste, la conclusion est fausse : l'ancienne image *ignore* bien
-les colonnes nouvelles, mais elle ne démarre pas, parce que `migrate` tourne
-avant elle et échoue. **Aucune des 43 demandes de fusion ouvertes ne corrige ce
-passage** : la #83 réécrit la section « Retour arrière » autour, y ajoute un
-encadré sur l'absence de cible et une sous-section « Les versions à conserver »,
-et laisse ces trois lignes intactes (diff de `docs/EXPLOITATION.md` dans la
-#83).
-
-**(c) `:493` — la justification du plafond mémoire :**
-
-> « | `api` | 2.0 | 1 Go | calcul déterministe, pas de traitement d'image | »
-
-L'API rend désormais des images : aperçus de page et tuiles de détail. La
-justification est tombée avec la tranche. Aucune PR ouverte ne la corrige.
-
-**(d) `:264` — ce que l'application ne fait pas :**
-
-> « antivirus, aucune OCR, aucune extraction, aucun rendu à l'écran. Un document se »
-
-La tranche affiche et mesure des PDF à l'écran. Aucune PR ouverte ne corrige ce
-paragraphe.
-
-Deux faux de moindre portée, et eux sont corrigés par la #83 : `:94`
-(`API_IMAGE=ghcr.io/<compte>/metreo-api:<sha-git>`, un nom d'image qui n'existe
-pas — voir section 4) et `:399`, `:416`, `:441` (commandes Compose sans
-`--env-file`, qui échouent telles qu'écrites).
-
-Un dernier, découvert en comparant deux fichiers — **et celui-là est corrigé,
-par la #72** : `:171` affirme qu'une requête portant un mauvais `Host`
-« reçoit `404` ». Le script de cette même PR dit l'inverse, avec sa raison : « À
-un Host qu'il ne sert pas, Caddy répond un 200 VIDE (son gestionnaire par
-défaut), pas un 404 : le code seul ne prouve rien » (`ops/verifier_deploiement.sh`,
-commentaire de la fonction `servi_par_caddy` — fichier qui **n'existe pas sur la
-branche de travail** et vient de la #72, branche `claude/preprod-fiabilisation` ;
-pour le lire : `git show
-origin/claude/preprod-fiabilisation:ops/verifier_deploiement.sh`).
-
-**La contradiction est déjà tranchée dans le dépôt, du côté du 200 vide**, et il
-n'y a donc pas à pencher pour l'un ou pour l'autre : le **premier** bloc du diff
-de la #72 sur `docs/EXPLOITATION.md` supprime ces lignes et les remplace par « à
-une requête portant un autre `Host`, Caddy répond un `200` **vide** — pas un
-`404` —, sans en-tête de sécurité ni corps » (`git diff
-origin/main...origin/claude/preprod-fiabilisation -- docs/EXPLOITATION.md`,
-premier hunk). Une version précédente de ce document attribuait la mesure au
-script de la #72 **et** concluait que la #72 ne corrigeait pas le document :
-c'était se contredire. Vérifié aussi qu'aucune autre PR ouverte ne touche ce
-fichier — seules la #72 et la #83 le modifient, les brouillons #84 et #90 ne le
-portent que par héritage.
-
 ### Les trois voies de sortie
 
 #### Voie A — démarrer `api` sans le service `migrate`
@@ -198,7 +150,7 @@ portent que par héritage.
 **La définition de `mc` d'abord, ici et non trois sections plus loin** : c'est la
 première ligne qu'on tape pendant la panne, et les deux `-f` ne s'improvisent
 pas. En oublier un recrée le conteneur `proxy` **sans ses étiquettes** — voir
-l'étape 3 de la section 4, qui explique pourquoi.
+l'étape 3 de la section 2, qui explique pourquoi.
 
 ```
 cd <racine-du-clone-sur-la-machine>
@@ -214,22 +166,18 @@ mc up -d --no-deps api
 | | |
 | --- | --- |
 | **Exige** | que `db` tourne déjà et soit sain — c'est le cas sur une pile en service. Rien d'autre. |
-| **Coûte** | un état que la commande documentée ne reproduit plus : **tout `mc up -d` ultérieur sans `--no-deps` rejoue `migrate`**, qui échouera de nouveau. C'est un sursis, pas un état stable. Aucune ligne de `docs/EXPLOITATION.md` ne décrit ce geste — le dépôt, lui, le joue déjà ailleurs, voir juste en dessous. |
+| **Coûte** | un état que la commande documentée ne reproduit plus : **tout `mc up -d` ultérieur sans `--no-deps` rejoue `migrate`**, qui échouera de nouveau. C'est un sursis, pas un état stable. |
 | **Perd** | rien. Ni la base, ni le volume, ni une ligne. |
 | **Irréversible** | non. |
 
-**Ce geste exact est déjà joué par le dépôt, sur cette branche.**
-`ops/repetition_staging.sh`, fonction `etape_restauration`, monte sa pile de
-restauration par `docker compose --project-name "$PROJET_RESTAURE"
-"${COMPOSITIONS[@]}" --env-file "$ENV_FICHIER" up -d --no-deps api`, et sa
-raison est écrite dans le commentaire juste au-dessus : « `--no-deps db api` :
-ni proxy ni front, on ne restaure pas pour servir ». C'est la même définition de
-service `api`, et cela tourne à **chaque « Répétition complète »** — l'un des
-douze contrôles verts que ce document cite plus bas pour la #90. (Une version
-précédente donnait à la place deux renvois plus faibles :
-`ops/sauvegarder.sh`, qui fait un `run --rm --no-deps` et non un `up`, et le
-bloc d'usage de `infra/docker-compose.jetable.yml`, qui vit sur la branche de la
-#72 et non ici.)
+**Ce geste exact est déjà joué par le dépôt.** `ops/repetition_staging.sh`,
+fonction `etape_restauration`, monte sa pile de restauration par
+`docker compose --project-name "$PROJET_RESTAURE" "${COMPOSITIONS[@]}"
+--env-file "$ENV_FICHIER" up -d --no-deps api`, et sa raison est écrite dans le
+commentaire juste au-dessus : « `--no-deps db api` : ni proxy ni front, on ne
+restaure pas pour servir ». C'est la même définition de service `api`, et cela
+tourne à **chaque « Répétition complète »** — l'un des douze contrôles verts
+cités en tête de ce document.
 
 **Non vérifié sur cette pile** : le comportement de `--no-deps` est celui que
 Compose documente (ne pas démarrer les services liés, donc ne pas attendre leurs
@@ -254,9 +202,9 @@ est posée dans l'environnement du service `api`.)
 | | |
 | --- | --- |
 | **Exige** | que **trois** gardes passent, et chacune refuse — voir ci-dessous. En pratique : que rien n'ait encore été fait d'un plan. |
-| **Coûte** | la table `plan_calibrations` et ses deux index — la fin du `downgrade()` de `…0008…` : deux `op.drop_index` puis `op.drop_table("plan_calibrations")`. Après la descente, `migrate` de l'ancienne image réussit : la base est déjà à `c7d8e9fa0102`, il n'a rien à faire. |
-| **Perd** | les calibrations déclarées, s'il y en a — et c'est là que le dépôt est mince, voir le paragraphe suivant. |
-| **Irréversible** | oui. `plan_calibrations` ne se reconstitue pas. |
+| **Coûte** | la table `plan_calibrations` et ses deux index — la fin du `downgrade()` de `…0008…` : deux `op.drop_index` puis `op.drop_table("plan_calibrations")`. Et, en amont, les deux colonnes de provenance de `boq_items` — `op.drop_column` de `source_mesure` puis de `source_proposal_id`, dans le `downgrade()` de `…0011…`, **sans aucune garde**. Après la descente, `migrate` de l'ancienne image réussit : la base est déjà à `c7d8e9fa0102`, il n'a rien à faire. |
+| **Perd** | les calibrations déclarées, s'il y en a, et la provenance de toute quantité reprise d'un plan dans un bordereau. |
+| **Irréversible** | oui. Ni `plan_calibrations` ni les deux colonnes de provenance ne se reconstituent. |
 
 **Les trois gardes, dans l'ordre où Alembic les rencontre en descendant :**
 
@@ -274,7 +222,8 @@ est posée dans l'environnement du service `api`.)
    plan** (`…0007…`, second `raise RuntimeError` du `downgrade()`, sur
    `citations_cao`).
 
-Éprouvé sur une même base, en deux essais :
+Éprouvé sur une même base, en deux essais — **et sur l'arbre d'alors, qui ne
+portait pas encore `a4b5c6d70809` ni `b5c6d7e8090a`** :
 
 - **sans aucune citation page + boîte** : `alembic downgrade c7d8e9fa0102` →
   code **0**, base ramenée à `c7d8e9fa0102`. Le journal montre qu'une seule
@@ -285,21 +234,29 @@ est posée dans l'environnement du service `api`.)
   `RuntimeError: 1 citation(s) sont ancrées par page et boîte…`, et la base
   **inchangée** à `f3a4b5c60708`. Le retour à l'état initial vient du DDL
   transactionnel de PostgreSQL, qu'Alembic annonce lui-même en tête de journal
-  (« Will assume transactional DDL ») : les trois descentes déjà jouées sont
-  annulées avec l'erreur.
+  (« Will assume transactional DDL ») : les descentes déjà jouées sont annulées
+  avec l'erreur.
+
+**Non remesuré sur le candidat.** Le même `alembic downgrade c7d8e9fa0102` y
+traverse maintenant **six** révisions et non quatre : `a4b5c6d70809` et
+`b5c6d7e8090a` s'insèrent entre `f3a4b5c60708` et `e2f3a4b50607`. Le mécanisme
+est le même et les trois gardes sont intactes, mais le journal ci-dessus n'est
+pas celui qu'on lira.
 
 **Un trou qu'il faut nommer** : aucune garde ne compte les lignes de
-`plan_calibrations` elles-mêmes. Une calibration déclarée sans qu'aucune mesure
-n'en soit tirée ne satisfait aucune des trois conditions ci-dessus, et
-`drop_table` l'emporterait. Ce qui la protège aujourd'hui, c'est le refus de la
-migration **en aval** et le DDL transactionnel — pas une garde écrite pour elle.
-Sur un moteur sans DDL transactionnel, la table serait partie.
+`plan_calibrations` elles-mêmes, ni les lignes de bordereau qui portent une
+provenance. Une calibration déclarée sans qu'aucune mesure n'en soit tirée ne
+satisfait aucune des trois conditions ci-dessus, et `drop_table` l'emporterait ;
+une quantité reprise dans un bordereau perd sa provenance sans qu'un refus
+s'y oppose. Ce qui les protège aujourd'hui, c'est le refus de la migration **en
+aval** et le DDL transactionnel — pas une garde écrite pour elles. Sur un moteur
+sans DDL transactionnel, elles seraient parties.
 
 #### Voie C — restaurer la sauvegarde prise avant le déploiement
 
 | | |
 | --- | --- |
-| **Exige** | une sauvegarde prise **avant**, et **vérifiée** (section 5). Et un geste que **le dépôt ne fournit pas** : voir ci-dessous. |
+| **Exige** | une sauvegarde prise **avant**, et **vérifiée** (section 3). Et un geste que le dépôt ne fournit pas : voir ci-dessous. |
 | **Coûte** | une interruption de service le temps de la restauration, et une procédure à écrire. |
 | **Perd** | **tout ce qui a été écrit en base depuis la sauvegarde** : mesures, calibrations, devis, clients, et les événements de la chaîne d'audit. Sur le volume, rien n'est perdu mais rien n'est remplacé non plus : le `tar` se détare **par-dessus** (`ops/restaurer.sh`, l'étape qui détare dans le conteneur `api`), donc les fichiers ajoutés depuis restent. L'état obtenu est un mélange : base d'avant, volume d'avant **plus** les fichiers d'après. |
 | **Irréversible** | oui, dès que la base en service est écrasée. **Prendre une seconde sauvegarde juste avant de restaurer la première** est la seule façon de pouvoir encore changer d'avis. |
@@ -308,12 +265,12 @@ Sur un moteur sans DDL transactionnel, la table serait partie.
 procédure :** `ops/restaurer.sh` **refuse** de restaurer dans la pile en
 service. Il exige un marqueur de jetabilité dans le nom de la base (la garde
 `case "$CIBLE"` en tête du script, qui exige `restore`, `scratch`, `jetable` ou
-`tmp` dans le nom), et la #72 — branche `claude/preprod-fiabilisation`,
-absente d'ici — ajoute le même marqueur sur le nom du projet Compose. C'est un
-bon refus — mais il signifie qu'**aucun script du dépôt ne sait remettre une
-sauvegarde en service**. Le script est un script d'exercice. Le jour où la voie
-C est la seule, le geste est à improviser sous pression, à la main, dans le
-conteneur `db`. C'est à écrire avant, pas pendant.
+`tmp` dans le nom) **et le même marqueur sur le nom du projet Compose** (la
+garde `case "$RESTORE_COMPOSE_PROJECT"`). C'est un bon refus — mais il signifie
+qu'**aucun script du dépôt ne sait remettre une sauvegarde en service**. Le
+script est un script d'exercice. Le jour où la voie C est la seule, le geste est
+à improviser sous pression, à la main, dans le conteneur `db`. C'est à écrire
+avant, pas pendant.
 
 #### Laquelle est recommandée
 
@@ -329,236 +286,23 @@ plan : passé ce point, ses gardes refusent, et c'est leur raison d'être. La
 voie C est la seule qui rende un état *connu*, et c'est la plus chère : elle
 perd tout l'intervalle et elle n'existe pas encore sous forme de script.
 
-**Ce qu'il faut corriger dans le dépôt**, et que je n'ai pas fait : la section
-« Retour arrière » de `docs/EXPLOITATION.md` doit dire que le retour arrière se
-fait en **deux temps** — l'image *et* `--no-deps` — et le cas 1 de « Ce que le
-retour arrière ne défait pas » (`:459-461`) doit cesser de dire « rien d'autre à
-faire ». Tant que ce document n'est pas corrigé, c'est lui qu'on ouvrira pendant
-l'incident, et il enverra dans le mur.
+**Ce que `docs/EXPLOITATION.md` en dit désormais.** Une version précédente de ce
+document reprochait à `docs/EXPLOITATION.md` d'affirmer qu'un retour arrière par
+image « suffit, rien d'autre à faire ». Vérifié sur le candidat : ce document a
+été réécrit, sa section « Retour arrière » porte un encadré qui nomme ce faux et
+le corrige, et ses sections « Pourquoi l'image seule ne suffit pas » et « Les
+trois sorties, et ce que chacune coûte » disent la même chose que celle-ci,
+avec la même mesure du code 255. **Le document qu'on ouvrira pendant l'incident
+n'envoie plus dans le mur.** Ce qui reste à y corriger est hors du retour
+arrière, et la section 5 le dit.
 
 ---
 
-## 2. La revue : dans quel ordre relire, et ce que chacune demande
+## 2. Le déploiement : les étapes, les commandes, et le contrôle entre chacune
 
-**43 demandes de fusion sont ouvertes** (`gh api
-"repos/hermesprojet/devis/pulls?state=open&per_page=50"`, comptées), dont **21
-hors brouillon**. Elles se rangent en six groupes.
-
-**Une PR empilée ne montre que son écart à sa base.** La relire hors de son
-ordre, c'est relire un diff dont la moitié du contexte manque.
-
-### Groupe A — la pile des plans, à relire de bas en haut
-
-| Ordre | PR | Branche → base | Ce qui demande l'attention |
-| --- | --- | --- | --- |
-| 1 | **#77** | `claude/lecture-de-plans` → `main` | Le socle DXF, et la seule du groupe qui vise `main`. Le refus du DWG doit être un refus nommé, pas un plantage. |
-| 2 | **#78** | `claude/parcours-plan-essayable` → `lecture-de-plans` | **Porte `d8e9fa010203`.** C'est son `downgrade()` qui décide de ce qu'un retour arrière détruit : deux refus, les deux `raise RuntimeError` du `downgrade()` de `…0007…`. À relire ligne à ligne — la section 1 montre pourquoi. |
-| 3 | **#80** | `claude/image-qui-lit-les-plans` → `parcours-plan-essayable` | Les extras de l'image (`infra/api.Dockerfile`, `[postgres,plans,pdf]`). Le commentaire du fichier nomme le défaut qu'il ferme : sans eux l'image « démarre, répond à tous les contrôles de santé, affiche l'écran "Lire le plan" » et échoue à l'analyse. |
-| 4 | **#85** | `claude/lecteur-pdf` → `image-qui-lit-les-plans` | Lecture et aperçu PDF, sans mesure. Vérifier que rien n'y mesure encore. |
-| 5 | **#87** | `claude/cotes-dans-les-blocs` → `lecteur-pdf` | Blocs DXF imbriqués : le risque de relecture est le **double comptage**. |
-| 6 | **#89** | `claude/mesures-pdf` → `cotes-dans-les-blocs` | **Porte `e2f3a4b50607`**, la mesure et la tuile. 42 fichiers. Trois points ci-dessous. Depuis les corrections du 7 octobre, la tranche porte en plus `a4b5c6d70809`, qui en devient la tête. |
-
-**Les trois points de la #89 :**
-
-1. Le `downgrade()` supprime toute la table `plan_calibrations` (fin du
-   `downgrade()` de `…0008…` : deux `op.drop_index`, puis
-   `op.drop_table("plan_calibrations")`), et le facteur d'échelle **n'y est pas
-   stocké** : « il se recalcule à l'identique depuis ces trois champs »
-   (en-tête du module `…0008…`). Ce qui est détruit n'est donc pas une valeur
-   dérivée, c'est la seule trace de l'échelle **déclarée par un humain**.
-2. `apps/api/src/metreo_api/rendu_tuile.py` pose
-   `PLAFOND_MEMOIRE = 1536 * 1024 * 1024` au processus fils, alors que le
-   conteneur `api` est borné à **1 Go** (`infra/docker-compose.staging.yml`,
-   limite mémoire du service `api`). Le plafond du fils est **au-dessus** de
-   celui du conteneur : c'est le cgroup qui mordra le premier, et le symptôme
-   sera un `OOMKilled`. Le fils le plus lourd mesuré a culminé à **510 Mo**
-   (`rendu_tuile.py`, en-tête du module), sur les quatre plans du propriétaire —
-   **des grands formats de 1 189 à 1 690 mm de grand côté**, pas des A0,
-   mesurés : 1480 × 850, 1690 × 850, 1189 × 914 et 1189 × 914 mm.
-3. La base de calibration minimale vaut `CALIBRATION_MINIMALE_EN_POINTS = 10.0`
-   (`services/mesures_pdf.py`), soit **3,5 mm de papier** — 10 points
-   PostScript, donc 10/72 de pouce, **quelle que soit la taille de la page**.
-   Rapportée à la loupe (5 % de la page, rendue sur 512 px) : 6 % de la largeur
-   de la loupe sur une page de 1 189 mm, 17 % sur un A3, 67 % sur la fixture de
-   300 points du dépôt. Et l'incertitude relative du facteur est **sans
-   échelle** : ε vaut la largeur de la loupe divisée par 512, donc √2·ε/d ne
-   dépend que de la *fraction* de la loupe couverte par la base — **0,307 %**
-   si les deux points sont aux bords, **0,552 %** à mi-largeur, identique sur
-   1 189 mm et sur A3. Le relecteur doit savoir que ce seuil ne protège pas
-   proportionnellement à la page.
-
-### Groupe B — la connexion
-
-| Ordre | PR | Branche → base | Attention |
-| --- | --- | --- | --- |
-| 7 | **#73** | `codex/login-account-choice` → `main` | Base de la #81. |
-| 8 | **#81** | `claude/codes-de-connexion` → `codex/login-account-choice` | **Porte `d1e2f3a40506`**, et c'est elle qui doit recevoir la migration de fusion (section 3). Son `downgrade()` ne retire qu'une colonne sans donnée métier : c'est la seule des trois qui redescende sans rien perdre. |
-
-### Groupe C — l'exploitation, à relire **avant** tout déploiement
-
-C'est ici que la version précédente de ce document se trompait, et il faut le
-dire franchement : **elle attribuait à la #83 ce qui appartient à la #72.**
-Vérifié fichier par fichier (`gh api repos/hermesprojet/devis/pulls/<n>/files`).
-
-| Ordre | PR | Branche → base | Ce qu'elle apporte **réellement** |
-| --- | --- | --- | --- |
-| 9 | **#72** | `claude/preprod-fiabilisation` → `main` | **Toute la mécanique.** 10 fichiers : `ops/verifier_deploiement.sh` (**ajouté**, 213 lignes) ; `infra/docker-compose.jetable.yml` (**ajouté**, 34 lignes) ; la **garde de jetabilité sur le nom de projet** dans `ops/restaurer.sh` (+49/−3) ; `infra/web.Dockerfile` (+9/−1, dont `HOSTNAME=0.0.0.0`) ; `.github/workflows/ci.yml` (+70) ; `ops/repetition_staging.sh` (+37/−3) ; `ops/verifier_disponibilite.sh` (+10/−1) ; `docs/EXPLOITATION.md` (+176/−6) ; `docs/AUTHENTIFICATION.md` (+105) ; `infra/staging.env.example` (+7). |
-| 10 | **#83** | `claude/documentation-de-deploiement` → `preprod-fiabilisation` | **De la documentation, et rien d'autre.** 4 fichiers : `README.md` (+18/−10), `docs/EXPLOITATION.md` (+59/−13), `docs/ROADMAP.md` (+11/−5), `infra/staging.env.example` (+2/−1). Aucun script, aucune composition. |
-
-Conséquence pratique : **c'est la #72 qui conditionne le déploiement**, pas la
-#83. La #83 reste utile — elle corrige les noms d'images et les commandes sans
-`--env-file` — mais elle n'ajoute aucun outil.
-
-`ops/verifier_deploiement.sh` **n'existe pas sur la branche de travail** : il
-vient de la #72, branche `claude/preprod-fiabilisation` (`git show
-origin/claude/preprod-fiabilisation:ops/verifier_deploiement.sh`). Il contrôle
-six maillons, dans l'ordre de ses propres titres : « 1. Les conteneurs, aux yeux
-de Docker » ; « 2. Caddy, joint en local avec le bon Host » ; « 3. Le chemin que
-le proxy de devant emprunte : l'IP du conteneur » ; « 4. Le certificat
-réellement présenté sur le 443 de cette machine » ; « 5. Vu de l'extérieur, en
-HTTPS, par le nom public » ; « 6. Ce que le proxy de devant dit de l'émission du
-certificat ». Il rend `0`, `1` ou `2`, et `2` signifie, dans les mots exacts de
-son en-tête : « 2 Docker injoignable — rien n'a été contrôlé. »
-
-**Risque de conflit à signaler** : la #72 et la #89 modifient toutes deux
-`.github/workflows/ci.yml`, dans des blocs distants — job `containers` pour la
-#72, jobs `api-sqlite`, `api-postgres` **et `e2e`** pour la #89. Ce troisième
-manquait à la version précédente de cette phrase : la #89 touche aussi `e2e`,
-où elle ajoute l'extra `pdf` à l'installation du banc (`pip install -c
-constraints/api.txt ./packages/domain "./apps/api[plans,pdf]"`). La conclusion
-« blocs distants » tient quand même : les hunks de la #72 sont tous dans
-`containers`, ceux de la #89 dans trois jobs qui le précèdent. La #83 et la #89
-modifient toutes deux `README.md`. Rien d'insoluble ; à ne pas découvrir au
-moment de la fusion.
-
-### Groupe D — autonomes vers `main`, dans n'importe quel ordre
-
-**#76** (failles PyJWT), **#82** (audit JavaScript), **#86** (provenance du
-candidat), **#88** (fiche des cotes de référence). Aucune ne touche aux
-migrations. La #88 est traitée à part en section 3.
-
-### Groupe E — dépendances
-
-**#70, #79, #14, #13, #12, #11, #10.** **Cinq au moins franchissent une version
-majeure** — et non deux, comme l'écrivait la version précédente de ce document,
-qui rassurait ainsi sur quatre PR qui en franchissent pourtant une. Relevé sur
-les titres rendus par `gh api
-"repos/Hermesprojet/Devis/pulls?state=open&per_page=100"` :
-
-- **#10** `actions/setup-python 5.6.0 → 7.0.0` ;
-- **#11** `actions/upload-artifact 4.6.2 → 7.0.1` ;
-- **#12** `actions/checkout 4.4.0 → 7.0.1` ;
-- **#14** `typescript 5.7.2 → 7.0.2` ;
-- **#79** `@types/node 22.10.2 → 26.6.4`.
-
-**#13** est un groupe `next` de 5 mises à jour dont le titre ne donne pas les
-versions : à ouvrir pour le savoir. Seule la **#70** (`@playwright/test
-1.62.1 → 1.63.0`) reste dans sa majeure — et ce n'est ni une action GitHub ni
-`@types/node` : c'est la seule des sept qui touche un outil de la chaîne de
-contrôle, puisque le job `e2e` de `ci.yml` dépend de Playwright.
-
-### Groupe F — brouillons, à ne pas fusionner
-
-22 brouillons, dont **#90** (`claude/candidat-complet`, en-tête « ÉPREUVE
-SEULEMENT — ne pas fusionner ») et **#84** (`claude/integration-cinq-pr`, même
-mention), plus les anciens #37 à #16.
-
-La #90 compte pour une raison et une seule : **douze contrôles distincts y sont
-verts** sur `466804165ccdb65859c12f31de2b929403f62c1d` — les onze ateliers de
-`ci.yml` et « Répétition complète » (23 exécutions de contrôle pour 12 noms
-distincts, `gh api repos/hermesprojet/devis/commits/4668041/check-runs`). C'est
-la seule preuve existante que les quatorze branches tiennent ensemble. Et c'est
-elle qui porte la migration de fusion, ce qui fait tout le sujet de la
-section 3.
-
----
-
-## 3. La fusion : l'ordre, où va la #88, et ce qui casse si on inverse
-
-L'ordre est établi, simulé sur un arbre réel et éprouvé sur un PostgreSQL 16 +
-PostGIS, dans `docs/FUSION_DES_MIGRATIONS.md` — **déjà dans le dépôt**, sur
-cette branche. Je le reprends sans le modifier et j'y insère les groupes qui
-manquent.
-
-| # | Action | Tête d'Alembic sur `main` ensuite |
-| --- | --- | --- |
-| 0 | fusionner **#88** | inchangée (aucune migration) |
-| 1 | fusionner **#77** | `c7d8e9fa0102` (inchangée) |
-| 2 | fusionner **#78** | `d8e9fa010203` |
-| 3 | fusionner **#80**, **#85**, **#87** | inchangée |
-| 4 | fusionner **#89** | `a4b5c6d70809` |
-| 5 | fusionner `main` dans `codex/login-account-choice`, puis dans `claude/codes-de-connexion` | — |
-| 6 | **déplacer** `apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py` de `claude/candidat-complet` vers `claude/codes-de-connexion`, et l'y committer | — |
-| 7 | fusionner **#73** | inchangée |
-| 8 | fusionner **#81** | `f3a4b5c60708` |
-| 9 | fusionner **#72**, puis **#83** | inchangée (aucune migration) |
-| 10 | fusionner **#76**, **#82**, **#86**, puis les Dependabot | inchangée |
-
-« **Une seule tête à chaque étape.** `main` n'est jamais rouge. »
-(`docs/FUSION_DES_MIGRATIONS.md:108`)
-
-Les **commandes exactes de l'étape 6** — le transfert effectif du fichier vers
-la branche de la #81, et le contrôle `alembic heads` qui dit s'il a réussi —
-sont dans `docs/FUSION_DES_MIGRATIONS.md`, section « Les commandes de
-l'étape 6 — le transfert effectif ».
-
-### Où placer la #88, et pourquoi en tête
-
-La #88 **n'apporte qu'un seul fichier** : `docs/COTES_DE_REFERENCE.md`, ajouté,
-220 lignes. Aucun code, aucune migration (`gh api
-repos/hermesprojet/devis/pulls/88/files`). Elle vise `main` directement.
-
-Or ce fichier est **absent de la branche de travail `claude/mesures-pdf`** — il
-vient de la #88, branche `claude/cotes-de-reference`, et se lit par `git show
-origin/claude/cotes-de-reference:docs/COTES_DE_REFERENCE.md` — et **deux
-fichiers livrés par cette tranche le citent** :
-
-- `apps/api/src/metreo_api/services/mesures_pdf.py` — « pas la même exigence
-  qu'un châssis (voir `docs/COTES_DE_REFERENCE.md`) » ;
-- `apps/web/e2e-premier-devis/suite-plan-pdf-mesures.spec.ts` — « c'est
-  précisément ce que `docs/COTES_DE_REFERENCE.md` sert à établir ».
-
-Ce sont donc deux renvois qui, sur la branche de travail, ne résolvent vers
-rien. **La référence se résout dès que la #88 est fusionnée, et la #88 ne
-contient QUE ce document** : il n'y a aucun ordre à respecter, aucun risque de
-tête, aucune dépendance. La fusionner en premier coûte une minute et ferme deux
-renvois cassés avant même que le code qui les porte n'arrive. C'est pourquoi je
-la mets à l'étape 0 plutôt que de la ranger avec le groupe D.
-
-### L'étape 6, et pourquoi elle n'est pas optionnelle
-
-La migration de fusion `f3a4b5c60708` n'existe **que** sur
-`claude/candidat-complet` — vérifié : `git ls-tree -r --name-only <branche> |
-grep 0009_fusion` ne rend un résultat que pour cette branche, et rend zéro pour
-`main`, `claude/codes-de-connexion`, `claude/mesures-pdf` et
-`claude/cotes-de-reference`.
-
-Comme la #90 est un brouillon destiné à ne pas être fusionné, l'y laisser revient
-à la perdre, et `main` se retrouverait à deux têtes à l'étape 8 **sans que
-personne n'ait rien fait de mal**.
-
-### Ce qui casse si on inverse
-
-| Inversion | Ce qui se passe |
-| --- | --- |
-| La connexion (#73/#81) avant la pile des plans | `main` est à deux têtes « de l'étape #78 jusqu'à l'étape #89 » (`docs/FUSION_DES_MIGRATIONS.md:117`), soit **quatre fusions** pendant lesquelles `main` et toutes les demandes ouvertes sont rouges. |
-| Une PR « migrations seules » vers `main` | `KeyError: 'd8e9fa010203'`, et même corrigé, la porte de dérive refuse : la migration créerait `plan_calibrations` sans que `models.py` la déclare. |
-| Mettre la fusion dans la #89 | `KeyError: 'd1e2f3a40506'`. |
-| Mettre la fusion dans la #81 **avant** l'étape 5 | `KeyError: 'e2f3a4b50607'`. |
-
-(Les quatre lignes ci-dessus sont celles du tableau de
-`docs/FUSION_DES_MIGRATIONS.md`, section « Ce qui casse si on inverse ».)
-
-**Deux têtes ne passent pas inaperçues**, et c'est une bonne nouvelle :
-`conftest.alembic_head()` et `test_referential_action_drift.py` affirment
-`len(heads) == 1`, et sur un arbre à deux têtes la seule suite ordinaire, sans
-PostgreSQL, tombe à « **6 échecs et 1 erreur** »
-(`docs/FUSION_DES_MIGRATIONS.md:57`). Le risque n'est pas que ça passe : c'est
-que ça bloque tout, `main` rouge et chaque PR ouverte rouge avec elle.
-
----
-
-## 4. Le déploiement : les étapes, les commandes, et le contrôle entre chacune
+Ces étapes sont les gestes 9 à 13 de `docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md`,
+section « La voie unique, de bout en bout ». Elles ne commencent qu'une fois la
+fusion faite, le contenu comparé et la sauvegarde vérifiée.
 
 ### Ce qui est automatisé, et ce qui ne l'est pas
 
@@ -573,12 +317,18 @@ que `ci.yml`, `claude.yml`, `publier-images.yml` et `repetition-staging.yml`.
 Aucun SSH, aucune livraison continue, aucun atelier de déploiement. Les
 étapes 2 à 6 ci-dessous se tapent à la main, sur la machine.
 
-**La montée du schéma, elle, est éprouvée avant de toucher la machine.**
-`scripts/epreuve_montee_depuis_preproduction.py` monte une base au schéma de
-`main` — avec les fichiers de `main` — puis y applique les migrations du
-candidat. C'est le geste exact de l'étape 4, joué hors machine, sur SQLite en
-quelques secondes et sur un vrai PostgreSQL avec `--admin-url`. L'atelier
-« API (PostgreSQL + PostGIS) » le rejoue à chaque commit.
+**La montée du schéma, elle, est éprouvée avant de toucher la machine, et avec
+des données.** `scripts/epreuve_montee_depuis_preproduction.py` monte une base au
+schéma de `main` — avec les fichiers de `main` — puis y applique les migrations
+du candidat. Avec `--avec-donnees`, il y écrit d'abord, **avec le code de
+`main`**, un chantier complet — organisation, administrateur, client, projet,
+bordereau, bibliothèque de prix et devis **gelé** (le jeu d'essai est dans
+`scripts/jeu_d_essai_de_montee.py`) — puis vérifie après la montée que **dix-sept
+lignes métier sont conservées sans une différence**, que le devis gelé rend le
+même total et la même empreinte sous le moteur du candidat, et que la chaîne
+d'audit se relit **et se continue**. C'est le geste exact de l'étape 4,
+joué hors machine. L'atelier « API (PostgreSQL + PostGIS) » le rejoue à chaque
+commit.
 
 Ce que les deux contrôles voisins ne disent pas : `scripts/migration_roundtrip.py`
 part d'une base **vide**, et `scripts/schema_drift_gate.py` compare l'**arrivée**
@@ -602,14 +352,13 @@ ghcr.io/hermesprojet/devis-api:<sha>
 ghcr.io/hermesprojet/devis-web:<sha>
 ```
 
-`docs/EXPLOITATION.md:94` montre encore `ghcr.io/<compte>/metreo-api` et
-`infra/staging.env.example` encore
-`ghcr.io/hermesprojet/metreo-api:4604b7a8`. **Aucune image de ce nom n'existe.**
-Une ligne recopiée à chaud pendant un incident tirerait une image introuvable.
-La #83 corrige les deux.
+Vérifié sur le candidat : `docs/EXPLOITATION.md` (section « Les noms ») et
+`infra/staging.env.example` donnent bien ces deux noms. Une version précédente
+de ce document signalait qu'ils montraient encore `metreo-api`, un nom
+d'image qui n'existe pas : ce n'est plus le cas.
 
 *Contrôle avant de continuer* : que le résumé de l'atelier affiche bien les deux
-lignes, et que l'image `web` porte le correctif de la #72 :
+lignes, et que l'image `web` porte `HOSTNAME` :
 
 ```
 docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
@@ -618,15 +367,15 @@ docker image inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \
 
 Sans cette variable, Next se lie à l'adresse du conteneur, la sonde échoue, le
 conteneur ne devient jamais `healthy` — et le proxy de devant, lui, ne voit rien
-d'anormal. Vérifié : `HOSTNAME` est **absent** de `infra/web.Dockerfile` sur
-cette branche comme sur `39ad8d0`, et présent sur
-`origin/claude/preprod-fiabilisation` (la branche de la #72), où il est posé dans le
-bloc `ENV` de ce fichier, avec le commentaire qui dit pourquoi il n'est pas
-décoratif.
+d'anormal. Vérifié sur le candidat : `HOSTNAME=0.0.0.0` **est** dans
+`infra/web.Dockerfile`, dans son bloc `ENV`, avec le commentaire qui dit
+pourquoi il n'est pas décoratif. Il est absent de `39ad8d0` : c'est donc
+l'image publiée depuis `main` après fusion qui le portera, et pas celle qui sert
+aujourd'hui.
 
 ### Étape 2 — noter le SHA sortant, puis sauvegarder
 
-Dans cet ordre, et avant de toucher à `infra/staging.env`. Voir section 5. C'est
+Dans cet ordre, et avant de toucher à `infra/staging.env`. Voir section 3. C'est
 la seule étape qu'il ne faut jamais sauter : après la section 1, la sauvegarde
 **est** la condition du déploiement.
 
@@ -661,9 +410,8 @@ des étiquettes Traefik). Sans le fichier, Compose refuse de se résoudre, et
 `mc images` échoue avant d'avoir rien montré.
 
 **`PUBLIC_DOMAIN` n'apparaît comme ligne active dans aucun fichier du dépôt** :
-`infra/staging.env.example` ne la donne qu'en commentaire, et la #72 n'y ajoute
-que deux commentaires de plus (`HTTP_DIAGNOSTIC_PORT`, `TRAEFIK_CERT_RESOLVER`).
-Le `infra/staging.env` de la machine doit donc déjà la porter — la pile tourne,
+`infra/staging.env.example` ne la donne qu'en commentaire. Le
+`infra/staging.env` de la machine doit donc déjà la porter — la pile tourne,
 donc il la porte — mais **cela ne se vérifie pas depuis le dépôt**. À confirmer
 sur la machine avant tout le reste :
 
@@ -710,26 +458,31 @@ section 1 décrit.
 
 ### Étape 5 — vérifier la chaîne
 
-| Ce qu'on vérifie | Commande | Où elle existe |
+| Ce qu'on vérifie | Commande | Codes de sortie |
 | --- | --- | --- |
-| Les six maillons derrière le proxy | `ops/verifier_deploiement.sh` | **uniquement sur la branche de la #72**, `claude/preprod-fiabilisation` |
-| La disponibilité vue de l'extérieur — `0` disponible, `1` dégradé, `2` indisponible | `ops/verifier_disponibilite.sh https://<domaine>` | `ops/verifier_disponibilite.sh`, sur cette branche (verdict et codes de sortie dans le `case "$etat"` final) |
+| Les six maillons derrière le proxy | `ops/verifier_deploiement.sh` | `0`, `1`, ou `2` — et `2` signifie, dans les mots exacts de son en-tête : « 2 Docker injoignable — rien n'a été contrôlé. » |
+| La disponibilité vue de l'extérieur | `ops/verifier_disponibilite.sh https://<domaine>` | `0` disponible, `1` dégradé, `2` indisponible (le `case "$etat"` final du script) |
 
-**Ne lancez pas `verifier_disponibilite.sh` nu contre `127.0.0.1:8081`.** Le
+`ops/verifier_deploiement.sh` **est sur le candidat** — une version précédente
+de ce document le disait absent. Il contrôle six maillons, dans l'ordre de ses
+propres titres : « 1. Les conteneurs, aux yeux de Docker » ; « 2. Caddy, joint
+en local avec le bon Host » ; « 3. Le chemin que le proxy de devant emprunte :
+l'IP du conteneur » ; « 4. Le certificat réellement présenté sur le 443 de cette
+machine » ; « 5. Vu de l'extérieur, en HTTPS, par le nom public » ; « 6. Ce que
+le proxy de devant dit de l'émission du certificat ».
+
+**Ne lancez pas `ops/verifier_disponibilite.sh` nu contre `127.0.0.1:8081`.** Le
 Caddyfile n'ouvre qu'un site, celui de `PUBLIC_HOST` ; une requête portant un
 autre `Host` n'est pas servie par ce bloc, **et le script conclurait
-« INDISPONIBLE » sur une pile saine**. C'est la phrase de
-`docs/EXPLOITATION.md`, encadré « Ne lancez pas `ops/verifier_disponibilite.sh`
-contre `127.0.0.1:8081` » (ligne 171 sur cette branche, réécrit par la #72) ;
-une version précédente de ce document en avait laissé tomber le verdict, ce qui
-inversait la mise en garde — on y lisait « le script conclurait que la pile est
-saine », c'est-à-dire le contraire de la source.
+« INDISPONIBLE » sur une pile saine**. C'est aussi ce que dit
+`docs/EXPLOITATION.md`, section « Derrière un proxy déjà en place », qui donne
+en plus la sortie de secours : `METREO_HOST_HEADER=<domaine>`.
 
 Pour le diagnostic local, gardez le bon `Host`, **mais ne regardez pas que le
-code de réponse** : la section 1 de ce document établit qu'à un `Host` qu'il ne
-sert pas, Caddy répond un `200` **vide**, pas une erreur. Un `curl` qui
-n'inspecte ni les en-têtes ni le corps rend donc le **même** `200` dans les deux
-cas qu'il est censé séparer. La forme qui tranche est celle de la #72 :
+code de réponse** : à un `Host` qu'il ne sert pas, Caddy répond un `200`
+**vide**, pas une erreur. Un `curl` qui n'inspecte ni les en-têtes ni le corps
+rend donc le **même** `200` dans les deux cas qu'il est censé séparer. La forme
+qui tranche :
 
 ```
 curl -si -H 'Host: <domaine>' http://127.0.0.1:8081/api/v1/live \
@@ -760,13 +513,16 @@ mc exec -T api python -c "import ezdxf, pypdfium2; print('ok')"
 ```
 
 puis, au navigateur : déposer un plan, l'afficher, le calibrer, prendre une
-mesure. C'est le seul geste qui éprouve la tranche. **Et il ferme la voie B de
-la section 1** : dès que ce plan est affiché, `page_render` est enregistré, et
-le schéma ne redescend plus.
+mesure. C'est le seul geste qui éprouve la tranche. Le parcours écran par écran
+est `docs/ESSAI_UTILISATEUR_PDF.md` ; ce qu'il faut relever sur vos propres
+plans est `docs/VALIDATION_SUR_PLANS_REELS.md`.
+
+> **Et ce geste ferme la voie B de la section 1.** Dès que ce plan est affiché,
+> `page_render` est enregistré, et le schéma ne redescend plus.
 
 ---
 
-## 5. La sauvegarde AVANT : base, volume, et comment savoir qu'elle vaut quelque chose
+## 3. La sauvegarde AVANT : base, volume, et comment savoir qu'elle vaut quelque chose
 
 ### Ce que `ops/sauvegarder.sh` couvre réellement
 
@@ -820,7 +576,7 @@ machine sauvegardée ne protège de rien. »
 
 | Hors sauvegarde | Source |
 | --- | --- |
-| **Le certificat TLS**, quand il vit chez le proxy de devant (`acme.json` de Traefik) | `docs/EXPLOITATION.md:162-167` : « qu'aucune sauvegarde Metreo ne couvre » |
+| **Le certificat TLS**, quand il vit chez le proxy de devant (`acme.json` de Traefik) | `docs/EXPLOITATION.md`, section « Derrière un proxy déjà en place » : « qu'aucune sauvegarde Metreo ne couvre » |
 | **`infra/staging.env` lui-même** — secrets OIDC, `METREO_JWT_SECRET`, mot de passe PostgreSQL. Non versionné, et le script ne l'archive pas | absence dans `ops/sauvegarder.sh` |
 | **Les plans réels déposés hors application** (par exemple `/opt/metreo-plans/`) | `docs/PLANS_REELS.md` : « la sauvegarde chiffrée le couvre **si on l'y ajoute explicitement** » |
 
@@ -832,36 +588,32 @@ Une sauvegarde non vérifiée n'en est pas une. La vérification est une
 il compte, il vérifie la **chaîne d'audit organisation par organisation** et il
 refuse de conclure si aucun compte n'a d'appartenance active.
 
-> ### ⚠ Sur la branche de travail, cet exercice ne doit pas être fait
->
-> Deux manques, tous deux comblés par la **#72** (branche
-> `claude/preprod-fiabilisation`) et non par la #83.
->
-> **1. `infra/docker-compose.jetable.yml` n'existe pas ici** — il vient de la
-> #72 (`git show
-> origin/claude/preprod-fiabilisation:infra/docker-compose.jetable.yml`). Sans
-> lui, une seconde pile montée avec la seule composition de base tenterait de
-> prendre 80 et 443 — collision avec le proxy en place ; et avec la surcouche
-> `derriere-proxy`, elle porterait **les mêmes étiquettes Traefik que la pile en
-> service**, donc la règle `Host()` du domaine réel
-> (`infra/docker-compose.derriere-proxy.yml`). Traefik pourrait router le trafic
-> du site vers la pile de restauration. Le fichier de la #72 existe exactement
-> pour cela : `ports: !override []` et `labels: !override {}`.
->
-> **2. `ops/restaurer.sh` ne vérifie la jetabilité que sur le nom de la base**
-> (la garde `case "$CIBLE"` en tête du script). Le nom du **projet
-> Compose** n'est pas vérifié. Or le stockage des fichiers est détaré dans le
-> conteneur `api` **du projet nommé**. Taper
-> `RESTORE_COMPOSE_PROJECT=metreo-staging` fusionnerait l'archive par-dessus les
-> pièces jointes vivantes, **sans un message**. La base, elle, serait épargnée :
-> elle est recréée à part. La #72 ferme ce trou en exigeant le même marqueur sur
-> le nom de projet — cette garde-là, elle aussi, n'existe que sur sa branche.
->
-> **Ne faites pas d'exercice de restauration avant que la #72 ne soit
-> fusionnée.**
+> **Cet exercice est faisable aujourd'hui, et rien ne le retient plus.** Une
+> version précédente de ce document l'interdisait jusqu'à la fusion d'une
+> demande. Vérifié sur le candidat, les deux manques qu'elle invoquait sont
+> comblés : `infra/docker-compose.jetable.yml` **existe**, et `ops/restaurer.sh`
+> porte **deux** gardes de jetabilité — sur le nom de la base
+> (`case "$CIBLE"`) et sur le nom du projet Compose
+> (`case "$RESTORE_COMPOSE_PROJECT"`) — ainsi qu'une fonction `valeur_env`.
+> Interdire l'exercice bloquait la seule vérification qui prouve qu'une
+> sauvegarde vaut quelque chose.
 
-**Après la #72**, le bloc est celui que `infra/docker-compose.jetable.yml`
-documente lui-même dans son en-tête d'usage :
+Pourquoi `infra/docker-compose.jetable.yml` n'est pas une commodité : il pose
+`ports: !override []` et `labels: !override {}`. Sans lui, une seconde pile
+montée avec la seule composition de base tenterait de prendre 80 et 443 —
+collision avec le proxy en place ; et avec la surcouche `derriere-proxy`, elle
+porterait **les mêmes étiquettes Traefik que la pile en service**, donc la règle
+`Host()` du domaine réel (`infra/docker-compose.derriere-proxy.yml`). Traefik
+pourrait router le trafic du site vers la pile de restauration.
+
+Pourquoi la garde sur le nom de projet compte autant que celle sur le nom de la
+base : le stockage des fichiers est détaré dans le conteneur `api` **du projet
+nommé**. Taper `RESTORE_COMPOSE_PROJECT=metreo-staging` fusionnerait l'archive
+par-dessus les pièces jointes vivantes, **sans un message**. La base, elle,
+serait épargnée : elle est recréée à part. Le refus porte donc sur les deux noms.
+
+Le bloc est celui que `infra/docker-compose.jetable.yml` documente lui-même dans
+son en-tête d'usage :
 
 ```
 J="--project-name metreo-restore \
@@ -879,31 +631,30 @@ ops/restaurer.sh /var/backups/metreo/<archive>.tar.gz metreo_restore_essai
 docker compose $J down --volumes
 ```
 
-**Cette commande n'est exécutable telle quelle qu'avec la #72**, et c'est un
-point que la version précédente de ce document avait manqué. Sur la branche de
-travail, `ops/restaurer.sh` exige `POSTGRES_USER` **et** `POSTGRES_DB` dans
-l'environnement du shell, et utilise `${POSTGRES_PASSWORD:-}` — qui vaut la
-chaîne vide si elle n'est pas posée, donc une URL de connexion sans mot de
-passe. `RESTORE_ENV_FILE` n'est passée qu'à Compose ; le script ne la lit pas.
-La #72 ajoute une fonction `valeur_env` qui l'extrait par `sed` — et qui ne la
-*source* pas, délibérément : « ce n'est pas un fichier shell, et une valeur non
-protégée y exécuterait une commande ». C'est une raison de plus de ne pas
-contourner le manque en sourçant `infra/staging.env` à la main : un mot de passe
-contenant `$(…)` s'exécuterait.
+`RESTORE_ENV_FILE` est lue par le script, et non seulement passée à Compose :
+la fonction `valeur_env` l'extrait par `sed`, et ne la *source* pas,
+délibérément — « ce n'est pas un fichier shell, et une valeur non protégée y
+exécuterait une commande ». C'est aussi la raison de ne jamais sourcer
+`infra/staging.env` à la main : un mot de passe contenant `$(…)` s'exécuterait.
+
+`ops/verifier_restauration.py` lit `METREO_DATABASE_URL`, qui doit pointer la
+base **restaurée**.
 
 ### Une précision qui compte en mode `oidc`
 
 `verifier_restauration.py` contrôle une **structure** — un compte actif avec une
 appartenance active —, pas un accès. En `oidc`, entrer demande en plus une
 identité liée. **Une base restaurée peut passer ce contrôle et rester fermée.**
-La #83 ajoute cette précision à `docs/EXPLOITATION.md`.
 
 ---
 
-## 6. Le retour arrière, cas par cas, et ce qui est irréversible
+## 4. Le retour arrière, cas par cas, et ce qui est irréversible
 
 La section 1 porte le fait qui domine : **le retour arrière par image seule ne
 remet pas l'API en service.** Les trois cas ci-dessous s'y rapportent.
+`docs/FICHE_DE_DECISION_MISE_EN_LIGNE.md`, section « Retour arrière — et ce
+qu'il coûte aux données de l'essai », en donne le résumé d'une page ; ce qui
+suit est le détail.
 
 ### Avant tout geste — récolter
 
@@ -920,11 +671,10 @@ seule perte de tous les cas qui soit purement évitable.
 
 ### Cas A — « le déploiement ne démarre pas »
 
-`ops/verifier_deploiement.sh` (après la #72 : il n'existe que sur
-`claude/preprod-fiabilisation`) donne le maillon exact ; à défaut, `mc ps -a` et
-les sondes. Le tableau de `docs/EXPLOITATION.md:405-410` sépare les quatre
-lectures : API tombée, base injoignable (**ne pas redémarrer l'API**),
-configuration dégradée, front ou routage.
+`ops/verifier_deploiement.sh` donne le maillon exact ; à défaut, `mc ps -a` et
+les sondes. Le tableau de `docs/EXPLOITATION.md`, section « Incident »,
+sépare les quatre lectures : API tombée, base injoignable (**ne pas redémarrer
+l'API**), configuration dégradée, front ou routage.
 
 **Le geste :** remettre le SHA précédent dans `infra/staging.env`, puis
 `mc up -d` — **avec les mêmes `-f`** — **et constater que cela ne suffit pas** :
@@ -963,6 +713,12 @@ migrations**. Relevé le 7 octobre 2026 :
 qu'on attend : deux routes absentes, et le refus de migrer qui est précisément
 la raison d'être de cette voie.
 
+La dernière ligne nomme `a4b5c6d70809` parce que c'était la **tête** de l'arbre
+le jour du relevé. Sur le candidat la tête est `f3a4b5c60708`, et c'est elle que
+le message nommera — c'est d'ailleurs la mesure donnée en section 1. Le code de
+sortie, lui, est le même : le refus ne dépend pas de laquelle des révisions
+l'ancien arbre ignore.
+
 **Ce que la mesure change à la procédure** : rien, elle la confirme — mais elle
 la confirme. L'écran de lecture de plans disparaît, les mesures prises pendant
 l'essai **restent en base, intactes et invisibles**, et tout le reste du
@@ -988,11 +744,17 @@ Deux causes nommées par le dépôt :
    « démarre, répond à tous les contrôles de santé, affiche l'écran "Lire le
    plan" » et échoue à l'analyse. Contrôle :
    `mc exec -T api python -c "import ezdxf, pypdfium2; print('ok')"`.
-2. **La mémoire.** Conteneur borné à 1 Go (`infra/docker-compose.staging.yml`,
-   limite mémoire du service `api`), plafond du fils à 1536 Mo
-   (`rendu_tuile.py`, constante `PLAFOND_MEMOIRE`) : le cgroup mord le premier.
-   Symptôme `OOMKilled`, et `docs/EXPLOITATION.md:502` rappelle que rien d'autre
-   ne l'annonce.
+2. **La mémoire.** Conteneur borné à **1 Go**
+   (`infra/docker-compose.staging.yml`, `limits: { cpus: "2.0", memory: 1G }` du
+   service `api`), plafond du processus fils à **1536 Mo**
+   (`rendu_tuile.py`, constante `PLAFOND_MEMOIRE`) : le plafond du fils est
+   **au-dessus** de celui du conteneur, donc c'est le cgroup qui mordra le
+   premier. Symptôme `OOMKilled`, et `docs/EXPLOITATION.md`, section « Limites
+   de ressources », rappelle que rien d'autre ne l'annonce. Le fils le plus
+   lourd mesuré a culminé à **510 Mo** (`rendu_tuile.py`, en-tête du module),
+   sur quatre plans réels hors dépôt — **des grands formats de 1 189 à
+   1 690 mm de grand côté**. Je n'ai pas de mesure sur vos plans : c'est
+   l'arbitrage qui reste ouvert, et la section 5 le redit.
 
 **Le geste :** cas A.
 - **Perd** : rien en base. Les mesures et calibrations déjà prises restent.
@@ -1004,19 +766,24 @@ Deux causes nommées par le dépôt :
 C'est la voie B de la section 1. **À ne décider qu'explicitement, jamais dans
 l'urgence, et jamais sans une sauvegarde fraîche et vérifiée.**
 
+Les six révisions, dans l'ordre où la descente les rencontre :
+
 | Révision | `downgrade()` | Ce qu'il détruit | Refuse-t-il ? |
 | --- | --- | --- | --- |
 | `f3a4b5c60708` fusion | ne fait rien | rien. « Redescendre rouvre les deux têtes, ce qui est correct : c'est exactement l'état d'avant la fusion. » | non |
 | `d1e2f3a40506` réauth. | `drop_column` | la colonne `login_transactions.reauthentication_requested`. Aucune donnée métier : une transaction de connexion est éphémère | non |
+| `b5c6d7e8090a` reprise au bordereau | retire deux contraintes, l'unicité, puis `drop_column` deux fois | `boq_items.source_proposal_id` et `boq_items.source_mesure` — **le lien ET l'empreinte** de toute quantité reprise d'un plan. La ligne de bordereau survit avec son montant ; sa provenance, non | **non** — et c'est le trou nommé en section 1, voie B |
+| `a4b5c6d70809` purge des révisions publiées | recrée le déclencheur d'immuabilité sans exception | rien en données. Il **rend le défaut** : une organisation ayant déposé un document redevient indestructible. Le fichier le dit lui-même : « la descente rend le schéma d'avant, défaut compris » | non |
 | `e2f3a4b50607` calibration | supprime la table et remet l'ancienne contrainte | **toute la table `plan_calibrations`** et ses deux index (fin du `downgrade()` de `…0008…` : deux `op.drop_index`, puis `op.drop_table("plan_calibrations")`) | **oui**, s'il reste une citation ancrée par page + boîte (le `raise RuntimeError` du même `downgrade()`) |
 | `d8e9fa010203` citation de plan | ramène à onze étapes, repose les `NOT NULL` | l'état d'exécution des étapes de lecture de plan, et toute citation CAO | **oui, deux fois** (les deux `raise RuntimeError` du `downgrade()` de `…0007…`, sur `etapes_jouees` puis sur `citations_cao`) |
 
 **Un détail d'ordre, et il est rassurant :** une seule commande traite les deux
-branches. Mesuré — `alembic downgrade c7d8e9fa0102` descend `f3a4b5c60708`, puis
-`d1e2f3a40506`, puis `e2f3a4b50607`, puis `d8e9fa010203`. Et comme le DDL est
-transactionnel sur PostgreSQL, un refus en fin de chaîne annule tout ce qui
-précède : mesuré, la base est restée **inchangée à `f3a4b5c60708`** après le
-refus.
+branches — mesuré sur l'arbre d'alors, où `alembic downgrade c7d8e9fa0102`
+descendait `f3a4b5c60708`, puis `d1e2f3a40506`, puis `e2f3a4b50607`, puis
+`d8e9fa010203`. Et comme le DDL est transactionnel sur PostgreSQL, un refus en
+fin de chaîne annule tout ce qui précède : mesuré, la base est restée
+**inchangée à `f3a4b5c60708`** après le refus. Sur le candidat, la même commande
+traverse les six révisions du tableau ci-dessus ; **non remesuré**.
 
 #### Ce qui est IRRÉVERSIBLE, dit sans ménagement
 
@@ -1031,6 +798,15 @@ humain**. Toute mesure prise sur ce plan perd sa provenance, et recalibrer ne la
 rend pas — la nouvelle calibration est une autre déclaration, par une autre
 personne, à un autre moment.
 
+**La provenance d'une quantité reprise ne se reconstitue pas non plus, et rien
+ne la défend.** `source_mesure` est l'**empreinte** — valeur, unité,
+incertitude, décision humaine et motif, figés à l'instant de la reprise — et
+`source_proposal_id` est le **lien** qui remonte de la ligne de devis au plan, à
+la page et à la boîte où la mesure a été pointée (en-tête du module `…0011…`).
+Le `downgrade()` les retire tous les deux par `op.drop_column`, **sans aucune
+garde**. Le montant reste au devis ; ce qui disparaît est la réponse à la
+question « d'où vient ce chiffre ».
+
 **Les refus ne sont pas des obstacles à contourner.** Ils disent : il reste en
 base des mesures qu'un humain a peut-être validées, et il n'existe aucune valeur
 honnête à écrire à leur place. Les supprimer pour débloquer la descente est une
@@ -1042,81 +818,46 @@ est écrasée. Et le dépôt ne fournit aucun script pour le faire (section 1,
 voie C). Prendre une seconde sauvegarde juste avant est la seule façon de
 pouvoir encore changer d'avis.
 
+**Les fichiers posés sur le volume, à l'inverse, ne sont défaits par aucune
+voie.** Un plan déposé pendant l'essai reste sur le disque après un retour
+arrière, et après une purge d'organisation
+(`docs/REVUE_FINALE_DU_CANDIDAT.md`, A3).
+
 ---
 
-## 7. Ce qui n'est pas prêt : ce que cette procédure suppose et qui n'existe pas
+## 5. Ce qui manque encore, et qu'aucune livraison ne comble
 
-### Absent de la branche de travail, présent ailleurs — bloquant pour déployer
-
-Les quatre premières lignes viennent toutes de la **#72**, branche
-`claude/preprod-fiabilisation` ; la dernière de la **#88**, branche
-`claude/cotes-de-reference`. Pour lire n'importe lequel de ces fichiers sans
-changer de branche : `git show origin/<branche>:<chemin>`.
-
-| Ce qui manque | Où il existe | Conséquence |
-| --- | --- | --- |
-| `ops/verifier_deploiement.sh` (213 lignes, 6 maillons) | **#72**, `claude/preprod-fiabilisation` | Aucun contrôle de la chaîne derrière le proxy. Sans lui, deux pannes très différentes se ressemblent trait pour trait. |
-| `infra/docker-compose.jetable.yml` | **#72**, `claude/preprod-fiabilisation` | L'exercice de restauration n'a pas de pile jetable, et une pile improvisée capterait le trafic du domaine. |
-| La garde de jetabilité sur `RESTORE_COMPOSE_PROJECT`, et la lecture de `RESTORE_ENV_FILE` par le script | **#72**, `claude/preprod-fiabilisation` | Une restauration peut écrire dans le volume de la pile en service ; et la commande documentée n'est pas exécutable sans exporter trois variables à la main. |
-| `HOSTNAME=0.0.0.0` dans `infra/web.Dockerfile` | **#72**, `claude/preprod-fiabilisation` | Le conteneur `web` ne devient jamais `healthy`. |
-| `docs/COTES_DE_REFERENCE.md` | **#88**, `claude/cotes-de-reference` | Deux fichiers livrés le citent et pointent vers rien (section 3). |
-
-### Faux dans `docs/EXPLOITATION.md`, et corrigé par aucune PR ouverte
-
-- `:437`, `:456`, `:459-461` — le retour arrière par image « suffit, rien d'autre
-  à faire ». **C'est le point de la section 1.**
-- `:493` — « calcul déterministe, pas de traitement d'image ».
-- `:264` — « aucune extraction, aucun rendu à l'écran ».
-
-**Corrigé par la #72, et il faut le dire ici parce qu'une version précédente de
-ce document le rangeait parmi les faux que personne ne corrige** : `:171`, le
-`404` sur un mauvais `Host`. Le **premier** hunk du diff de la #72 sur ce fichier
-supprime ces lignes et y met le `200` vide, en-têtes à l'appui (section 1).
-
-Corrigé par la #83, pour mémoire : `:94-95` et `:444-445` (noms d'images),
-`:399`, `:416-417`, `:441` (commandes sans `--env-file`), `:535-536` (« Un
-serveur d'exécution » listé comme manquant alors que la machine sert depuis le
-16 septembre 2026), et la précision `oidc` sur `verifier_restauration.py`.
-
-### Absent partout
+Les lignes ci-dessous ont été revérifiées une par une sur
+`2d18299ee08b2a66bb54573d665f233a72aaf6ee`. Celles que des versions précédentes
+de ce document rangeaient sous « absent de la branche de travail, présent
+ailleurs » ont été **retirées** : les cinq fichiers qu'elles nommaient sont sur
+le candidat.
 
 | Ce qui manque | Conséquence | Source |
 | --- | --- | --- |
-| **Une procédure de restauration en service** | La seule sortie de la section 1 n'a pas de script. `ops/restaurer.sh` refuse par construction toute cible non jetable. | `ops/restaurer.sh`, garde `case "$CIBLE"` ; et celle que la #72 ajoute sur le nom de projet |
+| **Une procédure de restauration en service** | La seule sortie de la section 1 n'a pas de script. `ops/restaurer.sh` refuse par construction toute cible non jetable. | `ops/restaurer.sh`, gardes `case "$CIBLE"` et `case "$RESTORE_COMPOSE_PROJECT"` |
 | **Toute sonde de la lecture de plans** | `/live` et `/health` restent verts avec une API incapable d'ouvrir un PDF. | `infra/api.Dockerfile`, directive `HEALTHCHECK` ; `ops/verifier_disponibilite.sh`, ses deux sondes HTTP — `/api/v1/live` et `/api/v1/health` |
-| **La répétition rejouée sur `main` après cette tranche** | Sur `push: main`, le workflow ne se déclenche que pour `infra/**`, `ops/**` et lui-même — **pas pour `apps/api/alembic/**`**. Les fusions de la pile des plans ne relanceront pas la répétition sur `main`. | `.github/workflows/repetition-staging.yml`, filtre `paths` du déclencheur `push` |
+| **La répétition relancée toute seule sur `main` après cette tranche** | Sur `push: main`, le workflow ne se déclenche que pour `infra/**`, `ops/**` et lui-même — **pas pour `apps/api/alembic/**`**. D'où le dernier geste de la fiche de décision : la relancer **à la main** sur `main`. | `.github/workflows/repetition-staging.yml`, filtre `paths` du déclencheur `push` |
+| **Une valeur mesurée pour la limite mémoire de `api`** | Conteneur à 1 Go, plafond du fils à 1536 Mo, et 510 Mo mesurés sur quatre plans hors dépôt. Soit on relève la limite avant de servir de vrais plans, soit on accepte un `OOMKilled` que rien n'annonce. Je n'ai pas de mesure sur vos plans. | `infra/docker-compose.staging.yml`, `limits` du service `api` ; `rendu_tuile.py`, constante `PLAFOND_MEMOIRE` et en-tête du module |
 | **Toute purge des artefacts dérivés sur le volume** | Aperçus et tuiles vivent sous `rendus-de-plan/` (`services/rendu_de_plan.py`, constante `DOSSIER_RENDUS`) dans `METREO_STORAGE_ROOT`. `ops/sauvegarder.sh` archive **tout** `/var/lib/metreo` : les sauvegardes grossissent de données re-dérivables. Les seuls plafonds sont par révision — 500 tuiles ou 64 Mio (`services/tuiles.py`, constantes `PLAFOND_DE_TUILES_PAR_REVISION` et `PLAFOND_D_OCTETS_PAR_REVISION`). Aucun plafond global, aucune purge. | — |
 | **La vérification de ces artefacts par la répétition** | `ops/repetition_staging.sh`, fonction `empreintes_du_volume`, ne hache que `/var/lib/metreo/documents`. Rendus et tuiles ne passent par aucun aller-retour de sauvegarde. | — |
-| **`PUBLIC_DOMAIN` comme ligne active d'un fichier d'exemple** | La surcouche l'exige (`derriere-proxy.yml`, règle `Host()` des étiquettes Traefik), aucun fichier du dépôt ne la donne autrement qu'en commentaire. Un nouveau déploiement échoue sur un message de Compose. | `infra/staging.env.example` |
-| **Des sauvegardes distantes** | Les archives restent sur la machine sauvegardée. Une machine perdue les perd toutes. | `docs/EXPLOITATION.md:529-530` |
-| **Une supervision réelle** | Les **onze** seuils du tableau `:327-339` décrivent ce qu'il faut surveiller ; aucun outil ne les applique. (Onze, et non dix : 5xx ; 4xx hors 401/403/404 ; indisponibilité ; base injoignable ; service `degraded` ; latence de `/health` ; disque `db-data` ; disque `api-storage` ; sauvegarde ; restauration éprouvée ; certificat TLS.) | `docs/EXPLOITATION.md:531-532` |
-| **Une connexion de bout en bout constatée** | La machine répond depuis le 16 septembre, mais personne n'y est encore entré. Aucun test ne peut exercer le parcours contre un vrai fournisseur d'identité. | corps de la #83 |
-| **Les décisions juridiques** | Conservation, sous-traitance, localisation des données, information des personnes. | `docs/EXPLOITATION.md:533-534` |
-| **Tout atelier de déploiement** | Rien dans `.github/workflows/` ne touche le VPS. Les étapes 2 à 6 sont manuelles. | `ls .github/workflows/` |
+| **`PUBLIC_DOMAIN` comme ligne active d'un fichier d'exemple** | La surcouche l'exige (`infra/docker-compose.derriere-proxy.yml`, règle `Host()` des étiquettes Traefik), et `infra/staging.env.example` ne la donne qu'en commentaire. Un nouveau déploiement échoue sur un message de Compose. | `infra/staging.env.example` |
+| **Des sauvegardes distantes** | Les archives restent sur la machine sauvegardée. Une machine perdue les perd toutes. | `docs/EXPLOITATION.md`, section « Ce qui manque encore » |
+| **Une supervision réelle** | Les **onze** seuils du tableau décrivent ce qu'il faut surveiller ; aucun outil ne les applique. (Onze : 5xx ; 4xx hors 401/403/404 ; indisponibilité ; base injoignable ; service `degraded` ; latence de `/health` ; disque `db-data` ; disque `api-storage` ; sauvegarde ; restauration éprouvée ; certificat TLS.) | `docs/EXPLOITATION.md`, section « Seuils recommandés » |
+| **Une connexion de bout en bout constatée** | La machine répond depuis le 16 septembre 2026, mais personne n'y est encore entré. Aucun test ne peut exercer le parcours contre un vrai fournisseur d'identité. | `docs/EXPLOITATION.md`, section « Ce qui manque encore » |
+| **Les décisions juridiques** | Conservation, sous-traitance, localisation des données, information des personnes. | `docs/EXPLOITATION.md`, section « Ce qui manque encore » |
+| **Tout atelier de déploiement** | Rien dans `.github/workflows/` ne touche le VPS. Les étapes 2 à 6 de la section 2 sont manuelles. | `ls .github/workflows/` |
 
----
+**Deux énoncés encore faux dans `docs/EXPLOITATION.md`**, relus sur le candidat
+et qui n'ont rien à voir avec le retour arrière :
 
-## 8. Ce que je vous demande de trancher avant quoi que ce soit
+- section « Limites de ressources », la justification du plafond de `api` —
+  « calcul déterministe, pas de traitement d'image ». L'API rend désormais des
+  images : aperçus de page et tuiles de détail. La justification est tombée avec
+  la tranche, et c'est la ligne dont dépend l'arbitrage mémoire ci-dessus.
+- section « Les pièces de chantier, sur le volume » — « aucun antivirus, aucune
+  OCR, aucune extraction, aucun rendu à l'écran ». La tranche affiche et mesure
+  des PDF à l'écran.
 
-1. **Corriger `docs/EXPLOITATION.md` avant de déployer**, ou accepter que le
-   document qu'on ouvrira pendant l'incident dise, aux lignes 459-461, qu'un
-   retour arrière par image « suffit ». C'est le premier point, et de loin.
-2. **Fusionner la #72 avant tout déploiement** — c'est elle, et non la #83, qui
-   porte `ops/verifier_deploiement.sh`, `infra/docker-compose.jetable.yml`, la
-   garde de jetabilité et `HOSTNAME=0.0.0.0`, et c'est elle aussi qui corrige le
-   `404` sur un mauvais `Host`.
-3. **Fusionner la #88 en premier** : un fichier, aucun risque, et deux renvois
-   cassés fermés dans le code déjà écrit.
-4. **Déplacer la migration de fusion vers la #81** (étape 6 de la section 3), ou
-   décider autrement — mais pas la laisser dans le brouillon #90.
-5. **Relever la limite mémoire du conteneur `api`** avant de servir de vrais
-   plans, ou accepter un `OOMKilled` que rien n'annonce. Je n'ai pas de mesure
-   de la bonne valeur : les 510 Mo mesurés l'ont été sur quatre plans hors
-   dépôt, pas sur les vôtres.
-6. **Écrire la procédure de restauration en service**, ou accepter de
-   l'improviser le jour où elle sera la seule sortie.
-7. **Regarder de près les cinq montées de dépendances qui franchissent une
-   version majeure** (groupe E), et la #13 dont le titre ne dit pas ses
-   versions.
-8. **Votre accord explicite** pour chacune des trois actions irréversibles :
-   publier les images, fusionner, toucher au VPS. Rien n'a été fait.
+Aucun des deux n'empêche de déployer, et aucun des deux n'égare pendant un
+incident. Ils sont écrits ici pour ne pas être perdus.

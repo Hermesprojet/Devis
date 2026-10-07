@@ -143,3 +143,100 @@ def nombre_francais_court(valeur: Decimal, decimales: int) -> str:
     if "," not in rendu:
         return rendu
     return rendu.rstrip("0").rstrip(",")
+
+
+#: Le minimum de décimales d'un nombre de DOCUMENT.
+#:
+#: Deux, comme un montant. Un bordereau qui écrirait « 6 » là où la ligne
+#: porte 6,02 mentirait par omission ; un bordereau qui écrit « 1 250,50 » là
+#: où la ligne porte 1250,5 ne ment pas, il aligne.
+DECIMALES_DE_DOCUMENT = 2
+
+
+def nombre_francais_tel_quel(texte: str) -> str:
+    """Un nombre **déjà décidé** par le moteur, réécrit à la belge sans y toucher.
+
+    **La différence d'avec `nombre_francais` tient à qui a arrondi.** Dans le
+    monde du DOCUMENT — bordereau, étude, devis, PDF, aperçu imprimable — le
+    nombre de décimales n'est pas une question d'affichage : c'est la
+    `RoundingPolicy` de l'entreprise, et elle a déjà tranché en amont. Cette
+    fonction ne quantise donc rien, n'arrondit rien et n'ajoute aucun zéro :
+    elle remplace le point par une virgule et groupe les milliers.
+
+    C'est l'invariant qui rend ce travail sûr : **la valeur ne change pas**,
+    seule son écriture change.
+
+    >>> nombre_francais_tel_quel("66053.78")
+    '66 053,78'
+    >>> nombre_francais_tel_quel("6.02")
+    '6,02'
+    >>> nombre_francais_tel_quel("-1250.5")
+    '-1 250,5'
+    >>> nombre_francais_tel_quel("")
+    ''
+
+    Une chaîne qui n'est pas un nombre revient telle quelle. Ce cas existe :
+    le moteur rend « » pour un poste sans prix, et un libellé de section passe
+    par les mêmes colonnes qu'un montant.
+    """
+    if not texte:
+        return texte
+    signe = ""
+    reste = texte
+    if reste[0] in "+-":
+        signe = "-" if reste[0] == "-" else ""
+        reste = reste[1:]
+    entiere, point, fraction = reste.partition(".")
+    if not entiere.isdigit() or (point and not fraction.isdigit()):
+        return texte
+
+    groupes: list[str] = []
+    while len(entiere) > 3:
+        groupes.insert(0, entiere[-3:])
+        entiere = entiere[:-3]
+    groupes.insert(0, entiere)
+    entiere = " ".join(groupes)
+
+    return f"{signe}{entiere},{fraction}" if fraction else f"{signe}{entiere}"
+
+
+def decimales_de_document(valeur: Decimal) -> int:
+    """Combien de décimales écrire pour une valeur de document.
+
+    Celles que la valeur porte réellement, avec un plancher à deux et le même
+    plafond que partout ailleurs. **Aucun arrondi n'est décidé ici** : une
+    valeur à trois décimales en garde trois, parce que les lui retirer
+    changerait le nombre.
+
+    >>> decimales_de_document(Decimal("6.0200000000"))
+    2
+    >>> decimales_de_document(Decimal("1250.5"))
+    2
+    >>> decimales_de_document(Decimal("0.125"))
+    3
+    """
+    exposant = valeur.normalize().as_tuple().exponent
+    portees = -int(exposant) if isinstance(exposant, int) and exposant < 0 else 0
+    return max(DECIMALES_DE_DOCUMENT, min(DECIMALES_MAXIMALES, portees))
+
+
+def quantite_de_document_lisible(valeur: Decimal, unite: str) -> str:
+    """La quantité d'une ligne de bordereau, écrite pour être lue.
+
+    **Pourquoi ce n'est pas `quantite_lisible`.** Celle-ci sert le monde de la
+    MESURE : son nombre de décimales vient de l'incertitude, et « 6,0200 m »
+    dit jusqu'où la cote est connue. Une ligne de bordereau vit dans l'autre
+    monde, celui du DOCUMENT : son nombre sera multiplié par un prix unitaire
+    et imprimé sur un devis, et il doit s'y écrire comme le devis l'écrira.
+
+    Les deux mondes se touchent à un seul endroit — l'aperçu d'une reprise,
+    qui annonce ce qu'une ligne portera. C'est pourquoi cet aperçu emploie
+    CETTE fonction-ci : montrer « 6,0200 m » puis écrire « 6,02 m » serait
+    annoncer autre chose que ce qu'on fait.
+
+    >>> quantite_de_document_lisible(Decimal("6.0200000000"), "m")
+    '6,02 m'
+    >>> quantite_de_document_lisible(Decimal("23.9970000000"), "m2")
+    '23,997 m²'
+    """
+    return f"{nombre_francais(valeur, decimales_de_document(valeur))} {unite_affichee(unite)}"

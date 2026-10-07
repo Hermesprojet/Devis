@@ -954,6 +954,11 @@ export type BoqItem = {
   designation: string
   unit_code: string
   quantity: string
+  /** La même quantité, avec son unité, écrite pour être lue — « 6,02 m ».
+      Rendue par le serveur : c'est lui qui décide les décimales (deux au
+      moins) et le symbole de l'unité (« m² » là où le code dit « m2 »).
+      Vide sur une section, qui n'a pas de quantité. */
+  quantity_lisible: string
   kind: string
   status: string
   formula: string | null
