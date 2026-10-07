@@ -209,16 +209,28 @@ test('une mesure corrigée sur un plan devient une ligne de bordereau, puis un m
   await expect(ligne.getByTestId('boq-provenance')).toBeVisible()
 
   // ---- 7. le prix, l'étude, le gel, l'émission
-  // La source de prix est explicite depuis que les postes peuvent aussi être
-  // chiffrés par un sous-détail. Le prix est désigné par son LIBELLÉ complet,
-  // tel que l'écran l'écrit — choisir par index attraperait le premier venu, et
-  // un prix au mètre CUBE sur un poste au mètre linéaire ferait échouer le
-  // calcul sur une incompatibilité de dimension, loin d'ici.
-  await ligne.locator('select').first().selectOption('library')
-  await ligne
-    .locator('select')
-    .nth(1)
-    .selectOption({ label: `${PRIX.code} — ${PRIX.label} (${PRIX.unitaire} €/${PRIX.unite})` })
+  // La colonne « Prix » est en LECTURE tant qu'on n'a pas demandé à en
+  // changer : le poste affiche « sans prix », et les deux sélecteurs
+  // n'existent pas encore dans le DOM. C'est ce que ce test attendait, et
+  // c'est pourquoi il tombait sur un locator introuvable.
+  await ligne.getByRole('button', { name: 'Changer' }).click()
+  const source = page.getByTestId(`source-poste-${POSTE}`)
+  await expect(source).toBeVisible()
+
+  // Le prix est désigné par son CODE, et l'option est retrouvée par son texte
+  // avant d'être choisie par sa valeur. Choisir par index attraperait le
+  // premier venu — la bibliothèque en porte deux — et un prix au mètre CUBE
+  // sur un poste au mètre linéaire ferait échouer le calcul sur une
+  // incompatibilité de dimension, loin d'ici. Choisir par libellé exact
+  // dépendrait, lui, de l'écriture du prix unitaire, que l'API rend sous sa
+  // forme canonique.
+  await source.locator('select').first().selectOption('library')
+  const choixDuPrix = source.locator('select').nth(1)
+  const option = choixDuPrix.locator('option', { hasText: PRIX.code })
+  await expect(option).toHaveCount(1)
+  await choixDuPrix.selectOption((await option.getAttribute('value')) ?? '')
+  await source.getByRole('button', { name: 'Enregistrer' }).click()
+  await expect(ligne).toContainText(PRIX.code, { timeout: 20_000 })
 
   await page.getByRole('button', { name: 'Créer une étude de prix' }).click()
   await page.getByRole('link', { name: 'Ouvrir' }).first().click()
