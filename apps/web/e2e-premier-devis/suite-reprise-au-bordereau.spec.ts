@@ -224,6 +224,12 @@ test('une mesure corrigée sur un plan devient une ligne de bordereau, puis un m
   // La quantité, écrite par personne : elle vient de la décision humaine.
   await expect(ligne).toContainText(`${QUANTITE_ATTENDUE} ${PRIX.unite}`)
   await expect(ligne.getByTestId('boq-provenance')).toBeVisible()
+  // Et son état est écrit en français. Ce n'est pas un détail de confort : une
+  // clé de traduction absente s'affiche TELLE QUELLE, sans erreur ni
+  // avertissement de typage — une faute de frappe mettrait littéralement
+  // « boq.status.proposed » dans ce badge, en production.
+  await expect(ligne).toContainText('Proposé')
+  await expect(ligne, "l'état ne doit plus s'afficher en anglais").not.toContainText('proposed')
 
   // ---- 7. le prix, l'étude, le gel, l'émission
   // La colonne « Prix » est en LECTURE tant qu'on n'a pas demandé à en
