@@ -130,6 +130,12 @@ jobs:
       METREO_JWT_SECRET: ci-secret-not-used-anywhere-else-0123456789
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Historique complet : l'épreuve de montée ci-dessous sort `main`
+          # dans un arbre de travail séparé pour en monter le schéma. Sur un
+          # clone superficiel, `origin/main` n'existe pas et l'épreuve ne peut
+          # pas partir de ce qui tourne.
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -137,6 +143,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints/api.txt ./packages/domain "./apps/api[dev,plans,pdf,postgres]"
+      - name: Montée depuis le schéma en service
+        # **Ce que les deux contrôles voisins ne disent pas.** L'aller-retour
+        # part d'une base VIDE, et la porte de dérive compare l'arrivée aux
+        # modèles. Aucun des deux ne joue le geste du déploiement : appliquer
+        # les migrations du candidat à une base qui porte le schéma de la
+        # version EN SERVICE.
+        #
+        # C'est le seul contrôle qui tombe si une révision du candidat suppose
+        # une table que `main` n'a pas — ou si un `down_revision` cite un
+        # maillon au lieu d'une tête, ce qui laisse la base à deux têtes sans
+        # que rien d'autre ne le voie.
+        run: |
+          python scripts/epreuve_montee_depuis_preproduction.py \
+            --depuis origin/main \
+            --admin-url postgresql+psycopg://metreo:metreo@localhost:5432/metreo_ci
       - name: Aller-retour des migrations, dans une base créée par ce run
         # Le service PostgreSQL est éphémère — il meurt avec le job — mais
         # l'aller-retour ne s'appuie pas là-dessus : il crée sa propre base au

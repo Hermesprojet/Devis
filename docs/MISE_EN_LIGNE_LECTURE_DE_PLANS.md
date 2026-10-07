@@ -573,6 +573,19 @@ que `ci.yml`, `claude.yml`, `publier-images.yml` et `repetition-staging.yml`.
 Aucun SSH, aucune livraison continue, aucun atelier de déploiement. Les
 étapes 2 à 6 ci-dessous se tapent à la main, sur la machine.
 
+**La montée du schéma, elle, est éprouvée avant de toucher la machine.**
+`scripts/epreuve_montee_depuis_preproduction.py` monte une base au schéma de
+`main` — avec les fichiers de `main` — puis y applique les migrations du
+candidat. C'est le geste exact de l'étape 4, joué hors machine, sur SQLite en
+quelques secondes et sur un vrai PostgreSQL avec `--admin-url`. L'atelier
+« API (PostgreSQL + PostGIS) » le rejoue à chaque commit.
+
+Ce que les deux contrôles voisins ne disent pas : `scripts/migration_roundtrip.py`
+part d'une base **vide**, et `scripts/schema_drift_gate.py` compare l'**arrivée**
+aux modèles. Ni l'un ni l'autre ne tombe si un `down_revision` cite un maillon
+au lieu d'une tête — ce qui laisse la base à deux têtes — ni si une révision du
+candidat suppose une table que la version en service n'a pas.
+
 ### Étape 1 — publier les images (avec votre accord, et seulement avec lui)
 
 Atelier « Publier les images », déclenché à la main sur le SHA complet de `main`

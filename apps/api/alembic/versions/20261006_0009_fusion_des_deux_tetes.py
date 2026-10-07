@@ -1,7 +1,7 @@
 """Les deux tranches se rejoignent : une seule tête, et rien d'autre.
 
 Revision ID: f3a4b5c60708
-Revises: ('d1e2f3a40506', 'a4b5c6d70809')
+Revises: ('d1e2f3a40506', 'b5c6d7e8090a')
 Create Date: 2026-10-06
 
 **Pourquoi cette migration existe, et pourquoi elle est vide.**
@@ -43,14 +43,24 @@ revision = "f3a4b5c60708"
 #: Un TUPLE, et c'est toute la migration : il dit à Alembic que ces deux
 #: révisions se rejoignent ici, et que la suite de l'arbre part d'un seul point.
 #:
-#: **Le second parent a changé le 7 octobre 2026**, et il devait changer. La
-#: tranche des plans a reçu une révision de plus — `a4b5c6d70809`, qui ouvre à
-#: une purge autorisée la suppression d'une révision publiée. Elle descend de
-#: `e2f3a4b50607`, qui a donc cessé d'être une tête. Continuer à citer
-#: `e2f3a4b50607` ici aurait laissé `a4b5c6d70809` à part, et la base serait
-#: repartie à deux têtes — exactement ce que cette migration existe pour
-#: empêcher. On cite donc la tête de la tranche, pas un de ses maillons.
-down_revision = ("d1e2f3a40506", "a4b5c6d70809")
+#: **Le second parent a changé DEUX fois le 7 octobre 2026**, et il devait
+#: changer les deux fois. La tranche des plans a reçu deux révisions de plus,
+#: dans cet ordre :
+#:
+#:   `e2f3a4b50607` → `a4b5c6d70809` → `b5c6d7e8090a`
+#:
+#: `a4b5c6d70809` ouvre à une purge autorisée la suppression d'une révision
+#: publiée ; `b5c6d7e8090a` donne à une ligne de bordereau de quoi dire de
+#: quelle mesure de plan elle vient. Les deux premières ont donc cessé d'être
+#: des têtes, et citer l'une d'elles ici laisserait le reste de la tranche à
+#: part : la base repartirait à deux têtes, exactement ce que cette migration
+#: existe pour empêcher.
+#:
+#: **La règle, et elle a déjà servi deux fois : on cite la TÊTE de la tranche,
+#: jamais un de ses maillons.** À chaque révision ajoutée à la tranche des
+#: plans, ce tuple se décale, et `alembic heads` est ce qui le dit — une
+#: seconde ligne dans sa sortie est le signal.
+down_revision = ("d1e2f3a40506", "b5c6d7e8090a")
 branch_labels = None
 depends_on = None
 
