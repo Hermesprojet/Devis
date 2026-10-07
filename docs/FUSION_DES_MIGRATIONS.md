@@ -112,6 +112,60 @@ et `d1e2f3a40506` sont toutes deux sur `main`** — c'est-à-dire dès la #78 et
 exactement ce qu'il faut — **une demande de fusion destinée à être fusionnée,
 portant la migration de fusion et ses deux parentes**.
 
+### Les commandes de l'étape 6 — le transfert effectif
+
+Relevé le 7 octobre 2026 : `20261006_0009_fusion_des_deux_tetes.py` existe
+**sur `claude/candidat-complet` et nulle part ailleurs** — ni sur `main`, ni
+sur `pr/73`, ni sur `pr/81`, ni sur `pr/89` (vérifié par `git cat-file -e` sur
+les cinq références). La #90 étant un brouillon qui ne sera pas fusionné, ce
+fichier n'atteindra jamais `main` tant que ce transfert n'a pas eu lieu.
+
+À jouer **après l'étape 4** — c'est-à-dire une fois la #89 fusionnée et
+`main` à `e2f3a4b50607` — et **avant l'étape 7** :
+
+```bash
+git fetch origin main codex/login-account-choice \
+    claude/codes-de-connexion claude/candidat-complet
+
+# 5a — remonter main dans la base de la #81
+git checkout -B codex/login-account-choice origin/codex/login-account-choice
+git merge --no-ff origin/main -m "Fusion de 'main' dans la base du choix de compte"
+git push -u origin codex/login-account-choice
+
+# 5b — puis dans la #81 elle-même
+git checkout -B claude/codes-de-connexion origin/claude/codes-de-connexion
+git merge --no-ff codex/login-account-choice \
+    -m "Fusion de la base dans les codes de connexion"
+
+# 6 — LE TRANSFERT : le fichier quitte le brouillon pour une PR fusionnable
+git checkout origin/claude/candidat-complet -- \
+    apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py
+git add apps/api/alembic/versions/20261006_0009_fusion_des_deux_tetes.py
+git commit -m "Les deux têtes se rejoignent sur la branche qui sera fusionnée"
+```
+
+**Le contrôle qui décide si le transfert a réussi**, à faire AVANT de pousser :
+
+```bash
+cd apps/api && PYTHONPATH=src python -m alembic heads
+```
+
+- **une seule ligne, `f3a4b5c60708 (head)`** → le transfert est bon, poussez ;
+- **deux lignes** → `main` n'a pas encore été remontée dans la branche :
+  reprenez à 5b ;
+- **`KeyError: 'e2f3a4b50607'`** → l'étape 4 n'a pas eu lieu, ou la remontée de
+  `main` a été sautée. Ne poussez pas : la CI de la #81 tomberait, et le
+  diagnostic serait plus coûteux là-bas qu'ici.
+
+```bash
+git push -u origin claude/codes-de-connexion
+```
+
+La #81 porte alors `d1e2f3a40506` (la sienne), `e2f3a4b50607` (venue de `main`)
+et la fusion. Ce qu'il faut vérifier sur sa page avant de la fusionner : sa
+description doit annoncer la migration de fusion, et ses ateliers doivent être
+verts **après** ce commit, pas avant.
+
 ### L'ordre inverse coûte cher
 
 Si la connexion passe en premier, `main` est à deux têtes **de l'étape #78

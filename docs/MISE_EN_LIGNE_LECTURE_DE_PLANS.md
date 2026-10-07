@@ -496,6 +496,11 @@ manquent.
 « **Une seule tête à chaque étape.** `main` n'est jamais rouge. »
 (`docs/FUSION_DES_MIGRATIONS.md:108`)
 
+Les **commandes exactes de l'étape 6** — le transfert effectif du fichier vers
+la branche de la #81, et le contrôle `alembic heads` qui dit s'il a réussi —
+sont dans `docs/FUSION_DES_MIGRATIONS.md`, section « Les commandes de
+l'étape 6 — le transfert effectif ».
+
 ### Où placer la #88, et pourquoi en tête
 
 La #88 **n'apporte qu'un seul fichier** : `docs/COTES_DE_REFERENCE.md`, ajouté,
