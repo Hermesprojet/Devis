@@ -1,5 +1,18 @@
 # Faire atterrir la migration de fusion `f3a4b5c60708`
 
+> **Mise à jour du 7 octobre 2026 — le second parent a changé.** La tranche des
+> plans a reçu une révision de plus, `a4b5c6d70809` (une purge autorisée peut
+> détruire une révision publiée), qui descend de `e2f3a4b50607`. Celle-ci a donc
+> cessé d'être une tête, et la migration de fusion cite désormais
+> `("d1e2f3a40506", "a4b5c6d70809")`. Continuer à citer `e2f3a4b50607` aurait
+> laissé `a4b5c6d70809` à part, et la base serait repartie à **deux têtes** —
+> exactement ce que cette migration existe pour empêcher. **On cite la tête de
+> la tranche, pas un de ses maillons**, et c'est la règle à retenir si la
+> tranche en reçoit une autre.
+>
+> Le fichier corrigé vit sur `claude/candidat-corrige`. Le reste du document
+> vaut tel quel : seul le nom du second parent change.
+
 - **Écrit le** : 2026-10-06
 - **Pourquoi ce document existe** : la migration de fusion n'existe aujourd'hui
   que sur `claude/candidat-complet`, la branche de la **#90**, qui est un
@@ -42,6 +55,7 @@ Quatre migrations n'y sont pas, et deux branches partent du même point :
 | `d1e2f3a40506` | ajoute `login_transactions.reauthentication_requested` | `codes-de-connexion`, `candidat-complet` |
 | `d8e9fa010203` | citations de plan et étapes de plan | `parcours-plan-essayable` et tout ce qui est au-dessus |
 | `e2f3a4b50607` | crée `plan_calibrations`, élargit l'ancrage d'une citation | `mesures-pdf`, `candidat-complet` |
+| `a4b5c6d70809` | **la tête de la tranche** : une purge autorisée peut détruire une révision publiée | `corrections-du-candidat`, `candidat-corrige` |
 | `f3a4b5c60708` | **ne fait rien** : elle réunit les deux têtes | **`candidat-complet` seulement** |
 
 La fusion est vide à dessein : ses deux parents touchent des tables disjointes.
@@ -99,7 +113,7 @@ et `d1e2f3a40506` sont toutes deux sur `main`** — c'est-à-dire dès la #78 et
 | 1 | fusionner **#77** `claude/lecture-de-plans` | `c7d8e9fa0102` (inchangée) |
 | 2 | fusionner **#78** `claude/parcours-plan-essayable` | `d8e9fa010203` |
 | 3 | fusionner **#80**, **#85**, **#87** | inchangée |
-| 4 | fusionner **#89** `claude/mesures-pdf` | `e2f3a4b50607` |
+| 4 | fusionner **#89** `claude/mesures-pdf` | `a4b5c6d70809` |
 | 5 | fusionner `main` dans `codex/login-account-choice`, puis dans `claude/codes-de-connexion` | — |
 | 6 | **déplacer `20261006_0009_fusion_des_deux_tetes.py`** depuis `claude/candidat-complet` vers `claude/codes-de-connexion`, et l'y committer | — |
 | 7 | fusionner **#73** `codex/login-account-choice` | inchangée |
@@ -107,7 +121,7 @@ et `d1e2f3a40506` sont toutes deux sur `main`** — c'est-à-dire dès la #78 et
 
 **Une seule tête à chaque étape.** `main` n'est jamais rouge.
 
-À l'étape 6, la #81 contient alors `d1e2f3a40506` (la sienne), `e2f3a4b50607`
+À l'étape 6, la #81 contient alors `d1e2f3a40506` (la sienne), `a4b5c6d70809`
 (venue de `main`) et la fusion : sa propre CI est donc verte, et elle devient
 exactement ce qu'il faut — **une demande de fusion destinée à être fusionnée,
 portant la migration de fusion et ses deux parentes**.
@@ -121,7 +135,7 @@ les cinq références). La #90 étant un brouillon qui ne sera pas fusionné, ce
 fichier n'atteindra jamais `main` tant que ce transfert n'a pas eu lieu.
 
 À jouer **après l'étape 4** — c'est-à-dire une fois la #89 fusionnée et
-`main` à `e2f3a4b50607` — et **avant l'étape 7** :
+`main` à `a4b5c6d70809` — et **avant l'étape 7** :
 
 ```bash
 git fetch origin main codex/login-account-choice \
@@ -153,7 +167,7 @@ cd apps/api && PYTHONPATH=src python -m alembic heads
 - **une seule ligne, `f3a4b5c60708 (head)`** → le transfert est bon, poussez ;
 - **deux lignes** → `main` n'a pas encore été remontée dans la branche :
   reprenez à 5b ;
-- **`KeyError: 'e2f3a4b50607'`** → l'étape 4 n'a pas eu lieu, ou la remontée de
+- **`KeyError: 'a4b5c6d70809'`** → l'étape 4 n'a pas eu lieu, ou la remontée de
   `main` a été sautée. Ne poussez pas : la CI de la #81 tomberait, et le
   diagnostic serait plus coûteux là-bas qu'ici.
 

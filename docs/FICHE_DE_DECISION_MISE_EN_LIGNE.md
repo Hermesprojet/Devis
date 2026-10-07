@@ -3,7 +3,7 @@
 Une page, pour décider. Le détail, les preuves et les cas particuliers sont
 dans `docs/MISE_EN_LIGNE_LECTURE_DE_PLANS.md` (procédure complète),
 `docs/FUSION_DES_MIGRATIONS.md` (ordre des fusions) et
-`docs/REVUE_FINALE_DU_CANDIDAT.md` (ce qu'il reste à corriger).
+`docs/REVUE_FINALE_DU_CANDIDAT.md` (ce qui a été corrigé, et ce qui reste).
 
 ---
 
@@ -11,28 +11,32 @@ dans `docs/MISE_EN_LIGNE_LECTURE_DE_PLANS.md` (procédure complète),
 
 | | |
 | --- | --- |
-| **Candidat éprouvé** | `daeb7f0d7c2a12d47e1b941c0d79932a1e20d464`, branche `claude/candidat-complet` (#90, **brouillon, jamais fusionné**) |
-| **Ce qui sera déployé** | `main`, **après** les onze fusions — pas la branche du candidat |
-| **Ce que le candidat prouve** | que ces quatorze PR, ensemble, passent les douze ateliers |
-| **Ce qu'il ne prouve pas** | que `main` après fusion est identique. **À vérifier avant de construire les images** |
+| **Version de référence**, pour comparer | `daeb7f0d7c2a12d47e1b941c0d79932a1e20d464` — branche `claude/candidat-complet` (#90, **brouillon**). Inchangée |
+| **Candidat corrigé**, à déployer | branche `claude/candidat-corrige`, SHA `@@SHA@@` |
+| **Les corrections seules** | branche `claude/corrections-du-candidat` |
+| **Ce qui sera réellement déployé** | `main`, **après** les onze fusions — pas une branche de candidat |
+
+Les trois défauts bloquants de la revue sont corrigés sur le candidat corrigé :
+le bandeau qui annonçait qu'aucune mesure n'était possible sur un PDF, les
+valeurs à dix décimales, et la purge d'organisation — qui, vérification faite,
+**échouait entièrement** dès qu'un document avait été déposé, et pas seulement
+sur les fichiers. Deux écarts d'incertitude sont corrigés avec eux : la page en
+portrait et les tracés à plusieurs sommets.
 
 ```bash
 git fetch origin main
-git diff --stat origin/main daeb7f0d7c2a12d47e1b941c0d79932a1e20d464
+git diff --stat origin/main claude/candidat-corrige
 ```
 
-Sortie attendue : **vide**. Toute ligne est une divergence entre ce qui a été
-éprouvé et ce qui serait mis en ligne, et doit être expliquée avant d'aller
-plus loin.
+Sortie attendue après les fusions : **vide**. Toute ligne est une divergence
+entre ce qui a été éprouvé et ce qui serait mis en ligne, et doit être expliquée
+avant d'aller plus loin.
 
-> **Trois défauts d'interface sont ouverts** sur ce candidat
-> (`docs/REVUE_FINALE_DU_CANDIDAT.md`, section A) : un bandeau qui annonce
-> qu'aucune mesure n'est possible sur un PDF, des valeurs affichées à dix
-> décimales à côté d'une incertitude en centimètres, et une purge qui laisse
-> les originaux sur le volume. Aucun n'empêche le service de tourner ; les deux
-> premiers rendent l'essai pénible à lire. **À trancher avant, pas après.**
-
----
+> **La tête d'Alembic a changé.** La tranche des plans porte une révision de
+> plus — `a4b5c6d70809` — et la migration de fusion `f3a4b5c60708` cite
+> désormais `("d1e2f3a40506", "a4b5c6d70809")`. Continuer à citer
+> `e2f3a4b50607` laisserait la base à deux têtes. Le contrôle de l'étape 1
+> ci-dessous le voit.
 
 ## 2. Sauvegarde — avant toute chose
 
@@ -84,7 +88,7 @@ conclure** si aucun compte n'a d'appartenance active.
 
 | Étape | Commande / geste | Contrôle avant de passer à la suivante |
 | --- | --- | --- |
-| 1 | Les onze fusions, dans l'ordre (`docs/FUSION_DES_MIGRATIONS.md` §4), **transfert de `f3a4b5c60708` compris à l'étape 6** | `cd apps/api && PYTHONPATH=src python -m alembic heads` → **une seule** ligne |
+| 1 | Les onze fusions, dans l'ordre (`docs/FUSION_DES_MIGRATIONS.md` §4), **transfert de `f3a4b5c60708` compris à l'étape 6** | `cd apps/api && PYTHONPATH=src python -m alembic heads` → **une seule** ligne, `f3a4b5c60708`. Deux lignes = le second parent de la fusion n'a pas été remis à jour |
 | 2 | Construire et publier les deux images — **avec votre accord explicite** | les ateliers « Images Docker » verts sur le SHA publié |
 | 3 | **Noter le SHA sortant**, celui qui tourne aujourd'hui | écrit quelque part hors de la machine |
 | 4 | Sauvegarder (section 2) | le dump n'est pas vide, et le script n'a pas rendu 1 |
@@ -107,7 +111,7 @@ Les commandes exactes, avec les `-f` et les surcouches, sont dans
 
 | Voie | Ce qu'elle fait | Données de l'essai |
 | --- | --- | --- |
-| **A — démarrer `api` sans `migrate`** | l'ancien code tourne sur le schéma neuf | **tout est conservé.** Les tables neuves restent, l'ancien code les ignore. Le plus réversible, et le plus rapide |
+| **A — démarrer `api` sans `migrate`** | l'ancien code tourne sur le schéma neuf | **tout est conservé — mesuré, et non plus supposé.** `scripts/epreuve_retour_arriere.py` fait tourner l'API de `origin/main` sur le schéma neuf : **16 parcours sur 19 fonctionnent**, la chaîne d'audit écrite par la version neuve reste valide, et les mesures de l'essai sont toujours en base. Les 3 autres sont les deux routes qui n'existent pas dans l'ancienne version (404) et le refus de migrer (**255**), qui est la raison d'être de cette voie |
 | **B — redescendre le schéma, puis revenir à l'ancienne image** | `alembic downgrade c7d8e9fa0102`, lancé par la **nouvelle** image (seule à contenir les fichiers de migration) | **refusé dès la PREMIÈRE mesure prise.** Un `RuntimeError` arrête la descente s'il reste une citation ancrée page + boîte, et le DDL étant transactionnel, la base reste intacte. Pour passer outre il faut détruire ces mesures — définitif |
 | **C — restaurer la sauvegarde de l'étape 4** | la base revient à l'instant d'avant le déploiement | **tout ce qui a été créé depuis est perdu** : calibrations, mesures, décisions, mais aussi tout devis, client, poste ou prix saisi pendant la même fenêtre. Prendre une seconde sauvegarde juste avant est la seule façon de pouvoir encore changer d'avis |
 
