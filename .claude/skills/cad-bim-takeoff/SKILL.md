@@ -20,7 +20,7 @@ et ce qui ne l'est pas. Chemins abrégés ci-dessous : `models.py`, `config.py`,
 | Lecture d'un PDF | **livré** | `services/lecture_pdf.py` : pages, textes situés, aperçu PNG, tuiles d'agrandissement (`services/rendu_pdf.py`, `services/tuiles.py`) |
 | Échelle et mesure sur un PDF | **livré** | `services/calibration_de_plan.py` et `services/mesures_pdf.py` : échelle DÉCLARÉE par un humain, longueur et surface avec incertitude propagée |
 | Écran de lecture et de pointage | **livré** | `apps/web/src/components/LecturePdf.tsx` |
-| Reprise d'une mesure dans un bordereau | **livré, première tranche** | `services/reprise_de_mesure.py`, route `POST /boqs/{boq_id}/items:depuis-une-mesure` ; colonnes `source_proposal_id` et `source_mesure` sur `boq_items` |
+| Reprise d'une mesure dans un bordereau | **livré, première tranche** | `services/reprise_de_mesure.py`, route `POST /boqs/{boq_id}/items:depuis-une-mesure` ; colonnes `source_proposal_id` et `source_mesure` sur `boq_items`. La quantité écrite est une quantité **retenue** : proposée par le serveur à la finesse du ±, choisie par la personne dans le ± de la mesure, refusée au-delà, tracée (brute, proposée, retenue, par qui) |
 | Conversion CAO, IFC, DWG, viewer annotable, rapprochement automatique | **inexistant** | `apps/worker/` ne contient qu'un `README.md` |
 | PostGIS | disponible, inutilisé | image `postgis/postgis:16-3.4` (`infra/docker-compose.yml`) ; aucune colonne géométrique dans `models.py` |
 | Cible d'atterrissage d'une quantité | implémenté | `BoqItem` (`unit_code`, `quantity`, `formula`, `client_quantity`, `status`) dans `models.py` |

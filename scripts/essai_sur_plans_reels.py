@@ -719,12 +719,19 @@ def verifier_la_chaine(
     ligne = _une_seule(lignes, position=regle["position"])
     if ligne is None:
         return {"statut": f"aucune ligne « {regle['position']} » au bordereau"}
+    empreinte = ligne.get("source_mesure") or {}
     chaine: dict[str, Any] = {
         "position": ligne["position"],
         "quantite": str(ligne["quantity"]),
         "quantite_lisible": ligne.get("quantity_lisible"),
         "unite": ligne.get("unit_code"),
         "source_proposal_id": ligne.get("source_proposal_id"),
+        # La décision sur la quantité, telle que l'empreinte la fige.
+        "quantite_brute": empreinte.get("quantite_brute"),
+        "incertitude_reprise": empreinte.get("incertitude_reprise"),
+        "quantite_proposee": empreinte.get("quantite_proposee"),
+        "quantite_retenue": empreinte.get("quantite_retenue"),
+        "quantite_retenue_par": empreinte.get("quantite_retenue_par"),
     }
     devis = api.get(f"/projects/{projet}/issued-quotes")
     if not devis:

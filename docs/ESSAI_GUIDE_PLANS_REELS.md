@@ -206,9 +206,14 @@ Choisissez le bordereau, l'**unité du poste** — un métré se lit en mètres,
 mesure est en millimètres, la conversion est faite par le serveur —, le poste
 et la désignation.
 
-**Le nombre s'affiche avant d'être écrit** : « Quantité qui sera écrite » et sa
-« Provenance » (la page, la décision, la valeur retenue). C'est exactement ce
-que la ligne portera.
+**Le nombre s'affiche avant d'être écrit.** L'aperçu montre la **mesure
+brute** et son ± (« 6,3787950927 m² ± 0,041 m² »), puis une **quantité
+retenue** pré-remplie à la finesse de la mesure (« 6,379 »). Vous pouvez y
+écrire une autre valeur, par exemple « 6,38 » : tant qu'elle reste dans le ± de
+la mesure, « Quantité qui sera écrite » la reprend, et c'est exactement ce que
+la ligne portera — au bordereau, dans l'étude et sur le PDF. Au-delà du ±,
+l'écran refuse en le disant : c'est alors une correction de la mesure, avec un
+motif, qu'il faut faire.
 
 > **À relever** : la quantité annoncée, la quantité écrite au bordereau, et le
 > badge « mesure de plan » sur la ligne.

@@ -356,24 +356,28 @@ désormais le même texte — `test_une_quantite_a_dix_decimales_s_ecrit_pareil_
 **Aucune valeur n'a changé** : ni la quantité stockée, ni le montant, ni
 l'empreinte d'un devis gelé.
 
-**La décision, elle, reste à prendre, et elle est maintenant visible avant
-l'émission** : un devis qui imprime « 6,3787950927 m2 » n'est pas présentable.
-Trois sorties, et aucune n'est de la présentation :
+**Ce qui a été tranché ensuite : la quantité RETENUE.** Un devis qui imprime
+« 6,3787950927 m² » n'est pas présentable, et aucune des trois sorties
+envisagées n'était satisfaisante seule : arrondir d'office est une règle de
+chiffrage qui appartient à l'entreprise, arrondir à l'impression désolidarise le
+document du calcul, et laisser tout tel quel est illisible. La règle retenue
+tient en trois phrases, et chacune est éprouvée par
+`apps/api/tests/test_reprise_d_une_mesure.py` :
 
-1. **Quantiser la quantité au moment de la reprise**, à la précision que son
-   incertitude justifie — c'est-à-dire au nombre que la personne a vu et
-   confirmé : 6,379 m² ± 0,041. C'est la règle que `lisible.decimales_utiles`
-   applique déjà à l'affichage d'une mesure, portée à la valeur reprise.
-   Défendable — *une quantité n'est jamais connue mieux que son incertitude*,
-   et la provenance dit déjà « confirmée : 6,379 m² » — mais elle change le
-   nombre qui chiffre le devis.
-2. **Arrondir à l'impression**, comme on arrondit un montant. Il faudrait alors
-   vérifier que le document s'additionne toujours de tête, ce qui est la raison
-   d'être de tout ce qui précède.
-3. **Laisser la personne trancher**, ce que le produit permet déjà sans
-   règle nouvelle : au lieu de *Confirmer*, *Corriger* la mesure en saisissant
-   la valeur retenue — 6,38 — avec son motif. La ligne porte alors ce nombre,
-   et le devis l'imprime tel quel.
+1. **La mesure brute et son ± ne changent pas.** Ils restent sur l'écran de
+   mesure, dans l'aperçu de la reprise, dans l'empreinte `source_mesure` de la
+   ligne et au journal.
+2. **Le serveur propose la quantité à la finesse de la mesure** — la règle que
+   `lisible.decimales_utiles` applique déjà au ± : 6,3787950927 m² ± 0,041 m²
+   se propose 6,379 m². Une mesure corrigée n'a pas de ± : la personne a déjà
+   choisi le nombre, et c'est lui qui se propose, tel quel.
+3. **La personne peut retenir une autre écriture, dans le ± de la mesure.**
+   6,38 m² est une écriture de la même mesure ; 6,5 m² est un autre nombre, et
+   la route le refuse en renvoyant vers la correction de la mesure, qui exige un
+   motif. Renvoyer la proposition telle quelle, c'est l'accepter : elle ne
+   repasse pas le contrôle qui l'a produite. La quantité retenue, la proposée,
+   la brute, le ± et qui a retenu partent dans l'empreinte et au journal : la
+   décision se relit seule.
 
-La troisième marche aujourd'hui, à la main, mesure par mesure. Les deux
-premières sont des règles, et une règle de chiffrage appartient à l'entreprise.
+Le nombre retenu est ensuite **identique** au bordereau, dans le calcul de
+l'étude et sur le PDF : c'est le même texte canonique du moteur, transcrit.

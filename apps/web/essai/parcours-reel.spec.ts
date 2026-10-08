@@ -37,7 +37,7 @@ type PlanDEssai = {
     motif: string
   }
   segments: Trace[]
-  surface: Trace
+  surface?: Trace
   repetitions: {
     libelle: string
     points: [Point, Point]
@@ -50,6 +50,8 @@ type PlanDEssai = {
     position: string
     designation: string
     prix_code: string
+    /** L'écriture que la personne retient, dans le ± de la mesure — ex. « 6,38 ». */
+    quantite_retenue?: string
   }
   emission: { valable_jusqu_au: string }
   dxf_url?: string
@@ -262,8 +264,10 @@ test('un plan réel, de son dépôt au PDF du devis', async ({ page }) => {
       `${segment.libelle} — ${lues[segment.libelle]?.valeur}`,
     )
   }
-  await tracer(page, 'pdf-outil-surface', PLAN.surface)
-  await photo(page, 'surface', `${PLAN.surface.libelle} — ${lues[PLAN.surface.libelle]?.valeur}`)
+  if (PLAN.surface) {
+    await tracer(page, 'pdf-outil-surface', PLAN.surface)
+    await photo(page, 'surface', `${PLAN.surface.libelle} — ${lues[PLAN.surface.libelle]?.valeur}`)
+  }
 
   // ---- La même cote, cinq fois, la loupe rouverte ailleurs à chaque fois
   for (const [rang, decalage] of PLAN.repetitions.decalages.entries()) {
@@ -321,15 +325,32 @@ test('un plan réel, de son dépôt au PDF du devis', async ({ page }) => {
   await expect(apercu).toContainText(PLAN.reprise.unite === 'm2' ? 'm' : PLAN.reprise.unite, {
     timeout: DELAI,
   })
+  const champRetenue = reprise.getByTestId('pdf-reprise-quantite')
+  await expect(champRetenue).toBeEnabled({ timeout: DELAI })
   lues.reprise = {
+    brute: (await page.getByTestId('pdf-apercu-brute').innerText()).trim(),
+    proposee: await champRetenue.inputValue(),
     apercu: (await apercu.innerText()).trim(),
     provenance: (await page.getByTestId('pdf-apercu-provenance').innerText()).trim(),
   }
   await photo(
     page,
-    'reprise-apercu',
-    'la quantité qui sera écrite, et sa provenance, avant toute écriture',
+    'reprise-proposee',
+    'la mesure brute et son ±, et la quantité proposée à sa finesse, avant toute écriture',
   )
+  if (PLAN.reprise.quantite_retenue) {
+    await champRetenue.fill(PLAN.reprise.quantite_retenue)
+    await expect(apercu).toContainText(PLAN.reprise.quantite_retenue, { timeout: DELAI })
+    await expect(reprise.getByTestId('notice-erreur')).toHaveCount(0)
+    lues.reprise.retenue = PLAN.reprise.quantite_retenue
+    lues.reprise.apercu = (await apercu.innerText()).trim()
+    lues.reprise.provenance = (await page.getByTestId('pdf-apercu-provenance').innerText()).trim()
+    await photo(
+      page,
+      'reprise-retenue',
+      'la quantité retenue par la personne, dans le ± de la mesure, avant toute écriture',
+    )
+  }
   await reprise.getByTestId('pdf-reprendre').click()
   await expect(retenue.getByTestId('pdf-reprise-faite')).toBeVisible({
     timeout: DELAI,
