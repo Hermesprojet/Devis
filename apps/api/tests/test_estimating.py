@@ -325,6 +325,12 @@ def test_csv_export_carries_reference_version_units_and_amounts(
     assert "PRIX MANQUANT" in flat
     assert "HORS TOTAL (option/variante)" in flat
     assert "Total HT" in flat
+    # Le CSV garde les CODES d'unité (« m3 », « m2 ») : un tableur et la
+    # répétition de préproduction le relisent. Le symbole (« m³ ») est pour
+    # l'écran et le PDF, pas pour lui.
+    unites = {row[2] for row in rows if len(row) > 3 and row[0] not in ("Poste", "")}
+    assert "m3" in unites
+    assert not any("²" in u or "³" in u for u in unites)
 
 
 def test_client_csv_export_hides_internal_costs(seeded_client, headers, estimate, version):

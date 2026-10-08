@@ -18,6 +18,7 @@ from typing import Any
 
 from . import pdf as moteur
 from .images import ImageRefusee, lire_png
+from .lisible import nombre_francais_tel_quel, unite_affichee
 
 GRIS_ENTETE = 0.88
 GRIS_TOTAL = 0.94
@@ -118,6 +119,21 @@ def _boite_du_logo(largeur_px: int, hauteur_px: int) -> tuple[float, float]:
         LOGO_HAUTEUR_MAXIMALE / hauteur_px,
     )
     return (largeur_px * facteur, hauteur_px * facteur)
+
+
+def _nombre_imprime(texte: str) -> str:
+    """Un nombre écrit à la belge, avec le seul espace insécable qu'un PDF porte.
+
+    `nombre_francais_tel_quel` emploie l'espace fine insécable (U+202F), qui est
+    la bonne typographie à l'écran. Les polices de base d'un PDF sont encodées
+    en WinAnsi, et **U+202F n'y est pas** : il deviendrait un point
+    d'interrogation au milieu du total. L'espace insécable ordinaire (U+00A0),
+    lui, y est — c'est l'octet 0xA0.
+
+    Aucun arrondi, aucune décimale décidée ici : le moteur a tranché en amont,
+    cette fonction ne fait que l'écrire.
+    """
+    return nombre_francais_tel_quel(texte).replace(" ", " ")
 
 
 def _date_fr(valeur: date | datetime | str) -> str:
@@ -564,6 +580,17 @@ def _tableau(
             valeur = str(ligne.get(cle, "") or "")
             if section and cle not in ("position", "designation"):
                 valeur = ""
+            elif cle == "unit":
+                # « m² » et non « m2 » : le symbole, par la même table que
+                # l'écran. Le code reste dans l'instantané et dans le CSV.
+                valeur = unite_affichee(valeur)
+            elif a_droite:
+                # Les colonnes alignées à droite sont les colonnes de nombres, et
+                # elles seules. Le moteur a déjà décidé le nombre et ses
+                # décimales ; on ne fait ici que l'écrire comme on l'écrit en
+                # Belgique. Rien n'est arrondi : « 6.02 » devient « 6,02 », et
+                # « 1250.5 » devient « 1 250,5 ».
+                valeur = _nombre_imprime(valeur)
             if a_droite:
                 page.texte_a_droite(x + largeur - 4, y, valeur, taille=TAILLE_LIGNE)
             else:
@@ -600,7 +627,7 @@ def _totaux(page: moteur.Page, y: float, totaux: dict[str, Any], devise: str) ->
         page.texte_a_droite(
             droite,
             y,
-            f"{montant} {devise}",
+            f"{_nombre_imprime(montant)} {devise}",
             police=moteur.COURIER_GRAS if gras else moteur.COURIER,
             taille=9.5 if gras else 9,
         )

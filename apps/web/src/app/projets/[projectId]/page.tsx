@@ -25,6 +25,7 @@ import {
   type Project,
 } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { ecrireEnFrancais } from '@/lib/nombres'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
 
@@ -267,12 +268,22 @@ export default function ProjectPage() {
                           {item.formula}
                         </div>
                       )}
+                      {/*
+                        **D'où vient la quantité, quand elle vient d'un plan.**
+                        Sans cette ligne, une quantité reprise d'une mesure est
+                        indiscernable d'une quantité tapée à la main : la
+                        provenance existe en base, et personne ne la voit. Le
+                        détail au survol porte la page, la décision humaine et
+                        la valeur retenue — c'est ce qu'on relit dans six mois
+                        pour savoir si le nombre tient.
+                      */}
+                      <ProvenanceDuPoste item={item} />
                     </td>
-                    <td>{item.kind === 'section' ? '' : item.unit_code}</td>
-                    <td className="num">{item.kind === 'section' ? '' : item.quantity}</td>
+                    <td>{item.kind === 'section' ? '' : (item.unit_lisible ?? item.unit_code)}</td>
+                    <td className="num">{item.quantity_lisible}</td>
                     <td>
                       <span className={`badge ${item.status === 'approved' ? 'success' : ''}`}>
-                        {item.status}
+                        {t(`boq.status.${item.status}`)}
                       </span>
                     </td>
                     <td>
@@ -431,7 +442,7 @@ export default function ProjectPage() {
                           : undefined
                       }
                     >
-                      {version.total_selling_price_ht_display ?? t('common.none')}
+                      {ecrireEnFrancais(version.total_selling_price_ht_display) || t('common.none')}
                     </td>
                     <td>
                       <Link href={`/estimations/${estimate.id}/${version.id}`}>Ouvrir</Link>
@@ -444,6 +455,42 @@ export default function ProjectPage() {
         </div>
       )}
     </Shell>
+  )
+}
+
+/**
+ * D'où vient la quantité d'un poste, quand elle ne vient pas d'une saisie.
+ *
+ * **Rien pour une ligne ordinaire**, et c'est voulu : la grande majorité des
+ * postes est saisie à la main, et un badge « saisie manuelle » sur chacun
+ * ferait du bruit sans rien apprendre. L'absence de badge est l'état normal.
+ *
+ * Le badge lit l'EMPREINTE (`source_mesure`), pas le lien. Les deux coexistent
+ * en base parce qu'ils ne survivent pas aux mêmes choses : le lien se dénoue
+ * si la proposition disparaît, l'empreinte reste. Afficher le lien ici
+ * laisserait donc une ligne perdre sa provenance à l'écran tout en la gardant
+ * en base.
+ */
+function ProvenanceDuPoste({ item }: { item: BoqItem }) {
+  const empreinte = item.source_mesure
+  if (!empreinte) return null
+  const page = String(empreinte.page ?? '?')
+  const decision = empreinte.decision === 'corrected' ? 'corrigée' : 'confirmée'
+  const valeur = String(empreinte.valeur_retenue ?? '')
+  const unite = String(empreinte.unite_retenue ?? '')
+  return (
+    <div style={{ fontSize: 11 }}>
+      <span
+        className="badge"
+        data-testid="boq-provenance"
+        title={t('boq.venuDunPlanDetail')
+          .replace('{page}', page)
+          .replace('{decision}', decision)
+          .replace('{valeur}', `${valeur} ${unite}`.trim())}
+      >
+        {t('boq.venuDunPlan')}
+      </span>
+    </div>
   )
 }
 
@@ -532,7 +579,7 @@ function PrixDuPoste({
           <span className="badge">{t('priceSource.library')}</span>{' '}
           <span className="mono">{article.code}</span> — {article.label}{' '}
           <span className="mono">
-            {article.unit_price} {article.currency}/{article.unit_code}
+            {ecrireEnFrancais(article.unit_price)} {article.currency}/{article.unit_code}
           </span>
         </span>
       ) : item.price_item_id ? (

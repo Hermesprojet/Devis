@@ -211,3 +211,179 @@ client conteste ; sur la facture qui en découle, c'est l'administration.
 Le gel. `snapshot_sha256` porte sur les valeurs non arrondies, identiques sur
 les deux moteurs (voir la PR sur l'écriture canonique). Un devis gelé reste
 comparable à lui-même.
+
+---
+
+# L'orthographe des nombres : quatre surfaces, deux écritures
+
+**Ce chapitre ne parle pas d'arrondi.** Aucune valeur n'y change, aucune
+décimale n'y est décidée, et le `snapshot_sha256` d'un devis gelé n'en dépend
+pas. Il parle de la façon d'ÉCRIRE un nombre que le moteur a déjà arrêté.
+
+## Le constat
+
+Les captures du parcours montraient, pour une seule et même quantité :
+
+| Où | Ce qui s'affichait |
+| --- | --- |
+| L'aperçu d'une reprise de mesure | `6,0200 m` |
+| La ligne du bordereau | `6.02` |
+| Le PDF du devis | `6.02` |
+| Le statut de cette ligne | `proposed` |
+
+Quatre écritures pour un seul chiffre, et un mot anglais sur un écran
+autrement entièrement français. Un métreur belge qui relit son bordereau ne
+peut pas dire si `6.02` et `6,0200` sont le même nombre — ils le sont.
+
+## Les quatre surfaces d'un devis, et ce que chacune porte
+
+Un même devis se lit à quatre endroits, et ils n'ont pas le même lecteur :
+
+| Surface | Lecteur | Écriture |
+| --- | --- | --- |
+| L'écran (bordereau, étude, devis public, tableau des devis) | une personne | **belge** : virgule, espace fine insécable U+202F |
+| Le PDF remis au client | une personne | **belge**, avec l'espace insécable ordinaire U+00A0 |
+| L'aperçu HTML imprimable | une personne | **belge**, U+202F |
+| Le CSV | **une machine** — un tableur, un outil, la répétition de préproduction | **canonique** : point décimal, aucun séparateur de milliers |
+
+**Le CSV reste à l'orthographe machine, et c'est délibéré.** Son en-tête dit
+qu'il doit « tenir tout seul, détaché de l'application » ; `ops/parcours_devis.py`
+le relit pour vérifier qu'un devis restauré porte les mêmes nombres, et
+`money.to_decimal` ne sait pas relire une virgule précédée d'une espace
+insécable — vérifié : `to_decimal("5 620,00")` lève `InvalidOperation`. Changer
+l'écriture du CSV n'est pas une correction de présentation, c'est un changement
+de format d'échange : il appartient au propriétaire de le demander, et il
+demanderait sa propre migration de lecture.
+
+**Un nombre écrit à la belge est un cul-de-sac.** Il ne doit jamais atteindre
+un instantané, une base, un calcul ni un export machine. C'est pourquoi la
+transcription se fait au tout dernier moment, à l'endroit du rendu, et jamais
+à la source.
+
+## Où la transcription se fait, et pourquoi
+
+`services/lisible.nombre_francais_tel_quel` côté serveur, et
+`apps/web/src/lib/nombres.ecrireEnFrancais` côté écran, font exactement le même
+geste : point remplacé par une virgule, milliers groupés. **Ni l'une ni l'autre
+n'arrondit, ne choisit une décimale, ni ne passe par un flottant.**
+
+La règle du dépôt — « un nombre destiné à être LU est rendu par le serveur, et
+l'écran ne le recalcule pas » — vise les deux arrondis qui finiraient par
+diverger d'un chiffre. Une transcription ne décide rien : elle ne peut pas
+diverger. Ce qui reste rendu par le serveur est tout ce qui se DÉCIDE :
+
+- le nombre de décimales d'une **mesure**, qui vient de son incertitude
+  (`quantite_lisible`, `incertitude_lisible`) ;
+- l'écriture d'une **quantité de bordereau** (`quantite_de_document_lisible`,
+  champ `quantity_lisible`) : le nombre canonique du moteur, transcrit, sans
+  zéro ajouté ni décimale retirée — c'est celui que l'étude affiche et que le
+  PDF imprime ;
+- le symbole d'une **unité** : « m² » là où le code dit « m2 ».
+
+## Les deux mondes, et le seul endroit où ils se touchent
+
+`quantite_lisible` sert le monde de la **mesure** : « 6,0200 m » dit jusqu'où
+la cote est connue, et ses zéros ne sont pas décoratifs.
+`quantite_de_document_lisible` sert le monde du **document** : son nombre sera
+multiplié par un prix unitaire et imprimé sur un devis.
+
+Les deux se touchent à un seul endroit : **l'aperçu d'une reprise**, qui
+annonce ce qu'une ligne de bordereau portera. Il emploie désormais la règle du
+document. Montrer « 6,0200 m » puis écrire « 6,02 m » était annoncer autre
+chose que ce qu'on fait.
+
+> **Un défaut trouvé en chemin.** L'aperçu appliquait au nombre **corrigé par
+> un humain** l'incertitude calculée par la machine, alors que l'écran de
+> mesure s'en abstient délibérément pour ce même nombre : une valeur relevée au
+> décamètre n'hérite pas de la finesse du pixel. Les deux routes voisines
+> rendaient deux orthographes. La question ne se pose plus ici, puisque
+> l'aperçu ne tire plus ses décimales de l'incertitude.
+
+## Les statuts
+
+Trois listes d'états bornées par le serveur s'affichaient en anglais :
+`BoqItem.status`, le statut d'un chantier et celui d'une version de
+bibliothèque. Elles sont traduites dans `apps/web/src/lib/i18n.ts`, sous des
+clés préfixées — `boq.status.*`, `projects.status.*`,
+`priceBook.versionStatus.*`. Le préfixe n'est pas cosmétique : `proposed` et
+`rejected` appartiennent à DEUX énumérations différentes — celle d'une ligne de
+bordereau (`proposed`, `verified`, `approved`, `rejected`) et celle d'une
+proposition de plan (`proposed`, `accepted`, `corrected`, `rejected`). Un
+dictionnaire unique traduirait l'une par l'autre.
+
+**La valeur stockée ne change pas.** C'est le libellé qui est traduit, jamais
+le code : la contrainte `ck_boq_item_status` borne toujours les mêmes quatre
+chaînes, et l'API les rend telles quelles.
+
+## Ce que cette passe ne change pas
+
+- Aucune valeur stockée, aucune empreinte, aucun total.
+- Aucune règle d'arrondi métier : la `RoundingPolicy` de l'entreprise décide
+  toujours seule, et la transcription n'y touche pas.
+- **Les devis déjà émis.** Leur PDF est lu sur le volume, octet pour octet, et
+  son `pdf_sha256` le prouve. Un devis émis avant cette passe garde son
+  document tel qu'il a été remis — c'est la même réserve que pour l'arrondi,
+  et pour la même raison : on ne réécrit pas un document déjà entre les mains
+  d'un client.
+
+## Une quantité reprise d'un plan : du constat à la quantité retenue
+
+**Une quantité reprise d'un plan porte dix décimales.** La mesure est quantisée
+à dix décimales à son calcul, la conversion d'unité en produit autant, et la
+colonne `boq_items.quantity` les conserve. Pour une cote ronde — 6 020 mm
+corrigée à la main — cela ne se voit pas. Pour une cote **mesurée**, qui ne
+tombe jamais juste, cela se voit.
+
+**L'essai sur un plan réel l'a montré, et c'était le moment prévu pour le
+voir.** Sur le plan d'étage d'un immeuble, au 1/50, la dalle d'un balcon,
+pointée à ses quatre coins puis confirmée, a donné une ligne de bordereau de
+6,3787950927 m². Ce que chaque surface en écrivait :
+
+| Où | Avant la correction | Après |
+| --- | --- | --- |
+| La mesure, à l'écran de lecture | `6,379 m²` — décimales tirées du ± 0,041 m² | inchangé : c'est le monde de la mesure |
+| L'aperçu de la reprise, « quantité qui sera écrite » | `6,378795 m²` — plafonné à six décimales | `6,3787950927 m²` |
+| La ligne du bordereau | `6,378795 m²` | `6,3787950927 m²` |
+| L'étude de prix | `6,3787950927` | inchangé |
+| Le PDF remis au client | `6,3787950927` | inchangé |
+
+Depuis la quantité retenue (ci-dessous), l'aperçu et le bordereau écrivent la
+**proposée** (6,379 m²) ou la **retenue** (6,38 m²) ; la brute 6,3787950927 m²
+reste dans `source_mesure.quantite_brute` et au journal (`quantity_raw`), et
+l'étude comme le PDF lisent la même colonne que le bordereau.
+
+
+**Ce qui a été corrigé, et ce qui ne l'a pas été.** L'aperçu annonçait un
+nombre que la ligne ne portait pas, et l'écran disait autre chose que le
+document. Ce n'était pas une question d'arrondi : l'écriture du bordereau
+plafonnait à six décimales et complétait à deux, quand l'étude et le PDF
+transcrivent le texte du moteur. Les quatre surfaces du document écrivent
+désormais le même texte — `test_une_quantite_a_dix_decimales_s_ecrit_pareil_de_l_apercu_au_pdf`.
+**Aucune valeur n'a changé** : ni la quantité stockée, ni le montant, ni
+l'empreinte d'un devis gelé.
+
+**Ce qui a été tranché ensuite : la quantité RETENUE.** Un devis qui imprime
+« 6,3787950927 m² » n'est pas présentable, et aucune des trois sorties
+envisagées n'était satisfaisante seule : arrondir d'office est une règle de
+chiffrage qui appartient à l'entreprise, arrondir à l'impression désolidarise le
+document du calcul, et laisser tout tel quel est illisible. La règle retenue
+tient en trois phrases, et chacune est éprouvée par
+`apps/api/tests/test_reprise_d_une_mesure.py` :
+
+1. **La mesure brute et son ± ne changent pas.** Ils restent sur l'écran de
+   mesure, dans l'aperçu de la reprise, dans l'empreinte `source_mesure` de la
+   ligne et au journal.
+2. **Le serveur propose la quantité à la finesse de la mesure** — la règle que
+   `lisible.decimales_utiles` applique déjà au ± : 6,3787950927 m² ± 0,041 m²
+   se propose 6,379 m². Une mesure corrigée n'a pas de ± : la personne a déjà
+   choisi le nombre, et c'est lui qui se propose, tel quel.
+3. **La personne peut retenir une autre écriture, dans le ± de la mesure.**
+   6,38 m² est une écriture de la même mesure ; 6,5 m² est un autre nombre, et
+   la route le refuse en renvoyant vers la correction de la mesure, qui exige un
+   motif. Renvoyer la proposition telle quelle, c'est l'accepter : elle ne
+   repasse pas le contrôle qui l'a produite. La quantité retenue, la proposée,
+   la brute, le ± et qui a retenu partent dans l'empreinte et au journal : la
+   décision se relit seule.
+
+Le nombre retenu est ensuite **identique** au bordereau, dans le calcul de
+l'étude et sur le PDF : c'est le même texte canonique du moteur, transcrit.

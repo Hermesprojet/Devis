@@ -7,6 +7,7 @@ import { ErrorNotice, Loading } from '@/components/Feedback'
 import { Shell } from '@/components/Shell'
 import { api, type QuoteBoardRow } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 const ETATS = [
   ['', 'Tous les états'],
@@ -153,7 +154,7 @@ export default function QuotesBoardPage() {
                     <span className="mono">{ligne.project_reference}</span> {ligne.project_name}
                   </td>
                   <td className="num">
-                    {ligne.total_ttc} {ligne.currency}
+                    {ecrireEnFrancais(ligne.total_ttc)} {ligne.currency}
                   </td>
                   <td>{dateFr(ligne.issued_at)}</td>
                   <td>{dateFr(ligne.valid_until)}</td>

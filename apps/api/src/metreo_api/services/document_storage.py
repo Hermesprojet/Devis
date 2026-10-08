@@ -35,7 +35,11 @@ from metreo_domain.errors import DomainError
 TAILLE_MORCEAU = 256 * 1024
 
 #: De quoi reconnaître une signature. Les conteneurs ZIP en demandent plus.
-OCTETS_DE_TETE = 8
+#:
+#: 32 et non 8 : la sentinelle du DXF binaire — « AutoCAD Binary DXF » suivi
+#: de CR LF SUB NUL — occupe 22 octets. Lire moins la couperait, et le fichier
+#: tomberait dans la détection de texte, qui n'en voudrait pas.
+OCTETS_DE_TETE = 32
 
 #: Ce que l'application accepte de recevoir, et sous quel nom elle le range.
 #:
@@ -49,6 +53,10 @@ EXTENSIONS: dict[str, str] = {
     "text/csv": ".csv",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    # Le type enregistré à l'IANA pour le DXF. « image/ » est trompeur — un
+    # DXF n'est pas une image — mais c'est le nom officiel, et en inventer un
+    # autre ferait diverger le stockage de ce que le reste du monde annonce.
+    "image/vnd.dxf": ".dxf",
 }
 
 TYPES_ACCEPTES = frozenset(EXTENSIONS)
@@ -58,6 +66,9 @@ _SIGNATURES: tuple[tuple[bytes, str], ...] = (
     (b"%PDF-", "application/pdf"),
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff", "image/jpeg"),
+    # Le DXF binaire s'annonce. Le DXF ASCII, lui, n'a aucune signature : il
+    # se reconnaît à sa structure, plus bas.
+    (b"AutoCAD Binary DXF\r\n\x1a\x00", "image/vnd.dxf"),
 )
 
 #: Les signatures que l'on refuse en les NOMMANT, plutôt que de rendre
@@ -77,6 +88,58 @@ _SIGNATURES_REFUSEES: tuple[tuple[bytes, str], ...] = (
 )
 
 _ZIP = b"PK\x03\x04"
+
+#: Un DWG commence par son numéro de version : « AC » suivi de quatre
+#: chiffres — AC1009 pour R12, AC1032 pour 2018. On le reconnaît pour le
+#: REFUSER en le nommant, et pour dire quoi faire à la place.
+#:
+#: Le préfixe seul ne suffirait pas : un CSV peut commencer par « AC10 ». Les
+#: quatre chiffres qui suivent sont ce qui distingue un en-tête d'un hasard.
+_PREFIXE_DWG = b"AC"
+
+
+def _est_un_dwg(tete: bytes) -> bool:
+    return len(tete) >= 6 and tete.startswith(_PREFIXE_DWG) and tete[2:6].isdigit()
+
+
+#: Un DXF ASCII est une suite de PAIRES « code de groupe, valeur », une par
+#: ligne. Sa première paire utile est forcément `0` / `SECTION`.
+#:
+#: Le contrôle est STRUCTUREL et non lexical, à dessein : chercher le mot
+#: « SECTION » quelque part dans le fichier prendrait un bordereau de prix qui
+#: parle de sections de voirie pour un plan.
+#:
+#: Les commentaires sont sautés. Le code 999 introduit une ligne de commentaire
+#: libre, et la plupart des logiciels de dessin en posent un en tête de fichier
+#: pour s'y nommer. Exiger `0` en première ligne rejetait donc les fichiers les
+#: plus courants — mesuré sur la fixture `mur_simple.dxf`, écrite avant ce
+#: correctif et qui le réclamait.
+_CODE_COMMENTAIRE_DXF = "999"
+
+
+def _ressemble_a_du_dxf_ascii(chemin: Path) -> bool:
+    with chemin.open("rb") as fichier:
+        tete = fichier.read(4096)
+    for encodage in ("utf-8", "cp1252"):
+        try:
+            texte = tete.decode(encodage)
+        except UnicodeDecodeError:
+            continue
+        break
+    else:
+        return False
+
+    lignes = [ligne.strip() for ligne in texte.replace("\r\n", "\n").split("\n")]
+    utiles = [ligne for ligne in lignes if ligne]
+
+    i = 0
+    # Une paire de commentaire occupe deux lignes : le code, puis le texte. On
+    # borne le saut, pour qu'un fichier fait de 999 à l'infini ne nous y garde
+    # pas — la tête lue est déjà bornée, cette borne-ci dit pourquoi.
+    while i + 1 < len(utiles) and utiles[i] == _CODE_COMMENTAIRE_DXF:
+        i += 2
+    return i + 1 < len(utiles) and utiles[i] == "0" and utiles[i + 1] == "SECTION"
+
 
 #: Reconnaître un OOXML sans le décompresser : on ne lit que le SOMMAIRE de
 #: l'archive (le central directory), jamais son contenu. Une bombe de
@@ -201,6 +264,13 @@ def detecter_type(chemin: Path, taille: int) -> str:
                 f"Le fichier est {quoi}, quel que soit son nom ou son extension.",
             )
 
+    if _est_un_dwg(tete):
+        raise ContenuRefuse(
+            "unsupported_content",
+            "Le DWG n'est pas lu par Metreo. Exportez le plan en DXF ou en PDF "
+            "depuis votre logiciel de dessin, puis déposez ce fichier.",
+        )
+
     for signature, media_type in _SIGNATURES:
         if tete.startswith(signature):
             return media_type
@@ -216,12 +286,19 @@ def detecter_type(chemin: Path, taille: int) -> str:
 
     _refuser_html(tete)
 
+    # AVANT la détection de texte, et c'est tout l'enjeu : un DXF ASCII est du
+    # texte lisible sans octet nul, donc `_ressemble_a_du_texte` le prenait
+    # pour un CSV. Mesuré : un plan déposé était rangé en `.csv` et proposé au
+    # pipeline d'import de prix.
+    if _ressemble_a_du_dxf_ascii(chemin):
+        return "image/vnd.dxf"
+
     if _ressemble_a_du_texte(chemin, taille):
         return "text/csv"
 
     raise ContenuRefuse(
         "unsupported_content",
-        "Type de fichier non reconnu. Formats acceptés : PDF, PNG, JPEG, CSV, XLSX, DOCX.",
+        "Type de fichier non reconnu. Formats acceptés : PDF, PNG, JPEG, CSV, XLSX, DOCX, DXF.",
     )
 
 

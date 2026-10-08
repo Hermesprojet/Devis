@@ -50,6 +50,10 @@ NOT_EXPRESSIBLE_IN_SQLITE: frozenset[str] = frozenset(
         "fk_boq_items_price_item_tenant",
         "fk_boq_items_composite_price_tenant",
         "fk_composite_components_price_item_tenant",
+        # Ajoutée par `b5c6d7e8090a` : une ligne de bordereau qui reprend une
+        # mesure de plan. `SET NULL` et non `CASCADE`, parce qu'un montant de
+        # devis ne doit pas disparaître avec le plan dont il est issu.
+        "fk_boq_items_source_proposal_tenant",
     }
 )
 
@@ -81,6 +85,7 @@ SQLITE_DRIFT: dict[str, str] = {
     "fk_boq_items_price_item_tenant": "SET NULL (price_item_id)",
     "fk_boq_items_composite_price_tenant": "SET NULL (composite_price_id)",
     "fk_composite_components_price_item_tenant": "SET NULL (price_item_id)",
+    "fk_boq_items_source_proposal_tenant": "SET NULL (source_proposal_id)",
 }
 
 #: Chaque relation dérivée produit un couple `remove_fk` / `add_fk`, jamais un

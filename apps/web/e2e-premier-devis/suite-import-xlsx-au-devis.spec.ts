@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN } from './banc'
 import { classeurFictif } from './classeur-fictif'
-import { seConnecter, texteDuPdf } from './parcours'
+import { enBelge, enBelgeDansLePdf, seConnecter, texteDuPdf } from './parcours'
 
 /**
  * D'un classeur de fournisseur au PDF remis au client, DANS LE NAVIGATEUR.
@@ -83,7 +83,7 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   })
   await expect(page.getByRole('cell', { name: BAREME.code })).toBeVisible()
   // Le prix lu dans le classeur, tel que la prévisualisation le montre.
-  await expect(page.getByRole('cell', { name: '148.6', exact: true })).toBeVisible()
+  await expect(page.getByRole('cell', { name: enBelge('148.6'), exact: true })).toBeVisible()
 
   // Le classeur porte deux feuilles : l'écran propose donc de choisir, plutôt
   // que de laisser croire que la première était la bonne.
@@ -101,10 +101,13 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   await page.getByPlaceholder('Rechercher').fill(BAREME.code)
   await expect(page.getByRole('cell', { name: BAREME.code })).toBeVisible({ timeout: 20_000 })
   // La bibliothèque affiche la valeur TELLE QU'ELLE EST STOCKÉE, suivie de sa
-  // devise — « 148.6 EUR ». Le devis, lui, l'imprimera quantifiée à deux
-  // décimales : c'est la politique d'arrondi qui décide de la présentation,
-  // et les deux écrans n'ont pas la même raison d'afficher un prix.
-  await expect(page.getByRole('row', { name: new RegExp(BAREME.code) })).toContainText('148.6')
+  // devise — « 148,6 EUR ». Le devis, lui, l'imprimera quantifiée à deux
+  // décimales : c'est la politique d'arrondi qui décide du NOMBRE, et les deux
+  // écrans n'ont pas la même raison d'afficher un prix. L'écriture, elle, est
+  // la même partout : virgule et espace insécable.
+  await expect(page.getByRole('row', { name: new RegExp(BAREME.code) })).toContainText(
+    enBelge('148.6'),
+  )
 
   // ---- 4. un chantier, et un poste chiffré PAR ce prix importé
   await page.goto('/projets')
@@ -139,7 +142,7 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   await page.getByRole('link', { name: 'Ouvrir' }).first().click()
   await page.waitForURL(/\/estimations\//)
   await expect(
-    ligneDuPoste(page).getByRole('cell', { name: TOTAL_ATTENDU, exact: true }),
+    ligneDuPoste(page).getByRole('cell', { name: enBelge(TOTAL_ATTENDU), exact: true }),
   ).toBeVisible({ timeout: 20_000 })
 
   // ---- 6. geler, émettre, et lire le PDF
@@ -166,7 +169,14 @@ test('un classeur de fournisseur devient un prix, puis une ligne de devis imprim
   // à ce qu'un nombre saisi dans le tableur d'un fournisseur arrive juste sur
   // le papier que le client reçoit.
   const texte = texteDuPdf(octets)
-  for (const attendu of [POSTE.position, POSTE.designation, '148.60', TOTAL_ATTENDU]) {
+  for (const attendu of [
+    POSTE.position,
+    POSTE.designation,
+    // Le document part chez un client belge : il écrit « 148,60 » et
+    // « 5 944,00 », jamais l'orthographe machine du moteur.
+    enBelgeDansLePdf('148.60'),
+    enBelgeDansLePdf(TOTAL_ATTENDU),
+  ]) {
     expect(texte, `le PDF doit imprimer « ${attendu} »`).toContain(attendu)
   }
 })

@@ -186,6 +186,35 @@ def _quantifier(valeur: str) -> Decimal:
     return Decimal(str(valeur))
 
 
+def _en_francais(montant: Decimal) -> str:
+    """« 99 097,07 » pour `Decimal("99097.07")`, sans rien arrondir.
+
+    **Pourquoi cette fonction est écrite ici plutôt qu'importée.** Ce module ne
+    connaît l'application que par HTTP : c'est ce qui lui permet de s'éprouver
+    seul contre une API locale, et de tourner dans la répétition de
+    préproduction sans que le chemin d'import de l'application y existe.
+    Importer `metreo_api.services.lisible` ferait dépendre le contrôle du
+    paquet qu'il contrôle.
+
+    C'est une transcription, pas un calcul : point remplacé par une virgule,
+    milliers groupés par l'espace fine insécable. Les décimales sont celles que
+    le moteur a déjà décidées. Une divergence avec `lisible.py` se verrait donc
+    immédiatement — l'aperçu HTML ne porterait plus le nombre attendu.
+    """
+    texte = str(montant)
+    entiere, _, fraction = texte.partition(".")
+    signe = ""
+    if entiere.startswith("-"):
+        signe, entiere = "-", entiere[1:]
+    groupes: list[str] = []
+    while len(entiere) > 3:
+        groupes.insert(0, entiere[-3:])
+        entiere = entiere[:-3]
+    groupes.insert(0, entiere)
+    entiere = " ".join(groupes)
+    return f"{signe}{entiere},{fraction}" if fraction else f"{signe}{entiere}"
+
+
 def verifier(
     client: Client, estimate_id: str, version_id: str, *, exiger_tva: bool = False
 ) -> dict[str, Any]:
@@ -243,13 +272,25 @@ def verifier(
         )
 
     # 4. les deux documents réellement remis portent ces mêmes nombres
+    #
+    # **Mais pas dans la même écriture, et c'est voulu.** Le CSV est relu par
+    # un tableur et par des outils : il garde l'orthographe canonique, avec le
+    # point décimal. L'aperçu HTML est lu par un humain et imprimé : il porte
+    # l'écriture belge, virgule et espace insécable. Vérifier les deux
+    # orthographes du MÊME nombre est plus fort que de n'en vérifier qu'une —
+    # c'est ce qui attraperait une conversion qui aurait arrondi en chemin.
     csv = client.get(f"{base}/export.csv", brut=True)
     html = client.get(f"{base}/quote.html", brut=True)
-    for nom, contenu in (("CSV", csv), ("aperçu HTML", html)):
-        if str(total_ht) not in contenu:
-            raise EchecParcours(f"le total HT {total_ht} n'apparaît pas dans le {nom}")
-        if str(total_ttc) not in contenu:
-            raise EchecParcours(f"le total TTC {total_ttc} n'apparaît pas dans le {nom}")
+    for nom, contenu, ecrire in (
+        ("CSV", csv, str),
+        ("aperçu HTML", html, _en_francais),
+    ):
+        for libelle, montant in (("HT", total_ht), ("TTC", total_ttc)):
+            attendu = ecrire(montant)
+            if attendu not in contenu:
+                raise EchecParcours(
+                    f"le total {libelle} « {attendu} » n'apparaît pas dans le {nom}"
+                )
 
     return {
         "estimate_id": estimate_id,

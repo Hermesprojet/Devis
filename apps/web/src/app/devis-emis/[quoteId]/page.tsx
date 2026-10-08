@@ -10,6 +10,7 @@ import { api, type IssuedQuoteDetail, type ShareLinkCreated } from '@/lib/api'
 import { t } from '@/lib/i18n'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 const CANAUX = [
   ['email', 'Courriel'],
@@ -188,7 +189,7 @@ export default function QuoteSheetPage() {
           <div className="field">
             <strong>{t('estimate.totalTTC')}</strong>
             <div>
-              {fiche.total_ttc} {fiche.currency}
+              {ecrireEnFrancais(fiche.total_ttc)} {fiche.currency}
             </div>
             <strong style={{ marginTop: 8 }}>{t('quote.validUntil')}</strong>
             <div>{new Date(fiche.quote.valid_until).toLocaleDateString('fr-BE')}</div>

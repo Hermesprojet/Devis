@@ -205,8 +205,10 @@ documentation (`README.md` et `docs/ROADMAP.md`).
 
 ## 9. Branche, commit, et ce qui ne se commite jamais
 
-État réel : remote `origin` = `https://github.com/Hermesprojet/Devis`, travail en cours sur la
-branche `claude/new-session-jdj11s`.
+État réel : remote `origin` = `https://github.com/Hermesprojet/Devis`. Le nom de la branche de
+travail n'est pas écrit ici : un skill est lu par un agent avant qu'il touche au code, et une
+branche nommée y est suivie, pas seulement lue — longtemps après qu'elle a été fusionnée. Le nom
+de la branche en cours se lit par `git rev-parse --abbrev-ref HEAD`.
 
 - Rester sur la branche de session en cours ; ne jamais committer directement sur la branche par
   défaut du dépôt distant.

@@ -153,7 +153,7 @@ export default function ProjectsPage() {
                   </td>
                   <td>{formatDate(project.submission_deadline)}</td>
                   <td>
-                    <span className="badge">{project.status}</span>
+                    <span className="badge">{t(`projects.status.${project.status}`)}</span>
                   </td>
                 </tr>
               ))}

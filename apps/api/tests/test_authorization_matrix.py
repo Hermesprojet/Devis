@@ -185,6 +185,24 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
             "reason": "Canal erroné",
         },
         "PATCH /api/v1/documents/{document_id}": {"status": "archived"},
+        # Calibrer et mesurer : des corps VALIDES, sans quoi la route
+        # répondrait 422 à la validation et le test ne prouverait rien de la
+        # portée par organisation.
+        ("POST /api/v1/documents/{document_id}/revisions/{revision_id}/plan/calibration"): {
+            "page": 1,
+            "premier": {"x": 0.1, "y": 0.1},
+            "second": {"x": 0.9, "y": 0.1},
+            "distance_reelle": "5000",
+            "unite": "mm",
+            "resolution_du_pointage": "0.5",
+            "motif": "Cote de référence",
+        },
+        ("POST /api/v1/documents/{document_id}/revisions/{revision_id}/plan/mesures"): {
+            "page": 1,
+            "type": "segment",
+            "points": [{"x": 0.1, "y": 0.1}, {"x": 0.5, "y": 0.5}],
+            "libelle": "Mur nord",
+        },
         "PATCH /api/v1/projects/{project_id}": {"name": "Renommé"},
         "POST /api/v1/projects/{project_id}/boqs": {"name": "Bordereau"},
         "POST /api/v1/boqs/{boq_id}/items": {
@@ -192,6 +210,19 @@ def _body_for(key: str, ids: dict[str, str]) -> dict[str, Any] | None:
             "designation": "Poste",
             "unit_code": "m3",
             "quantity": "1",
+        },
+        # La reprise d'une mesure : le corps doit être VALIDE, sinon la route
+        # répond 422 à la validation et ne prouve rien de la portée par
+        # organisation. `proposal_id` désigne une proposition de
+        # l'organisation A — l'identifiant croisé qu'on veut voir refusé.
+        # L'aperçu : même corps minimal, même identifiant croisé à refuser.
+        "POST /api/v1/boqs/{boq_id}/reprises-de-mesure/apercu": {
+            "proposal_id": ids["proposal"],
+        },
+        "POST /api/v1/boqs/{boq_id}/items:depuis-une-mesure": {
+            "proposal_id": ids["proposal"],
+            "position": "9.1",
+            "designation": "Poste repris d'une mesure de plan",
         },
         "POST /api/v1/boqs/{boq_id}/items:bulk": {
             "items": [

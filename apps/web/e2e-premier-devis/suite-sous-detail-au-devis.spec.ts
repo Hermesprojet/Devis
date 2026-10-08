@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN } from './banc'
-import { seConnecter, texteDuPdf } from './parcours'
+import { enBelge, enBelgeDansLePdf, seConnecter, texteDuPdf } from './parcours'
 
 /**
  * Construire un sous-détail depuis l'interface, puis s'en servir dans un devis.
@@ -123,11 +123,13 @@ test('un sous-détail se construit, se corrige et chiffre un devis jusqu’au PD
   await troisieme.locator('input[id^="cost_per_rotation-"]').fill('40.00')
 
   // ---- 3. le coût prévisualisé vient du SERVEUR, et il tombe juste
-  await expect(page.getByTestId('cout-unitaire')).toContainText('77.50', { timeout: 15_000 })
+  await expect(page.getByTestId('cout-unitaire')).toContainText(enBelge('77.50'), {
+    timeout: 15_000,
+  })
   const ventilation = page.getByTestId('ventilation')
-  await expect(ventilation).toContainText('31.50')
-  await expect(ventilation).toContainText('6.00')
-  await expect(ventilation).toContainText('40.00')
+  await expect(ventilation).toContainText(enBelge('31.50'))
+  await expect(ventilation).toContainText(enBelge('6.00'))
+  await expect(ventilation).toContainText(enBelge('40.00'))
 
   await editeur.getByRole('button', { name: 'Enregistrer' }).click()
   await expect(page.getByTestId(`sous-detail-${BIB.code}`)).toBeVisible()
@@ -172,7 +174,7 @@ test('un sous-détail se construit, se corrige et chiffre un devis jusqu’au PD
   const prixDuPoste = page.getByTestId('prix-poste-01.10')
   await expect(prixDuPoste).toContainText(BIB.code)
   await expect(prixDuPoste).toContainText('3 composants')
-  await expect(prixDuPoste).toContainText('77.50', { timeout: 15_000 })
+  await expect(prixDuPoste).toContainText(enBelge('77.50'), { timeout: 15_000 })
 
   // ---- 5. l'étude, et le déboursé attendu : 100 × 77,50 = 7 750,00
   await page.getByRole('button', { name: 'Créer une étude de prix' }).click()
@@ -185,27 +187,29 @@ test('un sous-détail se construit, se corrige et chiffre un devis jusqu’au PD
   // juste. La cellule « Déboursé sec » vaut exactement 7750.00 ; le total HT de
   // la ligne porte en plus la devise, donc l'égalité stricte ne confond pas les
   // deux colonnes.
-  await expect(ligneDuPoste(page).getByRole('cell', { name: '7750.00', exact: true })).toBeVisible({
+  await expect(ligneDuPoste(page).getByRole('cell', { name: enBelge('7750.00'), exact: true })).toBeVisible({
     timeout: 15_000,
   })
-  await expect(ligneDuPoste(page).getByRole('cell', { name: '77.50', exact: true })).toBeVisible()
-  await expect(page.getByRole('row', { name: 'Déboursé sec 7750.00 EUR' })).toBeVisible()
+  await expect(ligneDuPoste(page).getByRole('cell', { name: enBelge('77.50'), exact: true })).toBeVisible()
+  await expect(page.getByRole('row', { name: `Déboursé sec ${enBelge('7750.00')} EUR` })).toBeVisible()
 
   // ---- 6. corriger le sous-détail change le BROUILLON
   await page.goto('/bibliotheque')
   await page.getByTestId(`sous-detail-${BIB.code}`).getByRole('button', { name: 'Modifier' }).click()
   await page.getByTestId('composant-1').locator('input[id^="hourly_rate-"]').fill('120.00')
-  await expect(page.getByTestId('cout-unitaire')).toContainText('83.50', { timeout: 15_000 })
+  await expect(page.getByTestId('cout-unitaire')).toContainText(enBelge('83.50'), {
+    timeout: 15_000,
+  })
   await page.getByTestId('editeur-sous-detail').getByRole('button', { name: 'Enregistrer' }).click()
   await expect(page.getByTestId(`sous-detail-${BIB.code}`)).toBeVisible()
 
   await page.goto(urlVersion)
   // 100 × 83,50 = 8 350,00 : la correction a bien traversé jusqu'au devis.
-  await expect(ligneDuPoste(page).getByRole('cell', { name: '8350.00', exact: true })).toBeVisible({
+  await expect(ligneDuPoste(page).getByRole('cell', { name: enBelge('8350.00'), exact: true })).toBeVisible({
     timeout: 15_000,
   })
-  await expect(ligneDuPoste(page).getByRole('cell', { name: '83.50', exact: true })).toBeVisible()
-  await expect(page.getByRole('row', { name: 'Déboursé sec 8350.00 EUR' })).toBeVisible()
+  await expect(ligneDuPoste(page).getByRole('cell', { name: enBelge('83.50'), exact: true })).toBeVisible()
+  await expect(page.getByRole('row', { name: `Déboursé sec ${enBelge('8350.00')} EUR` })).toBeVisible()
 
   // ---- 7. publier la bibliothèque ferme l'édition
   await page.goto('/bibliotheque')
@@ -257,14 +261,18 @@ test('un sous-détail se construit, se corrige et chiffre un devis jusqu’au PD
   // nulle, 83,50 est à la fois le déboursé et le prix de vente : ce nombre ne
   // prouve donc rien dans un sens ni dans l'autre, et le vérifier reviendrait à
   // interdire au devis d'afficher son propre prix.
-  for (const attendu of ['01.10', 'Remblai technique', '8350.00']) {
+  for (const attendu of ['01.10', 'Remblai technique', enBelgeDansLePdf('8350.00')]) {
     expect(texte, `le PDF doit imprimer « ${attendu} »`).toContain(attendu)
   }
+  // Les DEUX orthographes du taux horaire sont interdites : depuis que le
+  // document écrit à la belge, chercher « 120.00 » seul ne prouverait plus
+  // qu'il ne fuit pas.
   for (const interne of [
     'Grave 0/32',
     'Équipe de pose',
     'Camion 8x4',
     '120.00',
+    enBelgeDansLePdf('120.00'),
     'Déboursé',
     'Revient',
     'Marge',
@@ -294,7 +302,7 @@ test('un sous-détail se construit, se corrige et chiffre un devis jusqu’au PD
   await expect(pageClient.getByTestId('devis-public')).toBeVisible()
 
   // Le montant que le client lit est celui du calcul gelé : 100 × 83,50.
-  await expect(pageClient.getByTestId('devis-public')).toContainText('8350.00')
+  await expect(pageClient.getByTestId('devis-public')).toContainText(enBelge('8350.00'))
 
   // Rien de la ventilation interne, ni en texte visible ni dans le document
   // servi : les libellés des ressources, les taux, le déboursé unitaire et le
@@ -305,6 +313,7 @@ test('un sous-détail se construit, se corrige et chiffre un devis jusqu’au PD
     'Équipe de pose',
     'Camion 8x4',
     '120.00',
+    enBelge('120.00'),
     'Déboursé',
     BIB.code,
   ]) {

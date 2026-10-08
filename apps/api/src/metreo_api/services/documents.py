@@ -31,8 +31,21 @@ from ..transactions import compenser
 from . import audit
 from .document_storage import StockageLocal
 from .locking import lock_owned
-from .tenant import get_owned, owned_query
+from .tenant import find_owned, get_owned, owned_query
 
+# Les onze premières étapes traitent un document de TEXTE. Les quatre
+# dernières traitent un plan, et aucune des onze ne leur convenait :
+#
+#   page_render      rendre une page de plan en image affichable
+#   vector_geometry  extraire la géométrie vectorielle d'un PDF
+#   cad_read         lire un fichier CAO de façon déterministe (lecture_dxf)
+#   measurement      calculer une mesure depuis cette géométrie
+#
+# Cette liste vit à TROIS endroits qui doivent bouger ensemble : ici, la
+# contrainte `ck_document_step_run_step` de `models.py`, et celle de la
+# migration d8e9fa010203. `claim_step_run` refuse avant la base : oublier
+# celui-ci rendrait les étapes inatteignables par l'API tout en étant
+# acceptées en SQL. Un test compare les trois.
 DOCUMENT_PIPELINE_STEPS = frozenset(
     {
         "receive_security",
@@ -46,6 +59,10 @@ DOCUMENT_PIPELINE_STEPS = frozenset(
         "indexing",
         "consistency",
         "human_review",
+        "page_render",
+        "vector_geometry",
+        "cad_read",
+        "measurement",
     }
 )
 
@@ -378,6 +395,28 @@ def add_revision(
     return revision
 
 
+def revision_par_id(
+    session: Session,
+    *,
+    organization_id: str,
+    revision_id: str,
+) -> DocumentRevision:
+    """La révision, par son organisation et son identifiant SEULS.
+
+    `get_revision` exige en plus le `document_id` et vérifie le document
+    parent : c'est ce qu'il faut pour une route de téléchargement, qui part
+    d'un document. Un worker, lui, ne reçoit que (organisation, révision) —
+    passer par `get_revision` l'obligerait à deviner le document.
+
+    Et `session.get(DocumentRevision, revision_id)` serait une fuite entre
+    clients : rien n'y vérifie l'organisation. `find_owned` la porte.
+    """
+    revision = find_owned(session, DocumentRevision, organization_id, revision_id)
+    if revision is None:
+        raise RevisionRefusee("not_found", "Révision introuvable.")
+    return revision
+
+
 def record_download(
     session: Session,
     *,
@@ -630,6 +669,20 @@ def record_validation_decision(
         proposal_id,
         label="Proposition",
     )
+
+    # Une mesure de plan corrigée doit porter une QUANTITÉ, et non le texte
+    # qu'une personne a bien voulu taper. La règle vit dans le module qui
+    # connaît la forme de ces propositions ; elle est appliquée ICI parce que
+    # c'est le seul endroit par lequel une décision passe.
+    #
+    # Import différé, et c'est le seul du fichier : `calibration_de_plan` tire
+    # tout le lecteur de plans — PDFium compris — et ce module-ci doit rester
+    # importable dans une installation sans l'extra `pdf`.
+    if proposal.schema_name == "mesure_pdf" and payload.decision == "corrected":
+        from . import calibration_de_plan
+
+        calibration_de_plan.verifier_la_valeur_retenue(proposal, payload.after_value)
+
     decision = ValidationDecision(
         organization_id=context.organization_id,
         proposal_id=proposal.id,

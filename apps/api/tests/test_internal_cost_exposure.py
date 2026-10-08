@@ -56,6 +56,9 @@ VISIBLES_SANS_COST_READ: frozenset[str] = frozenset(
         "lines[].price.unit_price_ht",
         "lines[].quantity",
         "lines[].unit",
+        # Le même code d'unité, écrit pour un lecteur : « m² » pour m2. Un
+        # symbole, jamais un prix.
+        "lines[].unit_lisible",
         "options_total_ht",
         "taxes[].amount",
         # La base sur laquelle la TVA est calculée. Elle figure au pied du

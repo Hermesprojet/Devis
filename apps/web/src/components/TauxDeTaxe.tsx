@@ -6,6 +6,7 @@ import { ErrorNotice } from '@/components/Feedback'
 import { api, type TaxRate } from '@/lib/api'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 /** Un taux est-il en vigueur aujourd'hui ? */
 export function enVigueur(taux: TaxRate, aujourdhui = new Date()): boolean {
@@ -17,7 +18,7 @@ export function enVigueur(taux: TaxRate, aujourdhui = new Date()): boolean {
 }
 
 function pourcentage(taux: string): string {
-  return `${(Number(taux) * 100).toFixed(2)} %`
+  return `${ecrireEnFrancais((Number(taux) * 100).toFixed(2))} %`
 }
 
 const AUJOURDHUI = () => new Date().toISOString().slice(0, 10)

@@ -394,7 +394,26 @@ def test_le_pdf_imprime_les_MONTANTS_du_document_et_non_des_zeros(
     Le test qui existait vérifiait `"Total" in texte`. Le MOT était là ; le
     montant, non. C'est précisément ce qu'une assertion sur un libellé ne peut
     pas voir, et pourquoi celle-ci porte sur les chiffres.
+
+    **Le document écrit le nombre à la belge**, virgule et espace insécable :
+    le PDF part chez un client, et « 33416.94 » n'est pas une orthographe
+    qu'on lui remet. L'attendu est donc transcrit ici, à la main, et non
+    emprunté au code qui imprime — un test qui demanderait à
+    l'implémentation ce qu'elle doit produire ne prouverait rien.
     """
+
+    def en_francais(canonique: str) -> str:
+        entiere, _, fraction = canonique.partition(".")
+        groupes: list[str] = []
+        while len(entiere) > 3:
+            groupes.insert(0, entiere[-3:])
+            entiere = entiere[:-3]
+        groupes.insert(0, entiere)
+        # U+00A0 et non U+202F : les polices de base d'un PDF sont encodées en
+        # WinAnsi, qui ne porte pas l'espace fine insécable.
+        groupee = " ".join(groupes)
+        return f"{groupee},{fraction}" if fraction else groupee
+
     calcul = seeded_client.get(
         f"/api/v1/estimates/{estimate['id']}/versions/{version['id']}/computation",
         headers=admin,
@@ -412,8 +431,15 @@ def test_le_pdf_imprime_les_MONTANTS_du_document_et_non_des_zeros(
         ).content
     )
 
-    assert attendu_ht in texte, f"le PDF n'imprime pas le total HT {attendu_ht}"
-    assert attendu_ttc in texte, f"le PDF n'imprime pas le total TTC {attendu_ttc}"
+    for libelle, canonique in (("HT", attendu_ht), ("TTC", attendu_ttc)):
+        ecrit = en_francais(canonique)
+        assert ecrit in texte, f"le PDF n'imprime pas le total {libelle} « {ecrit} »"
+        # Et il ne porte pas les deux orthographes : un document qui écrirait
+        # « 33 416,94 » dans le bloc des totaux et « 33416.94 » dans le tableau
+        # donnerait à relire deux nombres pour un seul montant.
+        assert canonique not in texte, (
+            f"le PDF imprime encore le total {libelle} à l'orthographe machine « {canonique} »"
+        )
     # Et l'INSTANTANÉ du devis porte les mêmes. C'est lui que relisent le
     # tableau des devis et la page publique du client : le même défaut leur
     # faisait afficher « 0 EUR » à tous les deux.

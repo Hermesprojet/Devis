@@ -19,6 +19,7 @@ from pydantic import (
     StringConstraints,
     computed_field,
     field_serializer,
+    field_validator,
     model_validator,
 )
 
@@ -880,6 +881,318 @@ class DocumentRevisionOut(ApiModel):
     created_at: datetime
 
 
+# -- lecture d'un plan -----------------------------------------------------
+
+
+class AnomalieDePlan(ApiModel):
+    """Un fait qui empêche ou fragilise une reprise, déjà rédigé en français.
+
+    Le message vient du serveur et part tel quel à l'écran : une interface qui
+    le recomposerait depuis le code finirait par dire autre chose que ce que
+    le lecteur a constaté.
+    """
+
+    code: str
+    message: str
+
+
+class CadreDePlan(ApiModel):
+    """Où se trouve un objet dans l'image, en [0,1], origine en haut à gauche.
+
+    Les quatre bornes sont des CHAÎNES décimales, comme toutes les valeurs
+    décimales de cette API : un flottant perdrait des chiffres au transport,
+    et une position sert à poser un surlignage au pixel près.
+    """
+
+    x0: str
+    y0: str
+    x1: str
+    y1: str
+
+
+class MesureDePlan(ApiModel):
+    """Une mesure proposée, sa provenance, sa réserve et la décision humaine.
+
+    `valeur_document` est la mesure DANS L'UNITÉ DU DOCUMENT, sans aucune
+    conversion. `valeur_corrigee` est ce qu'un humain a retenu, s'il a
+    corrigé : les deux sont rendues, parce que la proposition machine n'est
+    jamais réécrite et que l'écran doit pouvoir montrer l'écart.
+    """
+
+    proposal_id: str
+    citation_id: str
+    valeur_document: str
+    unite_document: str | None
+    famille: str
+    fiabilite: str
+    origine_de_la_mesure: str
+    texte_impose: str | None
+    reserves: list[AnomalieDePlan]
+    confiance: str
+    calque: str | None
+    feuille: str | None
+    object_ref: str | None
+    cadre: CadreDePlan | None
+    decision: str | None
+    valeur_corrigee: str | None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def valeur_lisible(self) -> str:
+        """La cotation abrégée, à la belge — un angle en degrés.
+
+        Rendue par le serveur : l'écran l'abrégeait avec un flottant et un
+        point décimal, et lisait un angle en radians comme des centimètres.
+        """
+        from .services import lisible
+
+        return lisible.cote_lisible(self.valeur_document, self.unite_document)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def valeur_exacte_lisible(self) -> str:
+        """La cotation entière, transcrite sans arrondi : celle du fichier."""
+        from .services import lisible
+
+        return lisible.cote_exacte(self.valeur_document, self.unite_document)
+
+
+class PlanLu(ApiModel):
+    """Le constat d'un plan, et les mesures qu'on en a tirées.
+
+    `mesurable` faux n'est pas une erreur : un plan sans unité déclarée reste
+    consultable et archivable — ni la visualisation ni l'archivage ne
+    demandent d'unité. Il n'est simplement pas mesurable, et l'écran doit le
+    dire au lieu de laisser une liste vide se faire interpréter.
+    """
+
+    revision_id: str
+    #: `"dxf"` ou `"pdf"`. L'écran en a besoin AVANT de lire le reste : les
+    #: champs d'un format absent valent `None` ou une liste vide, et un écran
+    #: qui ne saurait pas lequel il lit afficherait « sans unité » pour un PDF
+    #: — ce qui est vrai, mais trompeur : un PDF n'en a jamais.
+    format: Literal["dxf", "pdf"] = "dxf"
+    mesurable: bool
+    unite_source: str | None
+    insunits: int | None
+    version_dxf: str | None
+    feuilles: list[str]
+    calques: dict[str, int]
+    entites: dict[str, int]
+    refuse: bool
+    motif_du_refus: AnomalieDePlan | None
+    anomalies: list[AnomalieDePlan]
+    image_disponible: bool
+    mesures: list[MesureDePlan]
+
+    # -- ce qui n'existe que pour un PDF ------------------------------------
+    #: Zéro pour un DXF : la notion n'a pas de sens pour un espace modèle.
+    pages: int = 0
+    #: Largeur et hauteur de chaque page, en **points PostScript** (1/72 de
+    #: pouce). Ce sont des nombres, pas des chaînes décimales, et la raison est
+    #: qu'ils ne servent à AUCUN calcul de métré : ils donnent le rapport de
+    #: forme d'un aperçu. Une valeur qui entre dans un prix est une chaîne ;
+    #: celle-ci n'y entre jamais.
+    dimensions_des_pages: list[list[float]] = Field(default_factory=list)
+    #: Faux pour un document scanné : l'aperçu reste utile, l'extraction non.
+    porte_du_texte: bool = False
+    #: Les FAITS de l'extraction, à afficher tels quels.
+    #:
+    #: L'écran annonçait « aucun — plan probablement scanné » dès que
+    #: l'extraction rendait moins de cinquante caractères, pour un plan
+    #: vectoriel qui en portait vingt-sept. Ce qui distingue un scan n'est pas
+    #: la quantité de texte : c'est son absence totale sur une page qui ne
+    #: porte qu'une image.
+    caracteres_extraits: int = 0
+    traces_vectoriels: int = 0
+    images_incluses: int = 0
+    probablement_scanne: bool = False
+    #: Combien de fragments de texte ont été récoltés. Un COMPTE, pas le texte :
+    #: les fragments se demandent à la route `…/plan/textes`, parce qu'un plan
+    #: réel en porte quelques milliers.
+    fragments_lus: int = 0
+    #: Les pages qui ont un aperçu, dans l'ordre. Une page absente de cette
+    #: liste n'est pas affichable — et `anomalies` dit alors pourquoi.
+    apercus: list[int] = Field(default_factory=list)
+
+
+class FragmentDeTexte(ApiModel):
+    """Un morceau de texte d'un PDF, et où il se trouve.
+
+    `texte` est rendu **tel que le document le porte** : espaces, virgules
+    décimales et unités comprises, sans normalisation. Le découpage en
+    fragments est celui du fichier, pas le nôtre — sur un plan réel, une cote
+    peut arriver entière (« 5000 ») ou éclatée caractère par caractère.
+    Regrouper relève d'une interprétation, et cette interprétation n'a pas
+    lieu côté serveur.
+
+    **Un fragment n'est pas une mesure.** C'est un texte situé. Il devient une
+    mesure quand un humain a confirmé une échelle, et pas avant.
+    """
+
+    texte: str
+    #: 1-indexée, comme une citation documentaire.
+    page: int
+    #: Dans le repère de l'aperçu PNG : [0,1], origine en haut à gauche. Se
+    #: pose donc directement sur l'image, sans conversion.
+    #:
+    #: `null` quand la position est inconnue. Ce n'est pas un oubli : écraser
+    #: une boîte hors page sur un bord inventerait un emplacement, et le
+    #: propriétaire chercherait la cote là.
+    cadre: CadreDePlan | None
+    #: `"exacte"`, `"recadree"` ou `"inconnue"`. Un écran qui n'afficherait que
+    #: le cadre présenterait un surlignage partiel comme s'il était complet.
+    position: str = "exacte"
+
+
+class TextesDePlan(ApiModel):
+    """Les textes d'un PDF, par tranches : un plan réel en porte des milliers."""
+
+    revision_id: str
+    #: Le nombre total de fragments du document, toutes pages confondues —
+    #: pas celui de la tranche rendue. C'est lui qui permet à l'écran de dire
+    #: « 120 sur 4 351 » au lieu de laisser croire qu'il a tout.
+    total: int
+    #: Quelle page a été demandée, ou `None` pour toutes.
+    page: int | None
+    fragments: list[FragmentDeTexte]
+    #: L'extracteur et sa version, tels qu'ils figureront dans une citation.
+    extracteur: str
+
+
+class PointDEcran(BaseModel):
+    """Un point désigné sur l'aperçu : [0,1], origine en haut à gauche.
+
+    Le MÊME repère que celui des cadres rendus par l'API. Demander au client de
+    convertir vers les points PostScript de la page lui ferait refaire une
+    transformation qui dépend de la rotation d'affichage — et la referait
+    forcément autrement.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class CalibrationCreate(BaseModel):
+    """Déclarer l'échelle d'une page : deux points, et ce qui les sépare."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(ge=1)
+    premier: PointDEcran
+    second: PointDEcran
+    #: Ce que la personne SAIT de cette distance. En chaîne décimale : un
+    #: flottant perdrait des chiffres, et cette valeur multiplie tout le reste.
+    distance_reelle: Decimal = Field(gt=0)
+    #: Un code d'unité de LONGUEUR. Refusé s'il n'en est pas un.
+    unite: str = Field(min_length=1, max_length=16)
+    #: Points PostScript par pixel d'écran au moment du pointage.
+    #:
+    #: **C'est ce champ qui décide de la confiance accordée aux mesures.**
+    #: Mesuré : sur l'aperçu pleine page d'un A0, un pixel vaut 12 à 42 mm
+    #: d'ouvrage ; sur une tuile agrandie, 0,6 à 6 mm. Un client qui ne le
+    #: déclare pas obtient le doute, pas le crédit.
+    resolution_du_pointage: Decimal = Field(gt=0)
+    #: Sur quoi la personne dit avoir calibré. Obligatoire : une calibration
+    #: sans justification ne se vérifie pas, et c'est elle qu'on relira.
+    motif: NonBlank = Field(max_length=500)
+    #: La zone où cette échelle s'applique. Absente = toute la page.
+    zone: list[float] | None = Field(default=None, min_length=4, max_length=4)
+
+
+class CalibrationOut(ApiModel):
+    """Une échelle déclarée, telle que l'écran la relit."""
+
+    id: str
+    page: int
+    distance_reelle: str
+    unite: str
+    #: « 50 mm par point ». À LIRE, pas à recalculer : un écran qui en referait
+    #: l'arithmétique obtiendrait un second facteur, et les deux divergeraient.
+    facteur_lisible: str
+    resolution_du_pointage: str
+    motif: str
+    zone: list[str] | None
+    created_at: datetime
+
+
+class MesureCreate(BaseModel):
+    """Prendre une mesure : un type, des points, un libellé."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: int = Field(ge=1)
+    type: Literal["segment", "surface"]
+    points: list[PointDEcran] = Field(min_length=2, max_length=200)
+    #: Ce que la personne mesure — « mur nord », « dalle du séjour ». Une liste
+    #: de mesures sans libellé est une liste de nombres que personne ne relit.
+    libelle: NonBlank = Field(max_length=200)
+    #: La résolution à laquelle CES points ont été posés, en points PostScript
+    #: par pixel affiché.
+    #:
+    #: **Facultative, et elle ne devrait pas l'être longtemps.** Le modèle
+    #: d'incertitude supposait jusqu'ici que la mesure était pointée au même
+    #: zoom que la calibration — vrai dans l'écran livré, faux pour tout autre
+    #: client, et faux dès qu'on calibre à la loupe puis qu'on mesure sur une
+    #: autre. Absente, l'ancienne hypothèse s'applique : c'est la résolution de
+    #: la calibration qui sert, et le comportement ne change pas.
+    resolution_du_pointage: Decimal | None = Field(default=None, gt=0)
+
+
+class MesureDePdf(ApiModel):
+    """Une mesure prise sur un PDF, avec de quoi la juger et la retrouver."""
+
+    proposal_id: str
+    citation_id: str
+    page: int
+    type: str
+    libelle: str
+    valeur: str
+    unite: str
+    #: Dans la MÊME unité que la valeur. Une incertitude en pourcentage
+    #: obligerait le lecteur à faire une multiplication, et il ne la fera pas.
+    incertitude: str
+    incertitude_relative: str
+    fiabilite: str
+    reserves: list[str]
+    #: Les points désignés, pour redessiner la mesure sur l'aperçu. Sans eux,
+    #: « retrouver la mesure sur le plan » redevient impossible.
+    points: list[PointDEcran]
+    cadre: CadreDePlan | None
+    #: D'où vient l'échelle qui a produit ce nombre.
+    calibration: dict[str, Any]
+    decision: str | None
+    #: **Pourquoi** la personne a tranché ainsi — affiché à côté de la décision.
+    #: Une décision sans sa raison n'est pas auditable.
+    motif_de_la_decision: str | None
+    valeur_corrigee: str | None
+    #: Les mêmes nombres, écrits pour être LUS — « 4 181 mm », « ± 26 mm ».
+    #:
+    #: Rendus par le serveur et non recalculés par l'écran, comme
+    #: `facteur_lisible` : deux arrondis finiraient par diverger d'un chiffre,
+    #: et c'est l'écart qu'on ne voit jamais venir. La valeur exacte reste
+    #: au-dessus, et c'est elle qu'on reprend pour calculer.
+    valeur_lisible: str
+    incertitude_lisible: str
+    valeur_retenue_lisible: str | None
+    unite_retenue: str | None
+    #: **Ce qui compte une fois la décision prise** : la valeur retenue si la
+    #: personne a corrigé, la mesure si elle a confirmé, `null` si elle a
+    #: rejeté ou n'a pas encore tranché.
+    valeur_retenue: str | None
+    #: Vrai quand cette mesure peut alimenter un bordereau. Faux pour une
+    #: mesure rejetée, et faux tant que personne n'a tranché.
+    reprenable: bool
+
+
+class MesuresDePdf(ApiModel):
+    revision_id: str
+    calibrations: list[CalibrationOut]
+    mesures: list[MesureDePdf]
+
+
 class ValidationDecisionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1332,6 +1645,143 @@ class BoqItemOut(DecimalOut):
     price_item_id: str | None
     composite_price_id: str | None
     sort_index: int
+    #: La mesure de plan reprise, et son empreinte figée.
+    #:
+    #: `None` sur une ligne saisie à la main, ce qui est le cas courant. Rendus
+    #: tous les deux : le lien permet de rouvrir le plan à la bonne page tant
+    #: qu'il existe, et l'empreinte dit d'où vient le nombre même si ce lien
+    #: est un jour dénoué.
+    source_proposal_id: str | None = None
+    source_mesure: dict[str, Any] | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def quantity_lisible(self) -> str:
+        """La quantité et son unité, écrites pour être lues.
+
+        **Rendue par le serveur, et non par l'écran.** C'est la règle du dépôt :
+        deux arrondis — un en Python, un en TypeScript — finiraient par diverger
+        d'un chiffre, et c'est le genre d'écart qu'on ne voit jamais venir. La
+        valeur exacte reste rendue à côté, dans `quantity`, et c'est elle qu'on
+        reprend pour calculer.
+
+        Une section n'a pas de quantité à montrer : son `0` n'est pas une
+        mesure, c'est l'absence de ligne.
+        """
+        from .services import lisible
+
+        if self.kind == "section":
+            return ""
+        return lisible.quantite_de_document_lisible(self.quantity, self.unit_code)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def unit_lisible(self) -> str:
+        """« m² » là où le code dit « m2 » — le symbole, rendu par le serveur."""
+        from .services import lisible
+
+        return lisible.unite_affichee(self.unit_code)
+
+
+class ApercuDeRepriseCreate(BaseModel):
+    """Ce qu'il faut pour CALCULER une reprise sans l'écrire.
+
+    La position et la désignation n'y sont pas : elles ne changent pas la
+    quantité, et les demander avant de montrer le nombre obligerait à saisir
+    avant de savoir ce qu'on saisit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: str
+    unite_cible: str | None = Field(default=None, max_length=12)
+    #: Ce que la personne veut écrire, dans `unite_cible`. Absente : la
+    #: proposition du serveur. Refusée hors du ± de la mesure.
+    quantite_retenue: Decimal | None = _bounded_opt(bounds.QUANTITY)
+
+    @field_validator("quantite_retenue", mode="before")
+    @classmethod
+    def _vide_vaut_absent(cls, valeur: object) -> object:
+        """Un champ de formulaire laissé vide n'est pas une quantité : c'est l'absence de choix."""
+        if isinstance(valeur, str) and not valeur.strip():
+            return None
+        return valeur
+
+
+class ApercuDeReprise(DecimalOut):
+    """La quantité qu'une reprise écrirait, et d'où elle vient.
+
+    **Pourquoi cette route existe, alors que la conversion tient en un facteur
+    mille.** Parce que ce facteur serait alors écrit DEUX fois : une en Python,
+    une en TypeScript. Les deux finiraient par diverger — c'est la règle que le
+    dépôt applique déjà au facteur d'échelle, aux valeurs lisibles et aux
+    totaux d'un devis. L'écran doit pouvoir montrer le nombre avant de l'écrire
+    sans le calculer lui-même.
+
+    Et le patron est celui du dépôt depuis l'import de prix : **prévisualiser,
+    puis confirmer.** Rien n'est écrit tant que la personne n'a pas vu.
+    """
+
+    #: Ce qui sera ÉCRIT, dans `unite` : la quantité retenue par la personne,
+    #: ou à défaut la proposition du serveur.
+    quantite: Decimal
+    #: Le code d'unité canonique de la quantité.
+    unite: str
+    #: La même quantité, écrite pour être LUE, comme le devis l'écrira.
+    quantite_lisible: str
+    #: Une phrase qui dit d'où vient le nombre : page, décision, valeur retenue.
+    provenance_lisible: str
+    #: La mesure brute dans `unite`, convertie sans aucun arrondi, et son ±
+    #: dans la même unité — `None` pour une mesure corrigée.
+    quantite_brute: Decimal
+    quantite_brute_lisible: str
+    incertitude: Decimal | None
+    incertitude_lisible: str | None
+    #: Ce que le serveur propose d'écrire : la brute, à la finesse de son ±.
+    quantite_proposee: Decimal
+    quantite_proposee_lisible: str
+    #: « proposition » ou « personne » : qui a retenu `quantite`.
+    quantite_retenue_par: Literal["proposition", "personne"]
+
+
+class RepriseDeMesureCreate(BaseModel):
+    """Reprendre une mesure tranchée dans une ligne de bordereau.
+
+    **La quantité ne se déclare pas librement, et c'est tout l'objet de cette
+    route.** Elle vient de la mesure et de la décision humaine qui l'a retenue.
+    La personne peut seulement choisir une ÉCRITURE de cette mesure
+    (`quantite_retenue`), dans son ± ; au-delà, la reprise est refusée et nommée.
+    Une ligne qui annonce une provenance et porte un autre nombre serait pire
+    que pas de provenance du tout.
+
+    `unite_cible` est la seule conversion du parcours, et elle est explicite :
+    une mesure en millimètres se reprend en mètres si la personne le demande,
+    jamais d'office. Omise, l'unité de la mesure est conservée telle quelle.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: str
+    #: Une ÉCRITURE de la mesure, choisie par la personne : refusée hors du ±
+    #: de la mesure. Omise, la proposition de l'aperçu s'écrit — exactement le
+    #: nombre que l'aperçu a montré.
+    quantite_retenue: Decimal | None = _bounded_opt(bounds.QUANTITY)
+
+    @field_validator("quantite_retenue", mode="before")
+    @classmethod
+    def _vide_vaut_absent(cls, valeur: object) -> object:
+        """Un champ de formulaire laissé vide n'est pas une quantité : c'est l'absence de choix."""
+        if isinstance(valeur, str) and not valeur.strip():
+            return None
+        return valeur
+
+    position: str = Field(min_length=1, max_length=40)
+    designation: str = Field(min_length=1)
+    unite_cible: str | None = Field(default=None, max_length=12)
+    kind: Literal["section", "item", "option", "variant", "provisional"] = "item"
+    code: str | None = Field(default=None, max_length=60)
+    sort_index: int | None = None
+    notes: str | None = None
 
 
 class BoqItemBulkCreate(BaseModel):

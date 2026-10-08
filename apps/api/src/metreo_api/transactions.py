@@ -112,6 +112,11 @@ _classer(
     # ni audit, ni devis, ni fichier. Une simulation qui laisserait une trace
     # cesserait d'être une simulation, et c'est ce classement qui l'interdit.
     "POST /api/v1/estimates/{estimate_id}/versions/{version_id}/scenarios",
+    # Calcule ce qu'une reprise de mesure écrirait dans un bordereau, et
+    # n'écrit rien. POST pour la même raison que les deux lignes au-dessus :
+    # elle reçoit un corps structuré. Ce classement est ce qui interdit
+    # qu'elle se mette un jour à écrire sans que personne ne le voie.
+    "POST /api/v1/boqs/{boq_id}/reprises-de-mesure/apercu",
 )
 
 # -- Écritures accompagnées d'un événement d'audit ---------------------------
@@ -127,6 +132,7 @@ _classer(
     "POST /api/v1/projects/{project_id}/boqs",
     "POST /api/v1/boqs/{boq_id}/items",
     "POST /api/v1/boqs/{boq_id}/items:bulk",
+    "POST /api/v1/boqs/{boq_id}/items:depuis-une-mesure",
     "PATCH /api/v1/boq-items/{item_id}",
     "DELETE /api/v1/boq-items/{item_id}",
     "POST /api/v1/boq-items/{item_id}/approve",
@@ -199,6 +205,18 @@ _classer(
     "PUT /api/v1/organization/logo",
     "DELETE /api/v1/organization/logo",
     "POST /api/v1/documents/{document_id}/revisions",
+    # Lire un plan écrit des deux côtés : l'état des deux étapes, les citations
+    # et les propositions en base, l'image et le constat sur le volume. Les
+    # deux ne partagent aucune transaction, d'où les compensations.
+    "POST /api/v1/documents/{document_id}/revisions/{revision_id}/plan/analyse",
+    # Calibrer écrit une DÉCISION HUMAINE : la ligne doit être validée avant
+    # que la réponse parte, sans quoi l'écran afficherait une échelle confirmée
+    # que la mesure suivante ne retrouverait pas.
+    "POST /api/v1/documents/{document_id}/revisions/{revision_id}/plan/calibration",
+    # Mesurer écrit une citation ET une proposition, qui n'ont de sens
+    # qu'ensemble : une citation sans sa proposition désigne un endroit sans
+    # rien y dire.
+    "POST /api/v1/documents/{document_id}/revisions/{revision_id}/plan/mesures",
 )
 
 

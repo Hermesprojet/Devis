@@ -443,9 +443,18 @@ def test_the_csv_and_the_html_agree_with_the_version_list(
     ]
     assert pied and pied[0][1] == attendu, f"CSV : {pied} ≠ {attendu}"
 
+    # L'aperçu HTML est lu par une personne et imprimé : il porte l'écriture
+    # belge, là où le CSV — relu par un tableur et par la répétition de
+    # préproduction — garde l'orthographe canonique. Le MÊME nombre, deux
+    # orthographes, et c'est ce que ce test vérifie : une conversion qui aurait
+    # arrondi en chemin ferait diverger les deux.
     html = seeded_client.get(f"{base}/quote.html", headers=headers).text
-    trouve = re.search(r"<td>Total HT</td><td class=\"num\">([\d.]+)", html)
-    assert trouve and trouve.group(1) == attendu, f"aperçu : {trouve} ≠ {attendu}"
+    trouve = re.search(r"<td>Total HT</td><td class=\"num\">([\d\u202f,]+)", html)
+    assert trouve, f"aperçu : « Total HT » sans montant lisible\n{html[:400]}"
+    en_belge = attendu.replace(".", ",")
+    for position in range(len(en_belge.split(",")[0]) - 3, 0, -3):
+        en_belge = en_belge[:position] + "\u202f" + en_belge[position:]
+    assert trouve.group(1) == en_belge, f"aperçu : {trouve.group(1)!r} ≠ {en_belge!r}"
 
 
 def test_a_frozen_total_survives_a_later_price_change(seeded_client: TestClient) -> None:

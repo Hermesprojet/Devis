@@ -104,6 +104,23 @@ ligne en `verified`.
 Une ligne peut pointer vers `price_item_id` (prix de bibliothèque) ou
 `composite_price_id` (sous-détail). Le sous-détail gagne s'il est présent.
 
+**D'où vient la quantité, quand elle vient d'un plan.** Deux colonnes
+nullables, et chacune pour une raison différente. `source_proposal_id` est le
+**lien** vers la proposition d'extraction reprise : il permet de remonter de la
+ligne de devis au plan, à la page et à la boîte où la mesure a été pointée.
+`source_mesure` est l'**empreinte** figée au moment de la reprise — valeur
+mesurée, valeur retenue, unité, incertitude, décision humaine et son motif.
+
+L'action référentielle est `SET NULL` et non `CASCADE` : la disparition d'une
+proposition ne doit pas emporter un montant de devis. L'empreinte reste alors
+seule, et elle suffit à dire d'où vient le nombre.
+
+`uq_boq_item_source` sur `(boq_id, source_proposal_id)` interdit de reprendre
+**deux fois la même mesure dans un même bordereau**. Le double comptage est
+l'erreur la plus coûteuse d'un métré : chaque ligne y est juste, et seul le
+total est faux. La même mesure peut en revanche alimenter deux bordereaux
+distincts — une variante, par exemple.
+
 ### Estimation
 
 `estimate_versions` est le cœur de la traçabilité :
@@ -198,8 +215,10 @@ en écriture unique est un chantier de phase 5.
 Le cahier des charges en liste davantage. Elles arriveront avec leur phase, pas
 avant :
 
-- Phase 2 — `Document`, `DocumentRevision`, `DocumentPage`, `ProcessingJob`,
-  `ExtractionProposal`, `SourceCitation`, `ValidationDecision`
+- Phase 2 — `DocumentPage`, `ProcessingJob`. `Document`, `DocumentRevision`,
+  `DocumentStepRun`, `SourceCitation`, `ExtractionProposal` et
+  `ValidationDecision` sont LIVRÉS et en service ; il n'existe toujours aucune
+  file d'attente, donc aucun `ProcessingJob`
 - Phase 3 — `PlanSheet`, `PlanObject`, `QuantityMeasurement`, `MeasurementFormula`
 - Phase 4 — `Supplier`, `SupplierContact`, `SupplierQualification`, `ServiceArea`,
   `RFQ`, `RFQPackage`, `RFQRecipient`, `RFQMessage`, `SupplierOffer`,
@@ -212,9 +231,13 @@ existe sous le nom `issued_quotes`, et son cycle commercial avec lui.
 
 Deux exigences structurantes les concernent déjà :
 
-1. **Une citation est un objet de première classe**, pas du texte libre : fichier,
-   révision, page, plage de caractères, boîte englobante normalisée, et pour un
-   plan feuille/calque/objet.
+1. **Une citation est un objet de première classe**, pas du texte libre. Son
+   ancrage est SOIT textuel — page et plage de caractères — SOIT CAO —
+   feuille, calque et handle d'objet. `page`, la plage et la boîte englobante
+   sont nullables depuis la révision `d8e9fa010203`, parce qu'une cotation de
+   DXF n'a ni page ni caractères et que les inventer écrirait une provenance
+   fausse. Ce qui reste interdit est la citation ancrée sur RIEN :
+   `ck_source_citation_ancrage` l'exige.
 2. **L'IA écrit dans `ExtractionProposal`, jamais dans une table approuvée.** Le
    passage de l'une à l'autre est une `ValidationDecision` humaine.
 
@@ -223,6 +246,9 @@ Deux exigences structurantes les concernent déjà :
 | Contrainte | Raison |
 | --- | --- |
 | `uq_project_org_reference` | Deux entreprises peuvent utiliser la référence « 2026-014 » |
+| `ck_source_citation_ancrage` | Une citation sans aucun ancrage — ni page avec sa plage, ni handle d'objet — serait une provenance vide qui passerait pour une provenance |
+| `ck_source_citation_bbox_complete` | Une contrainte CHECK est satisfaite quand son expression vaut NULL : une boîte à moitié écrite passait donc. Celle-ci ne parle qu'en `IS NULL` / `IS NOT NULL`, et ne vaut donc jamais NULL |
+| `ck_document_step_run_step` | Quinze étapes, dont quatre pour un plan. La liste vit à trois endroits — le service, le modèle, la migration — et un test les compare |
 | `uq_priceitem_version_code` | Un code est unique dans une version de bibliothèque, pas au-delà |
 | `uq_boqitem_boq_position` | Un poste par position dans un bordereau |
 | `uq_estimateversion_number` | Numérotation continue par estimation |

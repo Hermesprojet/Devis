@@ -1,20 +1,27 @@
 ---
 name: cad-bim-takeoff
-description: À utiliser pour tout ce qui concerne la GÉOMÉTRIE d'un plan ou d'un fichier CAO/BIM dans Metreo (phase 3, non implémenté) — visionneuse et annotation, échelle déclarée, lue ou calibrée, feuilles, calques, cotes, polylignes, blocs, textes, IFC, DXF, DWG, GeoJSON, PostGIS, worker de conversion, bibliothèque de lecture CAO et sa licence, extraction de longueurs/surfaces/volumes depuis un plan, mesure manuelle traçable, rapprochement plan/bordereau, écart entre quantité mesurée et quantité client, contrôle d'unité ou d'ordre de grandeur avant reprise d'une quantité — ou dès qu'on envisage de créer une table de mesures, d'écrire dans BoqItem une quantité issue d'un plan, de toucher une quantité déjà approuvée, d'annoncer un support DWG, ou d'ajouter une dépendance de lecture ou de conversion CAO. Le stockage, l'OCR et le texte du fichier relèvent de document-analysis ; la valorisation de la quantité mesurée, de price-engine.
+description: À utiliser pour tout ce qui concerne la GÉOMÉTRIE d'un plan ou d'un fichier CAO/BIM dans Metreo (phase 3, première tranche livrée : lecture DXF et PDF, échelle déclarée, mesure pointée, reprise dans un bordereau) — visionneuse et annotation, échelle déclarée, lue ou calibrée, feuilles, calques, cotes, polylignes, blocs, textes, IFC, DXF, DWG, GeoJSON, PostGIS, worker de conversion, bibliothèque de lecture CAO et sa licence, extraction de longueurs/surfaces/volumes depuis un plan, mesure manuelle traçable, rapprochement plan/bordereau, écart entre quantité mesurée et quantité client, contrôle d'unité ou d'ordre de grandeur avant reprise d'une quantité — ou dès qu'on envisage de créer une table de mesures, d'écrire dans BoqItem une quantité issue d'un plan, de toucher une quantité déjà approuvée, d'annoncer un support DWG, ou d'ajouter une dépendance de lecture ou de conversion CAO. Le stockage, l'OCR et le texte du fichier relèvent de document-analysis ; la valorisation de la quantité mesurée, de price-engine.
 ---
 
-# Metreo — métrés assistés, plans et CAO/BIM (phase 3, non implémenté)
+# Metreo — métrés assistés, plans et CAO/BIM (phase 3, première tranche livrée)
 
-Section 6.5 du cahier des charges maître. **Aucune ligne de ce sous-système n'existe dans le
-dépôt** : ce fichier est un cahier des charges, pas une documentation d'API. Chemins abrégés
-ci-dessous : `models.py`, `config.py`, `schemas.py`, `routers/`, `services/`, `security/` vivent
-sous `apps/api/src/metreo_api/`.
+Section 6.5 du cahier des charges maître. **Une première tranche existe désormais** — lecture
+d'un DXF et d'un PDF, échelle déclarée par un humain, mesure pointée, décision humaine, et la
+reprise d'une mesure tranchée dans une ligne de bordereau. Tout le reste de ce fichier reste un
+cahier des charges, pas une documentation d'API : le § 1 dit, ligne par ligne, ce qui est livré
+et ce qui ne l'est pas. Chemins abrégés ci-dessous : `models.py`, `config.py`, `schemas.py`,
+`routers/`, `services/`, `security/` vivent sous `apps/api/src/metreo_api/`.
 
 ## 1. État réel — le dire avant de coder
 
 | Sujet | État | Ancrage |
 | --- | --- | --- |
-| Lecture de plan, viewer, mesure, conversion CAO | **inexistant** | aucun fichier ; `apps/worker/`, `packages/contracts/`, `packages/config/` ne contiennent qu'un `README.md` |
+| Lecture d'un DXF | **livré** | `services/lecture_dxf.py`, `services/lecture_de_plan.py` ; unités, calques, cotations avec provenance |
+| Lecture d'un PDF | **livré** | `services/lecture_pdf.py` : pages, textes situés, aperçu PNG, tuiles d'agrandissement (`services/rendu_pdf.py`, `services/tuiles.py`) |
+| Échelle et mesure sur un PDF | **livré** | `services/calibration_de_plan.py` et `services/mesures_pdf.py` : échelle DÉCLARÉE par un humain, longueur et surface avec incertitude propagée |
+| Écran de lecture et de pointage | **livré** | `apps/web/src/components/LecturePdf.tsx` |
+| Reprise d'une mesure dans un bordereau | **livré, première tranche** | `services/reprise_de_mesure.py`, route `POST /boqs/{boq_id}/items:depuis-une-mesure` ; colonnes `source_proposal_id` et `source_mesure` sur `boq_items`. La quantité écrite est une quantité **retenue** : proposée par le serveur à la finesse du ±, choisie par la personne dans le ± de la mesure, refusée au-delà, tracée (brute, proposée, retenue, par qui) |
+| Conversion CAO, IFC, DWG, viewer annotable, rapprochement automatique | **inexistant** | `apps/worker/` ne contient qu'un `README.md` |
 | PostGIS | disponible, inutilisé | image `postgis/postgis:16-3.4` (`infra/docker-compose.yml`) ; aucune colonne géométrique dans `models.py` |
 | Cible d'atterrissage d'une quantité | implémenté | `BoqItem` (`unit_code`, `quantity`, `formula`, `client_quantity`, `status`) dans `models.py` |
 | Statuts de validation | implémenté | `proposed` / `verified` / `approved` / `rejected`, contrainte `ck_boq_item_status` |
@@ -24,8 +31,18 @@ sous `apps/api/src/metreo_api/`.
 | Stockage de fichiers | configuration seule | `storage_root`, `max_upload_bytes` (`config.py`) ; aucun code d'upload |
 | IA / conversion externe | débranché | `ai_enabled=False`, `ai_provider="null"` (`config.py`) |
 
-Phrase à tenir telle quelle face à un utilisateur ou un PO : *aucune lecture de plan n'est
-implémentée aujourd'hui*. Une maquette d'écran ou un schéma de table n'est pas une capacité
+Phrase à tenir telle quelle face à un utilisateur ou un PO : *Metreo réalise une **mesure
+assistée** sur un plan — une personne déclare une échelle sur une cote qu'elle connaît, pointe,
+et le programme rend un nombre avec son incertitude. Un premier essai a eu lieu sur un dossier
+d'exécution réel, hors dépôt, selon `docs/ESSAI_GUIDE_PLANS_REELS.md` ; il a mis au jour
+l'écriture à dix décimales, d'où la quantité retenue. Il n'établit pas la **justesse** : les
+écarts relevés sont ceux d'un plan, par des pointages automatisés, et aucune tolérance
+d'entreprise n'est fixée. La procédure d'un essai par une personne reste
+`docs/VALIDATION_SUR_PLANS_REELS.md`.*
+
+Ce qu'il ne faut pas en conclure : ni qu'un plan est lu automatiquement — aucune quantité ne
+part dans un bordereau sans décision humaine — ni qu'un DWG, un IFC ou un rapprochement
+automatique existent. Une maquette d'écran ou un schéma de table n'est toujours pas une capacité
 livrée. État global des phases : **btp-product-rules**.
 
 ## 2. Les cinq niveaux de maturité — jamais l'un sans le précédent
@@ -52,8 +69,11 @@ livrée. État global des phases : **btp-product-rules**.
 - Avant d'ajouter une dépendance de lecture ou de conversion (lecteur DXF, lecteur IFC,
   convertisseur DWG) : relever nom, version, licence exacte, restrictions d'usage commercial et
   coût **à la date d'implémentation**, puis consigner la décision dans un ADR daté de `docs/adr/`
-  (0001 à 0004 existent ; le prochain numéro est 0005). Une licence copyleft forte ou
-  « non commercial » sur un composant serveur est un refus, pas un détail.
+  — vérifier le dernier numéro employé par un `ls docs/adr/`, plutôt que de se fier à un
+  numéro écrit ici, qui se périme. **Les décisions PDF, DXF et DWG sont déjà prises** :
+  `docs/adr/0007-lecture-de-plans.md`. Une licence copyleft forte ou « non commercial »
+  sur un composant serveur est un refus, pas un détail — l'AGPL de PyMuPDF et de
+  Ghostscript, et la GPL de Poppler et de LibreDWG, sont les quatre refus déjà instruits.
 - Un convertisseur en ligne = envoi d'un document client vers un tiers : soumis au consentement,
   désactivable, journalisé. `ai_enabled=False` par défaut couvre aussi ces conversions
   (**multitenant-security** pour l'envoi de fichiers hors du tenant).

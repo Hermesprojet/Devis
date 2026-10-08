@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { Fragment, useCallback, useEffect, useState } from 'react'
 
 import { ErrorNotice } from '@/components/Feedback'
@@ -8,6 +9,7 @@ import {
   type DocumentRevision,
   type DocumentSummary,
 } from '@/lib/api'
+import { t } from '@/lib/i18n'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
 
@@ -19,25 +21,90 @@ import { usePermissions } from '@/lib/usePermissions'
  * écran pour l'atteindre. Un métreur qui recevait un cahier des charges le
  * laissait dans sa boîte mail.
  *
- * Rien n'est rendu à l'écran : un document se télécharge, il ne s'affiche pas.
+ * Aucun document n'est rendu à l'écran DEPUIS SES OCTETS : il se télécharge.
  * Un PDF ouvert dans l'origine de l'application y exécuterait ses propres
  * scripts, avec la session de qui le consulte.
+ *
+ * Un plan DXF fait exception, et l'exception est précise : ce n'est pas le
+ * fichier déposé qui s'affiche, mais un RENDU produit par le serveur, servi
+ * par sa propre route et chargé comme une image inerte. Voir `LecturePlan`.
+ * Le DXF et le PDF sont lus tous les deux, et pas de la même façon : un DXF
+ * porte ses cotes et son unité, un PDF demande une échelle déclarée par un
+ * humain.
  */
 
 /** Les catégories que le premier usage réclame, et rien de plus. */
 const CATEGORIES = ['CCTP', 'Métré', 'Plan', 'Bordereau', 'Autre'] as const
 
-const TYPES_LISIBLES: Record<string, string> = {
+const ETIQUETTES_DE_TYPE: Record<string, string> = {
   'application/pdf': 'PDF',
   'image/png': 'PNG',
   'image/jpeg': 'JPEG',
+  // Le type que le serveur donne à un plan DXF. Sans cette entrée, la colonne
+  // « Type » d'un plan affichait « — » : la seule pièce que Metreo sache LIRE
+  // était la seule que l'écran ne savait pas nommer.
+  'image/vnd.dxf': 'DXF',
   'text/csv': 'CSV',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
 }
 
-/** Les extensions proposées au sélecteur — l'API reste seule à décider. */
-const EXTENSIONS_SUGGEREES = '.pdf,.png,.jpg,.jpeg,.csv,.xlsx,.docx'
+/**
+ * Les extensions proposées au sélecteur — l'API reste seule à décider.
+ *
+ * `.dxf` en faisait partie du côté serveur, pas ici : sur un sélecteur
+ * FILTRÉ, un plan n'apparaissait simplement pas dans la liste des fichiers, et
+ * rien à l'écran ne disait pourquoi. Le seul format que Metreo sache lire
+ * était introuvable au dépôt.
+ */
+const EXTENSIONS_SUGGEREES = '.pdf,.png,.jpg,.jpeg,.dxf,.csv,.xlsx,.docx'
+
+/**
+ * Les types que le serveur sait LIRE comme un plan.
+ *
+ * Le PDF s'y est ajouté quand l'écran a su l'afficher — et pas avant : le lien
+ * ne doit promettre que ce qui existe. La liste est volontairement une
+ * constante locale et non une déduction : un `startsWith('image/')` ferait
+ * apparaître « Lire le plan » sur une photo de chantier.
+ *
+ * Tenue d'accord avec `TYPES_LISIBLES` de `services/lecture_de_plan.py`, qui
+ * est l'autorité : le serveur refuse ce qu'il ne sait pas lire, et un lien de
+ * trop mène à un refus au lieu d'un plan.
+ */
+const TYPES_DE_PLAN_LISIBLES = ['image/vnd.dxf', 'application/pdf']
+
+/**
+ * Le passage vers l'écran de lecture d'un plan.
+ *
+ * Un `Link` et non un `button` : c'est une NAVIGATION, et un lien se garde,
+ * se transmet et s'ouvre dans un onglet — ce qu'aucun bouton ne sait faire.
+ * Il n'apparaît que sur une révision dont le serveur a dit qu'il sait la lire :
+ * proposer « Lire le plan » sur un classeur promettrait un affichage qui
+ * n'existe pas.
+ *
+ * Le nom du fichier voyage en paramètre de requête, pour que l'écran de
+ * lecture dise de quelle pièce il parle. Il n'est qu'un confort : l'écran
+ * fonctionne sans.
+ */
+function LienVersLePlan({
+  projectId,
+  revision,
+}: {
+  projectId: string
+  revision: DocumentRevision
+}) {
+  if (!TYPES_DE_PLAN_LISIBLES.includes(revision.media_type)) return null
+  const requete = `?fichier=${encodeURIComponent(revision.original_filename)}`
+  return (
+    <Link
+      className="button"
+      data-testid="documents-lire-plan"
+      href={`/projets/${projectId}/plans/${revision.document_id}/${revision.id}${requete}`}
+    >
+      {t('documents.readPlan')}
+    </Link>
+  )
+}
 
 function taille(octets: number): string {
   if (octets < 1024) return `${octets} o`
@@ -203,9 +270,15 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
               />
             </div>
           </div>
+          {/*
+            La phrase énumérait « PDF, PNG, JPEG, CSV, XLSX ou DOCX » : elle
+            mentait sur ce que le serveur accepte, en omettant le DXF. Et elle
+            taisait le refus du DWG, qui est la PREMIÈRE chose qu'un
+            utilisateur de plans vient chercher — un .dwg est ce que son
+            logiciel enregistre par défaut.
+          */}
           <p className="muted" style={{ fontSize: 12, margin: 0 }}>
-            PDF, PNG, JPEG, CSV, XLSX ou DOCX. Le contenu est vérifié à la réception :
-            l&apos;extension seule ne suffit pas.
+            {t('documents.formats')}
           </p>
           {progression !== null && (
             <div className="notice info" role="status" style={{ marginTop: 12 }}>
@@ -250,7 +323,7 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
                         {doc.status === 'archived' && <span className="badge">archivé</span>}
                       </td>
                       <td className="mono">{derniere?.original_filename ?? '—'}</td>
-                      <td>{derniere ? (TYPES_LISIBLES[derniere.media_type] ?? '—') : '—'}</td>
+                      <td>{derniere ? (ETIQUETTES_DE_TYPE[derniere.media_type] ?? '—') : '—'}</td>
                       <td className="num">{derniere ? taille(derniere.byte_size) : '—'}</td>
                       <td>{derniere ? date(derniere.created_at) : '—'}</td>
                       <td className="muted" style={{ fontSize: 12 }}>
@@ -261,6 +334,9 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
                           <button type="button" onClick={() => void telecharger(derniere)}>
                             Télécharger
                           </button>
+                        )}{' '}
+                        {derniere && (
+                          <LienVersLePlan projectId={projectId} revision={derniere} />
                         )}{' '}
                         <button
                           type="button"
@@ -293,13 +369,17 @@ export function DocumentsDuProjet({ projectId }: { projectId: string }) {
                                   >
                                     {revision.sha256.slice(0, 16)}…
                                   </td>
-                                  <td className="num">
+                                  <td className="num" style={{ whiteSpace: 'nowrap' }}>
                                     <button
                                       type="button"
                                       onClick={() => void telecharger(revision)}
                                     >
                                       Télécharger
-                                    </button>
+                                    </button>{' '}
+                                    <LienVersLePlan
+                                      projectId={projectId}
+                                      revision={revision}
+                                    />
                                   </td>
                                 </tr>
                               ))}

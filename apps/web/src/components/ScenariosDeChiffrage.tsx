@@ -12,6 +12,7 @@ import {
 import { t } from '@/lib/i18n'
 import { can, PERMISSIONS } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 /**
  * Panneau « Scénarios de chiffrage » : trois hypothèses, un seul moteur.
@@ -319,8 +320,8 @@ export function ScenariosDeChiffrage({
                       <tr key={`${ligne.line_id}-${etape.key}`}>
                         <td>{ligne.designation}</td>
                         <td>{etape.label}</td>
-                        <td className="num">{etape.rate}</td>
-                        <td className="num">{etape.running_total}</td>
+                        <td className="num">{ecrireEnFrancais(etape.rate)}</td>
+                        <td className="num">{ecrireEnFrancais(etape.running_total)}</td>
                       </tr>
                     )),
                   )}
@@ -433,20 +434,20 @@ function ResultatDeScenario({
             <tr>
               <td>{t('estimate.directCost')}</td>
               <td className="num" data-testid={`debourse-${scenario.nom}`}>
-                {totaux.total_direct_cost} {devise}
+                {ecrireEnFrancais(totaux.total_direct_cost)} {devise}
               </td>
             </tr>
           )}
           <tr>
             <td>{t('estimate.totalHT')}</td>
             <td className="num" data-testid={`total-ht-${scenario.nom}`}>
-              {totaux.total_selling_price_ht} {devise}
+              {ecrireEnFrancais(totaux.total_selling_price_ht)} {devise}
             </td>
           </tr>
           <tr className="scenarios-grand">
             <td>{t('estimate.totalTTC')}</td>
             <td className="num" data-testid={`total-ttc-${scenario.nom}`}>
-              {totaux.total_ttc} {devise}
+              {ecrireEnFrancais(totaux.total_ttc)} {devise}
             </td>
           </tr>
         </tbody>
@@ -456,9 +457,9 @@ function ResultatDeScenario({
           Le refaire ici rendrait un second chiffre, arrondi autrement. */}
       {scenario.ecart && (
         <p className="muted" data-testid={`ecart-${scenario.nom}`}>
-          {t('scenarios.delta')} : {scenario.ecart.absolu_display} {devise}
+          {t('scenarios.delta')} : {ecrireEnFrancais(scenario.ecart.absolu_display)} {devise}
           {scenario.ecart.pourcentage !== null ? (
-            <> ({scenario.ecart.pourcentage} %)</>
+            <> ({ecrireEnFrancais(scenario.ecart.pourcentage)} %)</>
           ) : (
             <>
               {' — '}

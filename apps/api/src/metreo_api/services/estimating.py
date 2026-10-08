@@ -41,6 +41,7 @@ from ..models import (
     TaxRateRow,
     utcnow,
 )
+from . import lisible
 from .composites import components_from_specs, specs_from_composite
 from .locking import lock_owned
 
@@ -584,6 +585,11 @@ def totals_for_display(
             price.pop("direct_cost", None)
             price.pop("cost_price", None)
             price.pop("markup_steps", None)
+    # Le symbole de l'unité, « m² » pour « m2 », rendu par le serveur pour que
+    # l'étude l'écrive comme le bordereau et le devis. Le code reste dans
+    # `unit` : c'est lui qui se relit et se calcule.
+    for line in payload["lines"]:
+        line["unit_lisible"] = lisible.unite_affichee(line["unit"])
     return payload
 
 

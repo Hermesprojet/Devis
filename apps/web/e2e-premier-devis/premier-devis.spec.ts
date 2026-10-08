@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
 
 import { ADMIN, CONSTAT, PILE_EXTERNE } from './banc'
-import { seConnecter } from './parcours'
+import { enBelge, nombreLu, seConnecter } from './parcours'
 
 /**
  * Une organisation vide produit son premier devis, sans seed ni SQL.
@@ -162,14 +162,22 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
 
   // ---- 7. le calcul : non nul, cohérent, et arithmétiquement vérifiable
   const lus = await totaux(page)
-  expect(lus['Total HT']).toBe(MONTANTS.totalHT)
-  expect(lus['TVA 21 %']).toBe(MONTANTS.tva)
-  expect(lus['Total TTC']).toBe(MONTANTS.ttc)
-  expect(Number(lus['Total HT'])).toBeGreaterThan(0)
-  expect(Number(lus['TVA 21 %'])).toBeGreaterThan(0)
+  // L'écran écrit à la belge : « 23 080,10 » et non « 23080.10 ». Les attendus
+  // sont transcrits par `enBelge`, qui n'arrondit rien — les décimales restent
+  // celles que le moteur a décidées.
+  expect(lus['Total HT']).toBe(enBelge(MONTANTS.totalHT))
+  expect(lus['TVA 21 %']).toBe(enBelge(MONTANTS.tva))
+  expect(lus['Total TTC']).toBe(enBelge(MONTANTS.ttc))
+  expect(nombreLu(lus['Total HT'] ?? '')).toBeGreaterThan(0)
+  expect(nombreLu(lus['TVA 21 %'] ?? '')).toBeGreaterThan(0)
   // TTC = HT + TVA, sur les montants IMPRIMÉS et non sur des flottants
   // intermédiaires : c'est l'identité que le client peut refaire à la main.
-  expect((Number(lus['Total HT']) + Number(lus['TVA 21 %'])).toFixed(2)).toBe(lus['Total TTC'])
+  //
+  // `nombreLu` et non `Number` : « 23 080,10 » rendrait `NaN`, et un `NaN`
+  // comparé à un `NaN` ne tombe pas — le test passerait à tort.
+  expect(
+    (nombreLu(lus['Total HT'] ?? '') + nombreLu(lus['TVA 21 %'] ?? '')).toFixed(2),
+  ).toBe(MONTANTS.ttc)
 
   // La somme des lignes affichées vaut le HT affiché.
   //
@@ -181,10 +189,10 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
   for (const poste of postes) {
     const cellules = await poste.locator('td').allInnerTexts()
     const derniere = cellules[cellules.length - 1] ?? ''
-    const montant = Number(derniere.replace(/\s*EUR$/, '').trim())
+    const montant = nombreLu(derniere.replace(/\s*EUR$/, '').trim())
     if (!Number.isNaN(montant)) sommeLignes += montant
   }
-  expect(sommeLignes.toFixed(2)).toBe(lus['Total HT'])
+  expect(sommeLignes.toFixed(2)).toBe(MONTANTS.totalHT)
 
   // ---- 8. le gel
   await page.getByRole('button', { name: 'Geler cette version' }).click()
@@ -199,7 +207,15 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
   ])
   await apercu.waitForLoadState('domcontentloaded')
   const texteDevis = await apercu.locator('body').innerText()
-  for (const attendu of [MONTANTS.totalHT, MONTANTS.tva, MONTANTS.ttc, 'TVA 21 %', '01.10']) {
+  // L'aperçu imprimable est lu par une personne : il écrit à la belge, comme
+  // l'écran et comme le PDF.
+  for (const attendu of [
+    enBelge(MONTANTS.totalHT),
+    enBelge(MONTANTS.tva),
+    enBelge(MONTANTS.ttc),
+    'TVA 21 %',
+    '01.10',
+  ]) {
     expect(texteDevis, `le devis doit porter ${attendu}`).toContain(attendu)
   }
   await apercu.close()
@@ -210,7 +226,12 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
   ])
   const contenu = readFileSync(await csv.path(), 'utf8')
   expect(contenu).toContain('01.10')
+  // Le CSV, LUI, garde l'orthographe machine : il est relu par un tableur et
+  // par la répétition de préproduction, et `money.to_decimal` ne sait pas
+  // relire une virgule précédée d'une espace insécable. C'est la seule des
+  // quatre surfaces d'un devis qui ne s'adresse pas à une personne.
   expect(contenu).toContain(MONTANTS.totalHT)
+  expect(contenu, 'le CSV ne doit pas être francisé').not.toContain(enBelge(MONTANTS.totalHT))
 
   // ---- 10. le devis survit à une déconnexion
   await page.getByRole('button', { name: 'Se déconnecter' }).click()
@@ -219,8 +240,8 @@ test('une organisation vide produit son premier devis sans seed', async ({ page 
   await page.goto(urlDevis)
   await expect(page.getByText('Gelée', { exact: true })).toBeVisible()
   expect(await totaux(page)).toMatchObject({
-    'Total HT': MONTANTS.totalHT,
-    'Total TTC': MONTANTS.ttc,
+    'Total HT': enBelge(MONTANTS.totalHT),
+    'Total TTC': enBelge(MONTANTS.ttc),
   })
 
   // ---- 11. et l'appelant sait où le retrouver

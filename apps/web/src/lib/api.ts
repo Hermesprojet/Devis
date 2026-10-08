@@ -197,7 +197,15 @@ async function publicRequest<T>(path: string, options: RequestOptions = {}): Pro
  * jeton périmé — parce que deux traitements divergeraient au premier code
  * ajouté.
  */
-async function octetsAuthentifies(chemin: string): Promise<Blob> {
+/**
+ * La RÉPONSE d'un appel authentifié, en-têtes compris.
+ *
+ * Séparée de `octetsAuthentifies` parce qu'une tuile de plan ne transporte pas
+ * que des pixels : elle dit aussi quelle zone elle couvre, et cette
+ * information vit dans les en-têtes. Un appelant qui n'a besoin que des octets
+ * continue d'appeler la seconde.
+ */
+async function reponseAuthentifiee(chemin: string): Promise<Response> {
   const session = loadSession()
   const response = await fetch(`${API_URL}${chemin}`, {
     headers: session ? { Authorization: `Bearer ${session.token}` } : {},
@@ -214,7 +222,11 @@ async function octetsAuthentifies(chemin: string): Promise<Blob> {
     endSessionIfExpired(error)
     throw error
   }
-  return response.blob()
+  return response
+}
+
+async function octetsAuthentifies(chemin: string): Promise<Blob> {
+  return (await reponseAuthentifiee(chemin)).blob()
 }
 
 export const api = {
@@ -231,10 +243,13 @@ export const api = {
       body: { email, organization_id: organizationId ?? null },
     }),
 
-  oidcStart: (returnTo?: string) =>
-    request<{ authorization_url: string }>(
-      `/auth/oidc/start${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ''}`,
-    ),
+  oidcStart: (returnTo?: string, otherAccount = false) => {
+    const params = new URLSearchParams()
+    if (returnTo) params.set('return_to', returnTo)
+    if (otherAccount) params.set('other_account', 'true')
+    const query = params.toString()
+    return request<{ authorization_url: string }>(`/auth/oidc/start${query ? `?${query}` : ''}`)
+  },
 
   // Le jeton arrive ici, dans un corps de réponse, et nulle part ailleurs. Le
   // navigateur ne rapporte du fournisseur qu'un code opaque à usage unique.
@@ -389,6 +404,165 @@ export const api = {
       requete.send(corps)
     }),
 
+  /**
+   * Lance la lecture déterministe d'un plan DXF. **Elle est SYNCHRONE.**
+   *
+   * Mesuré : 7 à 9 secondes sur deux plans réels de 7 et 11 Mo. L'écran
+   * l'annonce AVANT de lancer et montre une attente explicite pendant —
+   * sans quoi l'utilisateur conclut que c'est planté et rappelle la route,
+   * ce que le serveur refuse ensuite par un 409 `etape_deja_reussie`.
+   *
+   * Rend le même corps que `lirePlan` : le constat est disponible sans
+   * second aller-retour.
+   */
+  analyserLePlan: (documentId: string, revisionId: string) =>
+    request<PlanLu>(`/documents/${documentId}/revisions/${revisionId}/plan/analyse`, {
+      method: 'POST',
+    }),
+  /**
+   * Le constat de lecture et les mesures proposées.
+   *
+   * `404` avec le code `plan_non_analyse` quand la lecture n'a jamais été
+   * lancée : c'est un état normal du parcours, pas une panne. L'écran le
+   * distingue d'une vraie erreur et propose l'analyse.
+   */
+  lirePlan: (documentId: string, revisionId: string) =>
+    request<PlanLu>(`/documents/${documentId}/revisions/${revisionId}/plan`),
+  /**
+   * Les octets du rendu du plan — un SVG — rapatriés AVEC le jeton.
+   *
+   * Même raison que le logo : une balise `<img src>` émet une requête NUE,
+   * sans en-tête `Authorization`, et la route répond 401. Voir
+   * `octetsAuthentifies`, et le commentaire de `LecturePlan` sur la raison
+   * pour laquelle ce SVG est chargé comme IMAGE et jamais inséré en ligne.
+   */
+  imageDuPlan: (documentId: string, revisionId: string): Promise<Blob> =>
+    octetsAuthentifies(`/documents/${documentId}/revisions/${revisionId}/plan/image`),
+  /** Les textes extraits d'un PDF, situés sur son aperçu. */
+  textesDuPlan: (documentId: string, revisionId: string, page?: number) =>
+    request<TextesDePlan>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/textes` +
+        (page ? `?page=${page}` : ''),
+    ),
+
+  /** L'aperçu d'une PAGE. Le DXF ignore le paramètre : il n'en a qu'une. */
+  renduDeLaPage: (documentId: string, revisionId: string, page: number) =>
+    octetsAuthentifies(
+      `/documents/${documentId}/revisions/${revisionId}/plan/image?page=${page}`,
+    ),
+
+  /**
+   * L'agrandissement d'une zone, pour la RELIRE.
+   *
+   * **Lente la première fois, instantanée ensuite.** Mesuré sur quatre plans
+   * réels : 0,2 à 5,3 secondes au premier appel — le chargement de la page par
+   * PDFium — puis 0,3 milliseconde depuis le cache du volume. L'écran doit
+   * donc annoncer l'attente, et ne pas la relancer à chaque mouvement de
+   * souris.
+   */
+  tuileDuPlan: async (
+    documentId: string,
+    revisionId: string,
+    page: number,
+    zone: [number, number, number, number],
+  ): Promise<TuileDePlan> => {
+    const reponse = await reponseAuthentifiee(
+      `/documents/${documentId}/revisions/${revisionId}/plan/tuile` +
+        `?page=${page}&x0=${zone[0]}&y0=${zone[1]}&x1=${zone[2]}&y1=${zone[3]}`,
+    )
+    // **La zone que l'image couvre VRAIMENT**, et non celle demandée.
+    //
+    // Un bitmap se compte en pixels entiers : le rendu tronque, et l'image
+    // couvre un peu moins que la fenêtre demandée — mesuré, 0,2 % de moins en
+    // largeur et 0,28 % en hauteur sur une loupe de 21 × 16 points. Placer un
+    // clic sur la zone demandée introduit donc une erreur petite, systématique,
+    // et qui entre dans l'échelle déclarée avant de multiplier toutes les
+    // mesures de la page.
+    //
+    // En-tête absent : le serveur est plus ancien que cet écran, ou un proxy
+    // l'a filtré. On retombe sur la zone demandée en le DISANT, pour qu'un
+    // pointage décalé ne reste pas sans explication.
+    const brut = reponse.headers.get('X-Metreo-Zone')
+    const nombres = brut?.split(',').map(Number) ?? []
+    const zoneConnue = nombres.length === 4 && nombres.every((n) => Number.isFinite(n))
+    const pixels = reponse.headers.get('X-Metreo-Pixels')?.split(',').map(Number) ?? []
+    return {
+      blob: await reponse.blob(),
+      zone: zoneConnue ? (nombres as [number, number, number, number]) : zone,
+      zoneDeclaree: zoneConnue,
+      pixels:
+        pixels.length === 2 && pixels.every((n) => Number.isFinite(n))
+          ? (pixels as [number, number])
+          : null,
+      depuisLeCache: reponse.headers.get('X-Metreo-Tuile') === 'cache',
+    }
+  },
+
+  /** Les échelles déclarées et les mesures prises sur un PDF. */
+  mesuresDuPdf: (documentId: string, revisionId: string) =>
+    request<MesuresDePdf>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/mesures`,
+    ),
+
+  /**
+   * Déclarer l'échelle d'une page.
+   *
+   * `resolution_du_pointage` n'est pas un détail : c'est elle qui décide de la
+   * confiance accordée à toutes les mesures qui suivront. Mesuré, un pixel de
+   * l'aperçu pleine page d'un A0 vaut 12 à 42 mm d'ouvrage ; sur une tuile
+   * agrandie, 0,6 à 6 mm.
+   */
+  calibrerLePlan: (
+    documentId: string,
+    revisionId: string,
+    body: {
+      page: number
+      premier: PointDEcran
+      second: PointDEcran
+      distance_reelle: string
+      unite: string
+      resolution_du_pointage: string
+      motif: string
+      zone?: [number, number, number, number]
+    },
+  ) =>
+    request<CalibrationDePlan>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/calibration`,
+      { method: 'POST', body },
+    ),
+
+  /** Mesurer un segment ou une surface sur un PDF calibré. */
+  mesurerSurLePdf: (
+    documentId: string,
+    revisionId: string,
+    body: {
+      page: number
+      type: 'segment' | 'surface'
+      points: PointDEcran[]
+      libelle: string
+      /** Points PostScript par pixel AFFICHÉ, mesurés au clic. */
+      resolution_du_pointage?: string
+    },
+  ) =>
+    request<MesureDePdf>(
+      `/documents/${documentId}/revisions/${revisionId}/plan/mesures`,
+      { method: 'POST', body },
+    ),
+
+  /**
+   * La décision humaine sur une proposition d'extraction.
+   *
+   * **La proposition machine n'est JAMAIS réécrite.** Après cet appel,
+   * `lirePlan` rend la même `valeur_document` et renseigne `decision` : ce
+   * que la machine a proposé et ce que l'humain a retenu restent tous les
+   * deux lisibles, et l'écran montre les deux.
+   */
+  deciderProposition: (proposalId: string, body: DecisionDeProposition) =>
+    request<DecisionEnregistree>(`/extraction-proposals/${proposalId}/decisions`, {
+      method: 'POST',
+      body,
+    }),
+
   boqs: (projectId: string) => request<Boq[]>(`/projects/${projectId}/boqs`),
   createBoq: (projectId: string, body: Record<string, unknown>) =>
     request<Boq>(`/projects/${projectId}/boqs`, { method: 'POST', body }),
@@ -400,6 +574,41 @@ export const api = {
     }),
   createBoqItem: (boqId: string, body: Record<string, unknown>) =>
     request<BoqItem>(`/boqs/${boqId}/items`, { method: 'POST', body }),
+
+  /** Les unités que le moteur reconnaît, avec leur dimension. */
+  unites: () => request<UniteConnue[]>('/units'),
+
+  /**
+   * Ce qu'une reprise écrirait — sans rien écrire.
+   *
+   * **Le nombre vient du serveur**, et l'écran ne le recalcule pas. Une
+   * conversion de millimètres en mètres tient en un facteur mille, et c'est
+   * précisément le genre de facteur qu'on finit par écrire deux fois : une en
+   * Python, une ici. Les deux divergent au premier arrondi.
+   */
+  apercuDeReprise: (
+    boqId: string,
+    body: { proposal_id: string; unite_cible?: string; quantite_retenue?: string },
+  ) =>
+    request<ApercuDeReprise>(`/boqs/${boqId}/reprises-de-mesure/apercu`, {
+      method: 'POST',
+      body,
+    }),
+
+  /** Écrit la ligne. La quantité n'est PAS déclarée ici : elle est lue de la
+      mesure et de la décision humaine qui l'a retenue. `quantite_retenue` n'est
+      qu'une ÉCRITURE de cette mesure, dans son ±, et le serveur la refuse au-delà. */
+  reprendreUneMesure: (
+    boqId: string,
+    body: {
+      proposal_id: string
+      position: string
+      designation: string
+      unite_cible?: string
+      quantite_retenue?: string
+      notes?: string
+    },
+  ) => request<BoqItem>(`/boqs/${boqId}/items:depuis-une-mesure`, { method: 'POST', body }),
 
   priceBooks: () => request<PriceBook[]>('/price-books'),
   createPriceBook: (body: Record<string, unknown>) =>
@@ -750,11 +959,54 @@ export type BoqItem = {
   designation: string
   unit_code: string
   quantity: string
+  /** La même quantité, avec son unité, écrite pour être lue — « 6,02 m ».
+      Rendue par le serveur : c'est lui qui décide les décimales (deux au
+      moins) et le symbole de l'unité (« m² » là où le code dit « m2 »).
+      Vide sur une section, qui n'a pas de quantité. */
+  quantity_lisible: string
+  /** « m² » pour « m2 » : le symbole, rendu par le serveur ; absent d'une API plus ancienne. */
+  unit_lisible?: string
   kind: string
   status: string
   formula: string | null
   price_item_id: string | null
   composite_price_id: string | null
+  /** La mesure de plan reprise, s'il y en a une. `null` sur une ligne saisie
+      à la main, ce qui est le cas courant. */
+  source_proposal_id: string | null
+  /** L'empreinte figée de cette mesure : page, décision, valeur retenue,
+      incertitude, motif. Elle dit d'où vient la quantité même si le lien
+      ci-dessus est un jour dénoué. */
+  source_mesure: Record<string, unknown> | null
+}
+
+/** Ce qu'une reprise écrirait, calculé par le serveur et jamais par l'écran. */
+export type ApercuDeReprise = {
+  /** Ce qui sera ÉCRIT : la quantité retenue par la personne, ou la proposition. */
+  quantite: string
+  unite: string
+  quantite_lisible: string
+  provenance_lisible: string
+  /** La mesure brute, convertie sans arrondi, et son ± dans la même unité (`null` si corrigée). */
+  quantite_brute: string
+  quantite_brute_lisible: string
+  incertitude: string | null
+  incertitude_lisible: string | null
+  /** Ce que le serveur propose : la brute, à la finesse de son ±. */
+  quantite_proposee: string
+  quantite_proposee_lisible: string
+  /** `'proposition'` ou `'personne'` : qui a retenu `quantite`. */
+  quantite_retenue_par: string
+}
+
+/** Une unité reconnue par le moteur, avec sa dimension. */
+export type UniteConnue = {
+  code: string
+  dimension: string
+  dimension_label: string
+  label: string
+  factor_to_base: string
+  aliases: string[]
 }
 
 export type DocumentSummary = {
@@ -777,6 +1029,243 @@ export type DocumentRevision = {
   author_email: string | null
   status: string
   published_at: string | null
+  created_at: string
+}
+
+// --- lecture d'un plan DXF ------------------------------------------------
+//
+// Les décimaux voyagent en CHAÎNES, comme partout ailleurs dans cette API :
+// une mesure lue sur un plan ne doit pas perdre un chiffre en passant par un
+// flottant du navigateur. Rien n'est converti ici — ni unité, ni échelle, ni
+// total : l'écran affiche ce que le serveur dit.
+
+/** Une réserve ou une anomalie, DÉJÀ rédigée en français par le serveur. */
+export interface PlanAnomalie {
+  code: string
+  message: string
+}
+
+/**
+ * Où se situe un objet dans l'image rendue.
+ *
+ * Déjà normalisé dans [0,1] par le serveur, **origine en haut à gauche** —
+ * donc dans le même sens qu'un positionnement CSS, sans inversion d'axe.
+ */
+export interface PlanCadre {
+  x0: string
+  y0: string
+  x1: string
+  y1: string
+}
+
+export interface PlanMesure {
+  proposal_id: string
+  citation_id: string
+  /** Le décimal, en chaîne, dans l'unité DU DOCUMENT. Jamais converti. */
+  valeur_document: string
+  /** `'mm' | 'cm' | 'm' | 'km' | 'in' | 'ft'`, ou `null` si le plan n'en déclare aucune. */
+  unite_document: string | null
+  /**
+   * `'lineaire' | 'alignee' | 'diametre' | 'rayon' | 'angulaire'
+   *  | 'angulaire_3_points' | 'ordonnee' | 'inconnue'`
+   *
+   * Laissé en `string` : la liste appartient au serveur et peut s'allonger.
+   * Un code inconnu de l'écran s'affiche tel quel plutôt qu'en « — ».
+   */
+  famille: string
+  fiabilite: 'mesurable' | 'a_confirmer'
+  origine_de_la_mesure: 'cote_42' | 'recalcul'
+  /** Ce que le dessinateur a tapé À LA PLACE de la mesure. Une divergence. */
+  texte_impose: string | null
+  /** PLUSIEURS réserves possibles sur une même mesure. */
+  reserves: PlanAnomalie[]
+  /** Décimal en chaîne, dans [0,1]. */
+  confiance: string
+  calque: string | null
+  feuille: string | null
+  /** Le handle DXF : la désignation stable de l'objet dans le fichier. */
+  object_ref: string | null
+  /**
+   * La cotation abrégée à la belge, ÉCRITE PAR LE SERVEUR — un angle en
+   * degrés. L'écran ne l'abrège plus lui-même : il le faisait avec un flottant
+   * et un point décimal, et lisait un angle en radians comme des centimètres.
+   */
+  valeur_lisible: string
+  /** La cotation entière, transcrite sans arrondi : celle qu'on recoupe avec le fichier. */
+  valeur_exacte_lisible: string
+  cadre: PlanCadre | null
+  /** `null` tant qu'aucun humain ne s'est prononcé. */
+  decision: 'accepted' | 'corrected' | 'rejected' | null
+  /** La valeur retenue par l'humain, s'il a corrigé. */
+  valeur_corrigee: string | null
+}
+
+export interface PlanLu {
+  revision_id: string
+  /** `false` quand rien ne peut être mesuré — typiquement sans unité source. */
+  mesurable: boolean
+  unite_source: string | null
+  insunits: number | null
+  version_dxf: string | null
+  feuilles: string[]
+  /** Nombre d'entités par calque. */
+  calques: Record<string, number>
+  /** Nombre d'entités par type. */
+  entites: Record<string, number>
+  refuse: boolean
+  motif_du_refus: PlanAnomalie | null
+  anomalies: PlanAnomalie[]
+  image_disponible: boolean
+  mesures: PlanMesure[]
+
+  /** `dxf` ou `pdf`. À lire AVANT le reste : les champs de l'autre format
+   * valent `null` ou une liste vide, et un écran qui l'ignorerait afficherait
+   * « sans unité » pour un PDF — ce qui est vrai, et trompeur. */
+  format: 'dxf' | 'pdf'
+  /** Zéro pour un DXF. */
+  pages: number
+  /** Largeur et hauteur de chaque page, en points PostScript. */
+  dimensions_des_pages: number[][]
+  /** Faux pour un document scanné : l'aperçu sert, l'extraction non. */
+  porte_du_texte: boolean
+  fragments_lus: number
+  /** Les FAITS de l'extraction, affichés tels quels plutôt qu'un verdict. */
+  caracteres_extraits: number
+  traces_vectoriels: number
+  images_incluses: number
+  /** Vrai seulement si : aucun texte, aucun tracé, et au moins une image. */
+  probablement_scanne: boolean
+  /** Les pages qui ont un aperçu. Une absente n'est pas affichable. */
+  apercus: number[]
+}
+
+/**
+ * Une tuile servie, avec ce qu'il faut pour placer un clic dessus.
+ *
+ * `zone` est ce que l'image couvre VRAIMENT, et non ce qui a été demandé.
+ * `zoneDeclaree` dit si le serveur l'a fournie : sinon on retombe sur la
+ * demande, et l'écran le signale plutôt que de laisser un décalage sans cause.
+ */
+export type TuileDePlan = {
+  blob: Blob
+  zone: [number, number, number, number]
+  zoneDeclaree: boolean
+  pixels: [number, number] | null
+  depuisLeCache: boolean
+}
+
+/** Un point désigné sur l'aperçu : [0,1], origine en haut à gauche. */
+export type PointDEcran = { x: number; y: number }
+
+/** Un fragment de texte d'un PDF, et où il se trouve. */
+export type FragmentDeTexte = {
+  texte: string
+  page: number
+  /** `null` quand la position n'a pas pu être établie — voir `position`. */
+  cadre: PlanCadre | null
+  /** `exacte`, `recadree` ou `inconnue`. */
+  position: string
+}
+
+export type TextesDePlan = {
+  revision_id: string
+  /** Le total de la SÉLECTION, pas de la tranche rendue. */
+  total: number
+  page: number | null
+  fragments: FragmentDeTexte[]
+  extracteur: string
+}
+
+/** Une échelle déclarée par une personne sur une page de PDF. */
+export type CalibrationDePlan = {
+  id: string
+  page: number
+  distance_reelle: string
+  unite: string
+  /** « 50 mm par point ». À LIRE, jamais à recalculer. */
+  facteur_lisible: string
+  resolution_du_pointage: string
+  motif: string
+  zone: string[] | null
+  created_at: string
+}
+
+/** Une mesure prise sur un PDF, avec de quoi la juger et la retrouver. */
+export type MesureDePdf = {
+  proposal_id: string
+  citation_id: string
+  page: number
+  type: string
+  libelle: string
+  valeur: string
+  unite: string
+  /** Dans la MÊME unité que la valeur. */
+  incertitude: string
+  incertitude_relative: string
+  fiabilite: string
+  reserves: string[]
+  points: PointDEcran[]
+  cadre: PlanCadre | null
+  calibration: Record<string, unknown>
+  decision: string | null
+  /** Pourquoi la personne a tranché ainsi. Une décision sans sa raison n'est
+      pas auditable : dans six mois, « 3,80 m » ne vaut que si l'on sait d'où
+      ce nombre vient. */
+  motif_de_la_decision: string | null
+  valeur_corrigee: string | null
+  /**
+   * Les mêmes nombres, écrits pour être LUS — « 4 181 mm », « ± 26 mm ».
+   *
+   * Rendus par le SERVEUR, et l'écran ne refait pas l'arrondi : deux règles
+   * d'affichage, une en Python et une ici, finiraient par diverger d'un
+   * chiffre, et c'est l'écart qu'on ne voit jamais venir. La valeur exacte
+   * reste au-dessus, et c'est elle qu'on reprendrait pour calculer.
+   */
+  valeur_lisible: string
+  incertitude_lisible: string
+  valeur_retenue_lisible: string | null
+  unite_retenue: string | null
+  /** Ce qui compte une fois la décision prise : la valeur retenue si la
+      personne a corrigé, la mesure si elle a confirmé, `null` si elle a rejeté
+      ou n'a pas encore tranché. */
+  valeur_retenue: string | null
+  /** Vrai quand cette mesure peut alimenter un bordereau. Faux pour une mesure
+      rejetée, et faux tant que personne n'a tranché. */
+  reprenable: boolean
+}
+
+export type MesuresDePdf = {
+  revision_id: string
+  calibrations: CalibrationDePlan[]
+  mesures: MesureDePdf[]
+}
+
+export type DecisionHumaine = 'accepted' | 'corrected' | 'rejected'
+
+/**
+ * Le corps d'une décision humaine — union DISCRIMINÉE, pas quatre champs
+ * facultatifs.
+ *
+ * **Règle du serveur, déjà testée :** `before_value` et `after_value` sont
+ * OBLIGATOIRES pour `corrected` et INTERDITS pour les deux autres. Un type
+ * permissif laisserait écrire ici un corps que le serveur refuse par un 422,
+ * et le refus n'arriverait qu'au navigateur de l'utilisateur.
+ */
+export type DecisionDeProposition =
+  | { decision: 'accepted' | 'rejected'; reason: string }
+  | {
+      decision: 'corrected'
+      reason: string
+      before_value: Record<string, string>
+      after_value: Record<string, string>
+    }
+
+/** L'accusé de décision : il ne répète pas les valeurs documentaires. */
+export type DecisionEnregistree = {
+  id: string
+  proposal_id: string
+  actor_user_id: string
+  decision: DecisionHumaine
   created_at: string
 }
 
@@ -995,6 +1484,8 @@ export type EstimateLine = {
   kind: string
   quantity: string
   unit: string
+  /** « m² » pour « m2 », rendu par le serveur. Absent d'un instantané ancien. */
+  unit_lisible?: string
   missing_price: boolean
   included_in_total: boolean
   price: LinePrice | null

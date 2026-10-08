@@ -19,6 +19,7 @@ from metreo_domain.estimate import EstimateResult
 from metreo_domain.money import RoundingPolicy
 
 from ..models import Estimate, EstimateVersion, Organization, Project
+from .lisible import nombre_francais_tel_quel, unite_affichee
 
 CSV_DELIMITER = ";"
 
@@ -299,16 +300,16 @@ def quote_html(
             )
             + ('<br><span class="meta">Poste non chiffré</span>' if row["missing_price"] else "")
             + "</td>"
-            f"<td>{escape(row['unit']) if row['kind'] != 'section' else ''}</td>"
-            f'<td class="num">{escape(row["quantity"]) if row["kind"] != "section" else ""}</td>'
-            f'<td class="num">{escape(str(row["unit_price_ht"]))}</td>'
-            f'<td class="num">{escape(str(row["selling_price_ht"]))}</td>'
+            f"<td>{escape(unite_affichee(row['unit'])) if row['kind'] != 'section' else ''}</td>"
+            f'<td class="num">{escape(nombre_francais_tel_quel(row["quantity"])) if row["kind"] != "section" else ""}</td>'
+            f'<td class="num">{escape(nombre_francais_tel_quel(str(row["unit_price_ht"])))}</td>'
+            f'<td class="num">{escape(nombre_francais_tel_quel(str(row["selling_price_ht"])))}</td>'
         )
         if include_internal:
             cells += (
-                f'<td class="num">{escape(str(row["direct_cost"]))}</td>'
-                f'<td class="num">{escape(str(row["cost_price"]))}</td>'
-                f'<td class="num">{escape(str(row["margin_amount"]))}</td>'
+                f'<td class="num">{escape(nombre_francais_tel_quel(str(row["direct_cost"])))}</td>'
+                f'<td class="num">{escape(nombre_francais_tel_quel(str(row["cost_price"])))}</td>'
+                f'<td class="num">{escape(nombre_francais_tel_quel(str(row["margin_amount"])))}</td>'
             )
         line_html.append(f'<tr class="{" ".join(classes)}">{cells}</tr>')
 
@@ -323,20 +324,20 @@ def quote_html(
     )
 
     tax_rows = "".join(
-        f'<tr><td>{escape(tax["label"])}</td><td class="num">{escape(tax["amount"])} {escape(payload["currency"])}</td></tr>'
+        f'<tr><td>{escape(tax["label"])}</td><td class="num">{escape(nombre_francais_tel_quel(tax["amount"]))} {escape(payload["currency"])}</td></tr>'
         for tax in payload["taxes"]
     )
     options_row = (
-        f'<tr><td>Options / variantes (hors total)</td><td class="num">{escape(payload["options_total_ht"])} {escape(payload["currency"])}</td></tr>'
+        f'<tr><td>Options / variantes (hors total)</td><td class="num">{escape(nombre_francais_tel_quel(payload["options_total_ht"]))} {escape(payload["currency"])}</td></tr>'
         if payload["options_total_ht"] not in ("0.00", "0")
         else ""
     )
     body.append(
         f"""
     <table class="totals">
-      <tr><td>Total HT</td><td class="num">{escape(payload["total_selling_price_ht"])} {escape(payload["currency"])}</td></tr>
+      <tr><td>Total HT</td><td class="num">{escape(nombre_francais_tel_quel(payload["total_selling_price_ht"]))} {escape(payload["currency"])}</td></tr>
       {tax_rows}
-      <tr class="grand"><td>Total TTC</td><td class="num">{escape(payload["total_ttc"])} {escape(payload["currency"])}</td></tr>
+      <tr class="grand"><td>Total TTC</td><td class="num">{escape(nombre_francais_tel_quel(payload["total_ttc"]))} {escape(payload["currency"])}</td></tr>
       {options_row}
     </table>
     """

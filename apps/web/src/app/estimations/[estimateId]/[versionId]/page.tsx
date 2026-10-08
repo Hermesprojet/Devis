@@ -11,6 +11,7 @@ import { api, type Computation, type EstimateLine } from '@/lib/api'
 import { t } from '@/lib/i18n'
 import { availability, PERMISSIONS } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 /**
  * Priced bill of quantities for one estimate version.
@@ -255,7 +256,7 @@ export default function EstimateVersionPage() {
             <tr>
               <td>{t('estimate.directCost')}</td>
               <td className="num">
-                {result.total_direct_cost} {result.currency}
+                {ecrireEnFrancais(result.total_direct_cost)} {result.currency}
               </td>
             </tr>
           )}
@@ -263,35 +264,35 @@ export default function EstimateVersionPage() {
             <tr>
               <td>{t('estimate.costPrice')}</td>
               <td className="num">
-                {result.total_cost_price} {result.currency}
+                {ecrireEnFrancais(result.total_cost_price)} {result.currency}
               </td>
             </tr>
           )}
           <tr>
             <td>{t('estimate.totalHT')}</td>
             <td className="num">
-              {result.total_selling_price_ht} {result.currency}
+              {ecrireEnFrancais(result.total_selling_price_ht)} {result.currency}
             </td>
           </tr>
           {result.taxes.map((tax) => (
             <tr key={tax.code}>
               <td>{tax.label}</td>
               <td className="num">
-                {tax.amount} {result.currency}
+                {ecrireEnFrancais(tax.amount)} {result.currency}
               </td>
             </tr>
           ))}
           <tr className="grand">
             <td>{t('estimate.totalTTC')}</td>
             <td className="num">
-              {result.total_ttc} {result.currency}
+              {ecrireEnFrancais(result.total_ttc)} {result.currency}
             </td>
           </tr>
           {result.options_total_ht !== '0.00' && (
             <tr>
               <td className="muted">{t('estimate.options')}</td>
               <td className="num muted">
-                {result.options_total_ht} {result.currency}
+                {ecrireEnFrancais(result.options_total_ht)} {result.currency}
               </td>
             </tr>
           )}
@@ -361,10 +362,10 @@ function LineRow({
                       )}
                     </td>
                     <td className="num">
-                      {component.resource_quantity} {component.resource_unit}
+                      {ecrireEnFrancais(component.resource_quantity)} {component.resource_unit}
                     </td>
-                    <td className="num">{component.unit_price}</td>
-                    <td className="num">{component.amount}</td>
+                    <td className="num">{ecrireEnFrancais(component.unit_price)}</td>
+                    <td className="num">{ecrireEnFrancais(component.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -384,14 +385,14 @@ function LineRow({
                     <td>{t('estimate.directCost')}</td>
                     <td className="num" />
                     <td className="num" />
-                    <td className="num">{price.direct_cost}</td>
+                    <td className="num">{ecrireEnFrancais(price.direct_cost)}</td>
                   </tr>
                   {price.markup_steps.map((step) => (
                     <tr key={step.key}>
                       <td>{step.label}</td>
-                      <td className="num">{step.rate}</td>
-                      <td className="num">{step.amount}</td>
-                      <td className="num">{step.running_total}</td>
+                      <td className="num">{ecrireEnFrancais(step.rate)}</td>
+                      <td className="num">{ecrireEnFrancais(step.amount)}</td>
+                      <td className="num">{ecrireEnFrancais(step.running_total)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -400,12 +401,12 @@ function LineRow({
           </details>
         )}
       </td>
-      <td>{isSection ? '' : line.unit}</td>
-      <td className="num">{isSection ? '' : line.quantity}</td>
-      {internal && <td className="num">{price?.direct_cost ?? ''}</td>}
-      <td className="num">{price?.unit_price_ht ?? ''}</td>
+      <td>{isSection ? '' : (line.unit_lisible ?? line.unit)}</td>
+      <td className="num">{isSection ? '' : ecrireEnFrancais(line.quantity)}</td>
+      {internal && <td className="num">{ecrireEnFrancais(price?.direct_cost)}</td>}
+      <td className="num">{ecrireEnFrancais(price?.unit_price_ht)}</td>
       <td className="num">
-        {price ? `${price.selling_price_ht} ${currency}` : ''}
+        {price ? `${ecrireEnFrancais(price.selling_price_ht)} ${currency}` : ''}
       </td>
     </tr>
   )

@@ -13,6 +13,8 @@ from metreo_domain.units import get_unit
 from ..db import session_scope
 from ..models import BillOfQuantities, BoqItem, CompositePriceRow, PriceItem, Project
 from ..schemas import (
+    ApercuDeReprise,
+    ApercuDeRepriseCreate,
     BoqCreate,
     BoqItemBulkCreate,
     BoqItemCreate,
@@ -20,10 +22,11 @@ from ..schemas import (
     BoqItemTransition,
     BoqItemUpdate,
     BoqOut,
+    RepriseDeMesureCreate,
 )
 from ..security.auth import TenantContext, require
 from ..security.roles import Permission
-from ..services import audit
+from ..services import audit, reprise_de_mesure
 from ..services.locking import lock_owned
 from ..services.tenant import get_owned, owned_query
 from ..transactions import RouteTransactionnelle
@@ -258,6 +261,221 @@ def bulk_create_items(
         actor_email=context.user.email,
     )
     return created
+
+
+@router.post(
+    "/boqs/{boq_id}/reprises-de-mesure/apercu",
+    response_model=ApercuDeReprise,
+    summary="Ce qu'une reprise écrirait, sans l'écrire",
+)
+def preview_measurement_carry_over(
+    boq_id: str,
+    payload: ApercuDeRepriseCreate,
+    context: TenantContext = Depends(require(Permission.BOQ_READ)),
+    session: Session = Depends(session_scope),
+) -> ApercuDeReprise:
+    """Prévisualiser, puis confirmer — le patron du dépôt depuis l'import de prix.
+
+    **Rien n'est écrit ici**, et c'est pour cela que la route exige `BOQ_READ`
+    et non `BOQ_WRITE` : quelqu'un qui n'a pas le droit d'écrire dans un
+    bordereau a le droit de savoir ce qu'une reprise y mettrait.
+
+    `POST` parce qu'elle reçoit un corps structuré, pas parce qu'elle
+    enregistre — exactement comme l'aperçu d'un sous-détail. Le registre
+    transactionnel la classe en LECTURE, et c'est ce classement qui interdit
+    qu'elle se mette un jour à écrire sans que personne ne le voie.
+
+    **Pourquoi elle est nécessaire alors que la conversion tient en un facteur
+    mille.** Parce que ce facteur serait sinon écrit deux fois, une en Python
+    et une en TypeScript, et que les deux finiraient par diverger. L'écran
+    montre donc le nombre que le SERVEUR a calculé, et c'est le même code qui
+    l'écrira ensuite.
+
+    Les refus sont les mêmes que ceux de la reprise, et ils arrivent ici
+    **avant** toute saisie : une mesure rejetée se dit rejetée au moment où on
+    la désigne, pas après qu'on a tapé une position et une désignation.
+    """
+    get_owned(session, BillOfQuantities, context.organization_id, boq_id, label="Bordereau")
+
+    try:
+        reprise = reprise_de_mesure.preparer(
+            session,
+            organization_id=context.organization_id,
+            proposal_id=payload.proposal_id,
+            unite_cible=payload.unite_cible,
+            quantite_retenue=payload.quantite_retenue,
+        )
+    except reprise_de_mesure.RepriseRefusee as refus:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": refus.code, "message": refus.message},
+        ) from refus
+
+    if reprise is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "Mesure introuvable."},
+        )
+
+    return ApercuDeReprise(
+        quantite=reprise.quantite,
+        unite=reprise.unite,
+        quantite_lisible=reprise.quantite_lisible,
+        provenance_lisible=reprise.provenance_lisible,
+        quantite_brute=reprise.quantite_brute,
+        quantite_brute_lisible=reprise.quantite_brute_lisible,
+        incertitude=reprise.incertitude,
+        incertitude_lisible=reprise.incertitude_lisible,
+        quantite_proposee=reprise.quantite_proposee,
+        quantite_proposee_lisible=reprise.quantite_proposee_lisible,
+        quantite_retenue_par=reprise.quantite_retenue_par,
+    )
+
+
+@router.post(
+    "/boqs/{boq_id}/items:depuis-une-mesure",
+    response_model=BoqItemOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="Reprendre une mesure de plan dans une ligne",
+)
+def create_item_from_measurement(
+    boq_id: str,
+    payload: RepriseDeMesureCreate,
+    context: TenantContext = Depends(require(Permission.BOQ_WRITE)),
+    session: Session = Depends(session_scope),
+) -> BoqItem:
+    """La première reprise explicite d'une mesure de plan dans un bordereau.
+
+    **Pourquoi une route à elle, et non un champ de plus sur `POST items`.**
+    La quantité n'est pas déclarée par l'appelant : elle est LUE de la mesure
+    et de la décision humaine qui l'a retenue. Un champ optionnel sur la route
+    ordinaire aurait laissé coexister une provenance déclarée et une quantité
+    saisie — une ligne qui dit venir d'un plan et porte un autre nombre, ce qui
+    est pire qu'une ligne sans provenance.
+
+    **Les deux refus qui comptent**, et ils portent la même règle que
+    `reprenables()` : une mesure **rejetée** ne se reprend jamais, et une mesure
+    sur laquelle **personne n'a tranché** non plus. Le code et la phrase disent
+    lequel des deux cas s'applique, parce qu'ils n'appellent pas la même action.
+
+    `BOQ_WRITE` et non `DOCUMENT_VALIDATE` : la décision sur la mesure est
+    déjà prise et journalisée ailleurs. Ce geste-ci remplit un bordereau.
+    """
+    get_owned(session, BillOfQuantities, context.organization_id, boq_id, label="Bordereau")
+
+    try:
+        reprise = reprise_de_mesure.preparer(
+            session,
+            organization_id=context.organization_id,
+            proposal_id=payload.proposal_id,
+            unite_cible=payload.unite_cible,
+            quantite_retenue=payload.quantite_retenue,
+        )
+    except reprise_de_mesure.RepriseRefusee as refus:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": refus.code, "message": refus.message},
+        ) from refus
+
+    # 404 et non 422 : un identifiant d'un AUTRE tenant doit produire exactement
+    # la même réponse qu'un identifiant inventé, sinon la réponse confirme son
+    # existence.
+    if reprise is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "Mesure introuvable."},
+        )
+
+    sort_index = payload.sort_index
+    if sort_index is None:
+        existing = session.scalars(
+            select(BoqItem.sort_index).where(
+                BoqItem.organization_id == context.organization_id, BoqItem.boq_id == boq_id
+            )
+        ).all()
+        sort_index = (max(existing) + 10) if existing else 0
+
+    item = BoqItem(
+        organization_id=context.organization_id,
+        boq_id=boq_id,
+        position=payload.position,
+        designation=payload.designation,
+        code=payload.code,
+        kind=payload.kind,
+        sort_index=sort_index,
+        notes=payload.notes,
+        unit_code=_canonical_unit(reprise.unite),
+        quantity=reprise.quantite,
+        # `proposed` est le défaut du modèle, et il est juste ici : une
+        # quantité reprise d'un plan n'est pas APPROUVÉE pour autant. La
+        # décision prise sur la mesure dit ce que le dessin porte ; approuver
+        # un poste est une autre décision, et elle exige `BOQ_APPROVE`.
+        source_proposal_id=reprise.source_mesure["proposal_id"],
+        source_mesure=reprise.source_mesure,
+    )
+    session.add(item)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        # Deux causes possibles, et l'appelant doit pouvoir les distinguer :
+        # la position est déjà prise, ou cette mesure est DÉJÀ reprise dans ce
+        # bordereau. La seconde est l'invariant anti-double-comptage, et la
+        # taire laisserait compter deux fois la même quantité d'ouvrage.
+        # Les deux moteurs ne nomment pas la même chose : PostgreSQL cite la
+        # CONTRAINTE, SQLite cite les COLONNES
+        # (« UNIQUE constraint failed: boq_items.boq_id,
+        # boq_items.source_proposal_id »). Chercher le seul nom de contrainte
+        # faisait passer le conflit pour un doublon de position sur SQLite —
+        # donc sur la suite portable, et donc à chaque livraison.
+        cause = str(exc.orig)
+        deja_reprise = "uq_boq_item_source" in cause or "source_proposal_id" in cause
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                {
+                    "code": "mesure_deja_reprise",
+                    "message": (
+                        "Cette mesure alimente déjà une ligne de ce bordereau. "
+                        "La reprendre une seconde fois compterait deux fois la "
+                        "même quantité."
+                    ),
+                }
+                if deja_reprise
+                else {
+                    "code": "duplicate_position",
+                    "message": f"Le poste « {payload.position} » existe déjà dans ce bordereau.",
+                }
+            ),
+        ) from exc
+
+    audit.record(
+        session,
+        organization_id=context.organization_id,
+        action="boq_item.created_from_measurement",
+        object_type="boq_item",
+        object_id=item.id,
+        summary=f"Poste {item.position} repris d'une mesure de plan",
+        actor_user_id=context.user.id,
+        actor_email=context.user.email,
+        # La provenance au journal, et aucun contenu de document : ni texte
+        # extrait, ni nom de fichier, ni chemin — la règle du `JsonFormatter`.
+        payload={
+            "quantity": str(item.quantity),
+            "unit": item.unit_code,
+            "proposal_id": payload.proposal_id,
+            "decision": reprise.source_mesure["decision"],
+            # La décision sur la quantité, tracée : ce qu'elle valait, ce qui
+            # était proposé, ce qui a été retenu, et par qui.
+            "quantity_raw": str(reprise.quantite_brute),
+            "quantity_uncertainty": (
+                str(reprise.incertitude) if reprise.incertitude is not None else None
+            ),
+            "quantity_proposed": str(reprise.quantite_proposee),
+            "quantity_retained_by": reprise.quantite_retenue_par,
+        },
+    )
+    return item
 
 
 def _locked_item(session: Session, context: TenantContext, item_id: str) -> BoqItem:

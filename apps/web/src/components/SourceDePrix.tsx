@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 
 import { api, type CompositePrice, type PriceItem } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 /**
  * D'où vient le prix d'un poste : de nulle part, de la bibliothèque, ou d'un
@@ -91,7 +92,7 @@ export function SourceDePrix({
             <option value="">{t('priceSource.pick')}</option>
             {prix.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.code} — {p.label} ({p.unit_price} €/{p.unit_code})
+                {p.code} — {p.label} ({ecrireEnFrancais(p.unit_price)} €/{p.unit_code})
               </option>
             ))}
           </select>
@@ -154,7 +155,7 @@ export function ResumeDuSousDetail({
         components: composite.components,
       })
       .then((rendu) => {
-        if (vivant) setCout(`${rendu.unit_cost_display} ${rendu.currency}`)
+        if (vivant) setCout(`${ecrireEnFrancais(rendu.unit_cost_display)} ${rendu.currency}`)
       })
       .catch(() => vivant && setIncalculable(true))
     return () => {

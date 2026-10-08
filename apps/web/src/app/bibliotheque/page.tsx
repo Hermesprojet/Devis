@@ -18,6 +18,7 @@ import {
 import { t } from '@/lib/i18n'
 import { PERMISSIONS, can } from '@/lib/permissions'
 import { usePermissions } from '@/lib/usePermissions'
+import { ecrireEnFrancais } from '@/lib/nombres'
 
 const STRATEGIES = ['create', 'replace', 'ignore', 'merge'] as const
 
@@ -218,7 +219,8 @@ export default function PriceBookPage() {
         >
           {versions.map((version) => (
             <option key={version.id} value={version.id}>
-              {books[0]?.name} — v{version.version_number} ({version.status})
+              {books[0]?.name} — v{version.version_number} (
+              {t(`priceBook.versionStatus.${version.status}`)})
             </option>
           ))}
         </select>
@@ -379,7 +381,7 @@ export default function PriceBookPage() {
                 <td>{item.family ?? t('common.none')}</td>
                 <td>{item.unit_code}</td>
                 <td className="num">
-                  {item.unit_price} {item.currency}
+                  {ecrireEnFrancais(item.unit_price)} {item.currency}
                 </td>
                 <td>{item.supplier_name ?? t('common.none')}</td>
               </tr>
@@ -450,7 +452,7 @@ function ImportPreview({ report }: { report: ImportReport }) {
               <td className="mono">{String(row.normalized?.code ?? row.raw.code ?? '')}</td>
               <td>{String(row.normalized?.label ?? row.raw.libelle ?? '')}</td>
               <td>{String(row.normalized?.unit_code ?? '')}</td>
-              <td className="num">{String(row.normalized?.unit_price ?? '')}</td>
+              <td className="num">{ecrireEnFrancais(String(row.normalized?.unit_price ?? ''))}</td>
               <td>
                 {row.is_valid ? (
                   row.is_duplicate ? (

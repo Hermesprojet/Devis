@@ -1,0 +1,911 @@
+"""Poser une échelle sur un PDF, puis en tirer des mesures qui se justifient.
+
+Ce module est la couture entre `mesures_pdf` — qui calcule et ne sait rien de
+la base — et les tables qui conservent les décisions humaines. Il n'ajoute
+aucune règle de mesure : il décide **ce qui est consigné où**, et rien d'autre.
+
+**Pourquoi une calibration vit en base et un constat de lecture non.** Le
+constat se reconstruit depuis l'original immuable : le jeter ne perd rien. Une
+calibration, elle, est une **décision** — quelqu'un a regardé un plan, désigné
+deux points et déclaré une distance. Rien ne la reconstruit. Elle se conserve
+donc au même titre qu'une `ValidationDecision`, et pour la même raison.
+
+**Pourquoi une mesure est une citation et une proposition**, plutôt qu'une
+table à elle. Parce que c'est exactement ce qu'elle est : une valeur extraite
+d'un document, ancrée à un endroit, qui attend une décision humaine. Le socle
+documentaire porte déjà les trois pièces — `SourceCitation`,
+`ExtractionProposal`, `ValidationDecision` — et elles sont éprouvées. Lui en
+ajouter une quatrième aurait dupliqué la validation humaine, qui est
+précisément ce qu'il ne faut pas dupliquer.
+
+**Ce que ce module refuse de faire.** Il ne devine aucune échelle. Un PDF sans
+calibration ne rend aucune mesure, et le refus le dit — il ne retombe pas sur
+un 1:100 implicite, ni sur l'échelle écrite au cartouche, qui ne vaut plus dès
+qu'un export a coché « ajuster à la page ».
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from typing import Any, Literal
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ..models import ExtractionProposal, PlanCalibration, SourceCitation, ValidationDecision
+from . import audit, lecture_de_plan, lisible, mesures_pdf
+from .document_storage import StockageLocal
+from .mesures_pdf import Calibration, Point
+from .tenant import owned_query
+
+logger = logging.getLogger("metreo.api")
+
+#: Le nom et la version du schéma de valeur d'une mesure de PDF.
+#:
+#: Distinct de `mesure_de_plan`, qui désigne une cotation LUE dans un DXF. Les
+#: deux ne se valent pas : l'une descend du fichier, l'autre d'une calibration
+#: humaine. Les confondre sous un seul nom rendrait impossible de dire, plus
+#: tard, laquelle a été obtenue comment.
+SCHEMA = "mesure_pdf"
+SCHEMA_VERSION = "1"
+
+PIPELINE_VERSION = "mesure-pdf-v1"
+
+#: Aucun modèle de langage n'intervient. Les deux valeurs le DISENT.
+PROMPT_VERSION = "none"
+MODEL_VERSION = "aucun-modele"
+
+#: L'extracteur d'une mesure de PDF : une personne, pas une bibliothèque.
+#:
+#: C'est la différence de fond avec une cotation DXF, dont l'extracteur est
+#: `lecture_dxf@ezdxf-…`. Ici le fichier n'a rien fourni d'autre qu'une image ;
+#: la valeur vient d'un pointage et d'une déclaration. L'écrire ainsi évite
+#: qu'une relecture présente une mesure humaine comme une lecture machine.
+EXTRACTEUR = "mesure_humaine@pdf"
+
+#: La confiance attachée à une mesure, par classe de fiabilité.
+#:
+#: **Ces nombres ne sont pas des probabilités mesurées.** Ils ORDONNENT deux
+#: classes nommées, parce que la base exige un nombre dans [0,1]. Ce qui porte
+#: le sens est l'incertitude, qui est calculée et conservée dans `value`, dans
+#: la même unité que la mesure.
+CONFIANCE: dict[str, Decimal] = {
+    "mesurable": Decimal("0.9"),
+    "a_confirmer": Decimal("0.5"),
+}
+
+#: La confiance d'une CITATION de mesure, qui n'est pas celle de la mesure.
+#:
+#: Elle ne vaut PAS 1, à la différence d'une citation de cotation DXF. Un
+#: handle DXF désigne un objet sans ambiguïté ; une mesure de PDF désigne un
+#: endroit que quelqu'un a pointé à la souris, et ce pointage porte la même
+#: incertitude que la mesure elle-même.
+CONFIANCE_DE_LA_CITATION = Decimal("0.9")
+
+TypeDeMesure = Literal["segment", "surface"]
+
+
+class CalibrationRefusee(Exception):
+    """La calibration ou la mesure n'a pas pu être posée, et on dit pourquoi."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+@dataclass(frozen=True)
+class MesureEnregistree:
+    """Ce qui a été écrit, pour que l'appelant puisse en rendre compte."""
+
+    proposal_id: str
+    citation_id: str
+    valeur: Decimal
+    unite: str
+    incertitude: Decimal
+    fiabilite: str
+    reserves: tuple[str, ...]
+
+
+# ---------------------------------------------------------------------------
+# La page : ses dimensions et sa rotation, relues du constat
+# ---------------------------------------------------------------------------
+
+
+def _page_du_constat(
+    stockage: StockageLocal, *, organization_id: str, revision_id: str, page: int
+) -> tuple[tuple[float, float, float, float], int]:
+    """La boîte affichée et la rotation d'une page, depuis l'artefact de lecture.
+
+    **Pas en rouvrant le PDF.** Mesuré : charger une page coûte 512 à 3 795 ms,
+    et une calibration en demanderait autant à chaque clic. Le constat porte
+    déjà ces deux informations, il est déterministe, et il se reconstruit
+    depuis l'original si on le perd.
+    """
+    constat = lecture_de_plan.lire_le_constat(
+        stockage, organization_id=organization_id, revision_id=revision_id
+    )
+    if constat is None:
+        raise CalibrationRefusee(
+            "plan_non_analyse",
+            "Ce plan n'a pas encore été analysé : ses pages ne sont pas connues.",
+        )
+    if constat.contenu.get("format") != "pdf":
+        raise CalibrationRefusee(
+            "pas_un_pdf",
+            "La calibration ne s'applique qu'à un PDF. Un DXF porte son unité "
+            "de dessin dans le fichier : ses cotations se lisent sans échelle.",
+        )
+
+    boites = constat.contenu.get("boites_des_pages") or []
+    if page < 1 or page > len(boites):
+        raise CalibrationRefusee(
+            "page_inconnue",
+            f"Le document porte {len(boites)} page(s) : la page {page} n'existe pas.",
+        )
+    gauche, bas, droite, haut = (float(valeur) for valeur in boites[page - 1])
+
+    rotations = constat.contenu.get("rotations_des_pages") or []
+    rotation = int(rotations[page - 1]) if page <= len(rotations) else 0
+    return (gauche, bas, droite, haut), rotation
+
+
+# ---------------------------------------------------------------------------
+# Poser une calibration
+# ---------------------------------------------------------------------------
+
+
+def calibrer(
+    session: Session,
+    *,
+    stockage: StockageLocal,
+    organization_id: str,
+    revision_id: str,
+    actor_user_id: str,
+    page: int,
+    premier_ecran: tuple[float, float],
+    second_ecran: tuple[float, float],
+    distance_reelle: Decimal,
+    unite: str,
+    resolution_du_pointage: Decimal,
+    motif: str,
+    zone: tuple[float, float, float, float] | None = None,
+) -> PlanCalibration:
+    """Enregistre une échelle déclarée, après l'avoir vérifiée.
+
+    Les points arrivent dans le repère de l'ÉCRAN, parce que c'est là qu'ils
+    ont été désignés. Ils sont convertis ici, une fois, et conservés dans celui
+    de la page : un repère d'écran dépend de la rotation d'affichage et
+    normalise x et y par des longueurs différentes, où une diagonale serait
+    fausse.
+
+    Lève avant d'écrire quoi que ce soit. Une calibration trop courte, une
+    distance nulle ou une unité qui n'est pas une longueur sont refusées par
+    `mesures_pdf.facteur`, qui est aussi ce qui les refusera à la mesure — une
+    seule règle, à un seul endroit.
+    """
+    boite, rotation = _page_du_constat(
+        stockage,
+        organization_id=organization_id,
+        revision_id=revision_id,
+        page=page,
+    )
+
+    premier = mesures_pdf.vers_la_page(premier_ecran, boite, rotation)
+    second = mesures_pdf.vers_la_page(second_ecran, boite, rotation)
+
+    candidate = Calibration(
+        premier=premier,
+        second=second,
+        distance_reelle=distance_reelle,
+        unite=unite,
+        resolution_du_pointage=float(resolution_du_pointage),
+    )
+    # Pour ses refus : c'est la MÊME fonction qui validera les mesures.
+    facteur = mesures_pdf.facteur(candidate)
+
+    calibration = PlanCalibration(
+        organization_id=organization_id,
+        revision_id=revision_id,
+        page=page,
+        u0=Decimal(str(premier.u)),
+        v0=Decimal(str(premier.v)),
+        u1=Decimal(str(second.u)),
+        v1=Decimal(str(second.v)),
+        distance_reelle=distance_reelle,
+        unite=unite,
+        resolution_du_pointage=resolution_du_pointage,
+        zone_x0=Decimal(str(zone[0])) if zone else None,
+        zone_y0=Decimal(str(zone[1])) if zone else None,
+        zone_x1=Decimal(str(zone[2])) if zone else None,
+        zone_y1=Decimal(str(zone[3])) if zone else None,
+        motif=motif,
+        actor_user_id=actor_user_id,
+    )
+    session.add(calibration)
+    session.flush()
+
+    audit.record(
+        session,
+        organization_id=organization_id,
+        action="document.plan_calibrated",
+        object_type="document_revision",
+        object_id=revision_id,
+        summary="Échelle d'un plan PDF déclarée",
+        # Le facteur et l'unité, pas le motif : le motif est du texte saisi par
+        # un humain à propos d'un document client, et le journal n'en porte pas.
+        payload={
+            "page": page,
+            "unite": unite,
+            "facteur_par_point": str(facteur),
+            "resolution_du_pointage": str(resolution_du_pointage),
+            "zone": zone is not None,
+        },
+    )
+    return calibration
+
+
+def _en_calibration(ligne: PlanCalibration) -> Calibration:
+    """La ligne de base vers l'objet de calcul."""
+    return Calibration(
+        premier=Point(u=float(ligne.u0), v=float(ligne.v0)),
+        second=Point(u=float(ligne.u1), v=float(ligne.v1)),
+        distance_reelle=ligne.distance_reelle,
+        unite=ligne.unite,
+        resolution_du_pointage=float(ligne.resolution_du_pointage),
+    )
+
+
+def _contient(ligne: PlanCalibration, points_ecran: list[tuple[float, float]]) -> bool:
+    """La zone de cette calibration couvre-t-elle TOUS les points désignés ?
+
+    Tous, et pas le premier : une mesure qui sort de la zone où l'échelle a été
+    déclarée n'est pas à moitié juste. Une page porte souvent un plan au 1:50 et
+    un détail au 1:20 ; une mesure à cheval sur les deux n'a pas de valeur.
+    """
+    if ligne.zone_x0 is None:
+        return True
+    x0, y0 = float(ligne.zone_x0), float(ligne.zone_y0 or 0)
+    x1, y1 = float(ligne.zone_x1 or 1), float(ligne.zone_y1 or 1)
+    return all(x0 <= x <= x1 and y0 <= y <= y1 for x, y in points_ecran)
+
+
+def calibration_applicable(
+    session: Session,
+    *,
+    organization_id: str,
+    revision_id: str,
+    page: int,
+    points_ecran: list[tuple[float, float]],
+) -> PlanCalibration | None:
+    """La calibration qui s'applique à ces points, ou `None`.
+
+    Une calibration de ZONE l'emporte sur une calibration de page : elle est
+    plus précise, et c'est pour cela qu'on l'a posée. À égalité, la plus
+    récente gagne — une nouvelle calibration sur le même périmètre corrige la
+    précédente, elle ne la complète pas.
+    """
+    lignes = session.scalars(
+        owned_query(PlanCalibration, organization_id)
+        .where(
+            PlanCalibration.revision_id == revision_id,
+            PlanCalibration.page == page,
+        )
+        .order_by(PlanCalibration.created_at.desc())
+    ).all()
+
+    applicables = [ligne for ligne in lignes if _contient(ligne, points_ecran)]
+    if not applicables:
+        return None
+    # Les zonées d'abord, puis l'ordre de récence déjà posé par la requête.
+    applicables.sort(key=lambda ligne: ligne.zone_x0 is None)
+    return applicables[0]
+
+
+# ---------------------------------------------------------------------------
+# Mesurer
+# ---------------------------------------------------------------------------
+
+
+def mesurer(
+    session: Session,
+    *,
+    stockage: StockageLocal,
+    organization_id: str,
+    revision_id: str,
+    page: int,
+    type_de_mesure: TypeDeMesure,
+    points_ecran: list[tuple[float, float]],
+    libelle: str,
+    resolution_du_pointage: Decimal | None = None,
+) -> MesureEnregistree:
+    """Mesure un segment ou une surface, et l'écrit comme une proposition.
+
+    `libelle` est ce que la personne a tapé pour désigner son ouvrage — « mur
+    nord », « dalle du séjour ». Il est conservé dans la valeur : une liste de
+    mesures sans libellé est une liste de nombres que personne ne sait relire.
+    """
+    if len(points_ecran) < 2:
+        raise CalibrationRefusee("points_insuffisants", "Une mesure demande au moins deux points.")
+
+    calibration = calibration_applicable(
+        session,
+        organization_id=organization_id,
+        revision_id=revision_id,
+        page=page,
+        points_ecran=points_ecran,
+    )
+    if calibration is None:
+        raise CalibrationRefusee(
+            "sans_calibration",
+            "Aucune échelle n'a été confirmée pour cette page, ou aucune ne "
+            "couvre tous les points désignés. Un PDF ne porte pas d'unité : "
+            "sans échelle déclarée, il n'y a rien à mesurer. Posez une "
+            "calibration sur une cote connue — une cote longue donne le "
+            "meilleur résultat.",
+        )
+
+    boite, rotation = _page_du_constat(
+        stockage,
+        organization_id=organization_id,
+        revision_id=revision_id,
+        page=page,
+    )
+    points = [mesures_pdf.vers_la_page(point, boite, rotation) for point in points_ecran]
+
+    # **La résolution de CE pointage, quand elle est connue.**
+    #
+    # Le modèle supposait que la mesure était pointée au même zoom que la
+    # calibration. C'est vrai dans l'écran livré ; ce ne l'est plus dès qu'on
+    # calibre sur une cote à la loupe puis qu'on mesure ailleurs, et ce ne l'a
+    # jamais été pour un autre client.
+    #
+    # **Elle est passée en paramètre, et non substituée dans la calibration.**
+    # Une première version remplaçait `resolution_du_pointage` dans une copie
+    # de la `Calibration` : les DEUX termes de l'incertitude en dépendaient
+    # alors, y compris celui du facteur — qui porte l'erreur des deux clics de
+    # la calibration, posés une fois pour toute la page et pas au zoom de cette
+    # mesure-ci. Mesurer en agrandissant davantage annonçait donc une échelle
+    # plus sûre qu'elle n'est. Seul le terme de TRACÉ dépend de ces clics-ci.
+    outil = mesures_pdf.longueur if type_de_mesure == "segment" else mesures_pdf.aire
+    mesure = outil(
+        points,
+        _en_calibration(calibration),
+        resolution_du_trace=(
+            None if resolution_du_pointage is None else float(resolution_du_pointage)
+        ),
+    )
+
+    # La citation : la page, et la boîte englobante de ce qui a été désigné.
+    # C'est ce qui permettra de retrouver la mesure sur l'aperçu — et c'est
+    # l'ancrage que la migration e2f3a4b50607 a rendu possible.
+    cadre = _boite_englobante(points_ecran)
+    citation = SourceCitation(
+        organization_id=organization_id,
+        revision_id=revision_id,
+        page=page,
+        char_start=None,
+        char_end=None,
+        x0=Decimal(str(cadre[0])),
+        y0=Decimal(str(cadre[1])),
+        x1=Decimal(str(cadre[2])),
+        y1=Decimal(str(cadre[3])),
+        sheet=None,
+        layer=None,
+        object_id=None,
+        extractor=EXTRACTEUR,
+        confidence=CONFIANCE_DE_LA_CITATION,
+    )
+    session.add(citation)
+    session.flush()
+
+    proposition = ExtractionProposal(
+        organization_id=organization_id,
+        revision_id=revision_id,
+        citation_id=citation.id,
+        schema_name=SCHEMA,
+        schema_version=SCHEMA_VERSION,
+        value=_valeur_de(
+            mesure,
+            type_de_mesure=type_de_mesure,
+            libelle=libelle,
+            points_ecran=points_ecran,
+            calibration=calibration,
+        ),
+        confidence=CONFIANCE[mesure.fiabilite],
+        pipeline_version=PIPELINE_VERSION,
+        prompt_version=PROMPT_VERSION,
+        model_version=MODEL_VERSION,
+        status="proposed",
+    )
+    session.add(proposition)
+    session.flush()
+
+    audit.record(
+        session,
+        organization_id=organization_id,
+        action="document.plan_measured",
+        object_type="document_revision",
+        object_id=revision_id,
+        summary="Mesure prise sur un plan PDF",
+        # Ni le libellé ni la valeur : le premier est du texte saisi à propos
+        # d'un document client, la seconde est une donnée de métré. Le journal
+        # porte des COMPTEURS et des codes.
+        payload={
+            "page": page,
+            "type": type_de_mesure,
+            "points": len(points_ecran),
+            "unite": mesure.unite,
+            "fiabilite": mesure.fiabilite,
+            "reserves": list(mesure.reserves),
+            "calibration_id": calibration.id,
+            "pipeline_version": PIPELINE_VERSION,
+        },
+    )
+
+    return MesureEnregistree(
+        proposal_id=proposition.id,
+        citation_id=citation.id,
+        valeur=mesure.valeur,
+        unite=mesure.unite,
+        incertitude=mesure.incertitude,
+        fiabilite=mesure.fiabilite,
+        reserves=mesure.reserves,
+    )
+
+
+def _boite_englobante(
+    points: list[tuple[float, float]],
+) -> tuple[float, float, float, float]:
+    """La boîte des points désignés, élargie si elle est plate.
+
+    Un segment parfaitement horizontal a une hauteur nulle, et une boîte plate
+    est refusée par `ck_source_citation_bbox` — à juste titre, puisqu'elle ne
+    désigne aucune surface d'écran. Un millième de page suffit à la rendre
+    valide sans déplacer quoi que ce soit : c'est deux pixels sur un aperçu de
+    deux mille.
+    """
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    epaisseur = 0.001
+    if x1 - x0 < epaisseur:
+        x0, x1 = max(0.0, x0 - epaisseur), min(1.0, x1 + epaisseur)
+    if y1 - y0 < epaisseur:
+        y0, y1 = max(0.0, y0 - epaisseur), min(1.0, y1 + epaisseur)
+    return x0, y0, x1, y1
+
+
+def _valeur_de(
+    mesure: mesures_pdf.Mesure,
+    *,
+    type_de_mesure: TypeDeMesure,
+    libelle: str,
+    points_ecran: list[tuple[float, float]],
+    calibration: PlanCalibration,
+) -> dict[str, Any]:
+    """Ce qui est conservé d'une mesure, et pourquoi chaque champ y est.
+
+    Les points sont conservés : sans eux, une mesure ne se redessine pas sur
+    l'aperçu, et « retrouver la mesure sur le plan » redevient impossible.
+
+    L'incertitude est conservée dans la même unité que la valeur, et avec elle
+    la calibration dont elle descend. C'est ce qui permet, six mois plus tard,
+    de répondre à « d'où vient ce 12,4 m² ? » autrement que par « de l'écran ».
+    """
+    return {
+        "type": type_de_mesure,
+        "libelle": libelle,
+        # En CHAÎNE : les contrats refusent les flottants, et `Amount` quantise
+        # à dix décimales. Le nombre écrit doit être celui du calcul.
+        "valeur": str(mesure.valeur),
+        "unite": mesure.unite,
+        "incertitude": str(mesure.incertitude),
+        "incertitude_relative": str(mesure.incertitude_relative),
+        "fiabilite": mesure.fiabilite,
+        "reserves": list(mesure.reserves),
+        "points_ecran": [[x, y] for x, y in points_ecran],
+        "calibration": {
+            "id": calibration.id,
+            "unite": calibration.unite,
+            "distance_reelle": str(calibration.distance_reelle),
+            "resolution_du_pointage": str(calibration.resolution_du_pointage),
+            "motif": calibration.motif,
+            "zonee": calibration.zone_x0 is not None,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Relire
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MesureALire:
+    """Une mesure telle que l'écran la montre, décision humaine comprise."""
+
+    proposal_id: str
+    citation_id: str
+    page: int
+    type: str
+    libelle: str
+    valeur: str
+    unite: str
+    incertitude: str
+    incertitude_relative: str
+    fiabilite: str
+    reserves: tuple[str, ...]
+    points_ecran: tuple[tuple[float, float], ...]
+    cadre: tuple[str, str, str, str] | None
+    calibration: dict[str, Any]
+    decision: str | None
+    #: **Pourquoi** la personne a tranché ainsi. Conservé et rendu, parce
+    #: qu'une décision sans sa raison n'est pas auditable : dans six mois, « ce
+    #: poste est à 3,80 m » ne vaut que si l'on sait d'où vient ce 3,80.
+    motif_de_la_decision: str | None
+    valeur_corrigee: str | None
+    #: Les trois mêmes nombres, écrits pour être LUS — jamais pour être relus.
+    #:
+    #: Rendus par le serveur et non calculés par l'écran, comme
+    #: `facteur_lisible` : deux arrondis, un en Python et un en TypeScript,
+    #: finiraient par diverger d'un chiffre. La valeur exacte reste au-dessus.
+    valeur_lisible: str
+    incertitude_lisible: str
+    valeur_retenue_lisible: str | None
+    #: L'unité dans laquelle la personne a exprimé sa correction. Toujours
+    #: celle de la mesure : corriger une surface en millimètres n'aurait pas
+    #: de sens, et le serveur le refuse.
+    unite_retenue: str | None
+    #: **La valeur qui compte**, une fois la décision prise : celle que la
+    #: personne a retenue si elle a corrigé, la mesure si elle a confirmé,
+    #: et RIEN si elle a rejeté ou n'a pas encore tranché.
+    #:
+    #: Calculée ici plutôt que par chaque appelant, parce que c'est ici qu'on
+    #: connaît la règle : une proposition machine n'est pas une quantité, et
+    #: seule une décision humaine en fait une.
+    valeur_retenue: str | None
+    #: Vrai quand cette mesure peut alimenter un bordereau.
+    #:
+    #: Une mesure **rejetée ne le peut jamais**, et une mesure sur laquelle
+    #: personne n'a tranché non plus. C'est la règle que `reprenables()`
+    #: applique, exposée ligne par ligne pour que l'écran puisse la dire au
+    #: lieu de la laisser deviner.
+    reprenable: bool
+
+
+def lister(session: Session, *, organization_id: str, revision_id: str) -> list[MesureALire]:
+    """Les mesures d'une révision, avec la dernière décision de chacune.
+
+    La décision n'est pas lue sur la proposition : la proposition machine n'est
+    jamais réécrite. L'état d'une mesure se DÉDUIT de son journal de décisions,
+    dont la dernière l'emporte — c'est ce qui garantit qu'une acceptation ne
+    peut pas être effacée par une nouvelle mesure.
+    """
+    rangees = session.execute(
+        owned_query(ExtractionProposal, organization_id)
+        .join(
+            SourceCitation,
+            (SourceCitation.id == ExtractionProposal.citation_id)
+            & (SourceCitation.organization_id == ExtractionProposal.organization_id),
+        )
+        .where(
+            ExtractionProposal.revision_id == revision_id,
+            ExtractionProposal.schema_name == SCHEMA,
+        )
+        .with_only_columns(ExtractionProposal, SourceCitation)
+        .order_by(ExtractionProposal.created_at)
+    ).all()
+
+    identifiants = [proposition.id for proposition, _ in rangees]
+    dernieres: dict[str, ValidationDecision] = {}
+    if identifiants:
+        for decision in session.scalars(
+            select(ValidationDecision)
+            .where(
+                ValidationDecision.organization_id == organization_id,
+                ValidationDecision.proposal_id.in_(identifiants),
+            )
+            .order_by(ValidationDecision.created_at)
+        ).all():
+            dernieres[decision.proposal_id] = decision
+
+    mesures: list[MesureALire] = []
+    for proposition, citation in rangees:
+        valeur = dict(proposition.value)
+        derniere = dernieres.get(proposition.id)
+        apres = derniere.after_value if derniere is not None else None
+        cadre = None
+        if citation.x0 is not None:
+            cadre = (str(citation.x0), str(citation.y0), str(citation.x1), str(citation.y1))
+
+        unite = str(valeur.get("unite", ""))
+        brute = _en_decimal(valeur.get("valeur"))
+        incertitude = _en_decimal(valeur.get("incertitude"))
+        corrigee = _en_decimal(apres.get("valeur")) if isinstance(apres, dict) else None
+        unite_retenue = (
+            str(apres.get("unite")) if isinstance(apres, dict) and apres.get("unite") else None
+        )
+        # Nommée `tranchee` et non `decision` : plus haut dans cette fonction,
+        # une boucle lie déjà `decision` à une `ValidationDecision`. Réutiliser
+        # le nom ici masquait un objet par une chaîne, sans conséquence à
+        # l'exécution — la première boucle est close — mais c'est le genre de
+        # chevauchement qu'on relit trois fois avant de s'en convaincre.
+        tranchee = derniere.decision if derniere is not None else None
+        retenue = _valeur_retenue(tranchee, brute, corrigee)
+
+        mesures.append(
+            MesureALire(
+                proposal_id=proposition.id,
+                citation_id=citation.id,
+                page=int(citation.page or 1),
+                type=str(valeur.get("type", "")),
+                libelle=str(valeur.get("libelle", "")),
+                valeur=str(valeur.get("valeur", "")),
+                unite=str(valeur.get("unite", "")),
+                incertitude=str(valeur.get("incertitude", "")),
+                incertitude_relative=str(valeur.get("incertitude_relative", "")),
+                fiabilite=str(valeur.get("fiabilite", "")),
+                reserves=tuple(str(r) for r in valeur.get("reserves", [])),
+                points_ecran=tuple(
+                    (float(point[0]), float(point[1]))
+                    for point in valeur.get("points_ecran", [])
+                    if isinstance(point, list) and len(point) == 2
+                ),
+                cadre=cadre,
+                calibration=dict(valeur.get("calibration") or {}),
+                decision=tranchee,
+                motif_de_la_decision=(derniere.reason if derniere is not None else None),
+                valeur_corrigee=(str(apres.get("valeur")) if isinstance(apres, dict) else None),
+                valeur_lisible=(
+                    lisible.quantite_lisible(brute, unite, incertitude=incertitude)
+                    if brute is not None
+                    else ""
+                ),
+                incertitude_lisible=(
+                    lisible.incertitude_lisible(incertitude, unite)
+                    if incertitude is not None
+                    else ""
+                ),
+                valeur_retenue_lisible=(
+                    lisible.quantite_lisible(corrigee, unite_retenue or unite)
+                    if corrigee is not None
+                    else None
+                ),
+                unite_retenue=unite_retenue,
+                valeur_retenue=(str(retenue) if retenue is not None else None),
+                reprenable=retenue is not None,
+            )
+        )
+    return mesures
+
+
+def _en_decimal(valeur: Any) -> Decimal | None:
+    """Un nombre, ou rien — jamais une exception à l'affichage.
+
+    Les valeurs d'une proposition sont des chaînes décimales, et elles le sont
+    depuis que la table existe. Mais `value` est du JSON : rien en base ne
+    garantit qu'une ligne écrite par une version future, ou corrigée à la main,
+    reste lisible. Une liste de mesures qui tombe en 500 parce qu'une ligne est
+    bizarre serait pire que la ligne bizarre.
+    """
+    if valeur in (None, ""):
+        return None
+    try:
+        return Decimal(str(valeur))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+#: Les décisions qui font d'une proposition une quantité.
+#:
+#: Deux, et c'est délibérément court. « confirmée » retient la mesure telle
+#: quelle ; « corrigée » retient la valeur de la personne. **« rejetée » ne
+#: retient RIEN**, et une mesure sur laquelle personne n'a tranché non plus :
+#: une proposition machine n'est pas une quantité tant qu'un humain ne l'a pas
+#: faite sienne.
+DECISIONS_QUI_RETIENNENT: frozenset[str] = frozenset({"accepted", "corrected"})
+
+
+def _valeur_retenue(
+    decision: str | None, mesuree: Decimal | None, corrigee: Decimal | None
+) -> Decimal | None:
+    """Ce qu'il faudrait reprendre dans un bordereau — ou rien.
+
+    **Rien, c'est le cas le plus fréquent**, et c'est voulu : tant qu'aucune
+    personne n'a tranché, il n'y a pas de quantité. Le produit tient à cette
+    règle depuis le début ; cette fonction est l'endroit où elle devient
+    exécutable au lieu d'être une phrase dans un guide.
+    """
+    if decision not in DECISIONS_QUI_RETIENNENT:
+        return None
+    if decision == "corrected":
+        # Une correction sans valeur chiffrée ne retient rien : c'est un refus
+        # déguisé, et le reprendre reviendrait à reprendre la proposition que
+        # la personne venait justement d'écarter.
+        return corrigee
+    return mesuree
+
+
+class ValeurRetenueRefusee(Exception):
+    """La valeur retenue par la personne n'en est pas une, et on dit pourquoi."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def verifier_la_valeur_retenue(proposition: ExtractionProposal, apres: Any) -> None:
+    """Une correction doit être une QUANTITÉ : un nombre, et son unité.
+
+    **Le défaut que cette fonction ferme.** `after_value` est un
+    `dict[str, Any]`, et il l'est pour une bonne raison — il sert à toutes les
+    propositions d'extraction, dont la forme varie. Mais pour une mesure de
+    plan, cela voulait dire que « 3,8 m environ », « quatre mètres » ou une
+    chaîne vide étaient acceptés, stockés et réaffichés tels quels. Le jour où
+    une mesure validée alimentera un bordereau, ce champ sera lu comme un
+    nombre, et il est trop tard pour le découvrir ce jour-là.
+
+    Trois refus, et aucun n'est cosmétique :
+
+    1. **une valeur absente ou non numérique** : la décision « corrigée »
+       n'aurait alors rien corrigé, et la ligne afficherait un texte à la place
+       d'une quantité ;
+    2. **une valeur négative ou nulle** : aucune longueur ni surface d'ouvrage
+       ne l'est, et une quantité négative dans un métré est une erreur de
+       saisie, jamais une intention ;
+    3. **une unité différente de celle de la mesure** : corriger une surface en
+       millimètres mélangerait deux dimensions. L'unité est donc imposée, et
+       non proposée — la personne corrige un NOMBRE, pas une unité.
+
+    La virgule décimale française est acceptée et normalisée : refuser
+    « 3800,5 » à un utilisateur belge serait lui reprocher d'écrire sa langue.
+    """
+    unite_attendue = str(dict(proposition.value).get("unite") or "")
+    if not isinstance(apres, dict):
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_absente",
+            "Corriger une mesure demande la valeur retenue, avec son unité.",
+        )
+
+    brute = apres.get("valeur")
+    if brute is None or str(brute).strip() == "":
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_absente",
+            "Corriger une mesure demande la valeur retenue, avec son unité.",
+        )
+
+    try:
+        valeur = Decimal(str(brute).strip().replace(",", ".").replace(" ", ""))
+    except (InvalidOperation, ValueError) as erreur:
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_non_numerique",
+            f"« {brute} » n'est pas une quantité. Saisissez un nombre, "
+            f"en {lisible.unite_affichee(unite_attendue)}.",
+        ) from erreur
+
+    if valeur <= 0:
+        raise ValeurRetenueRefusee(
+            "valeur_retenue_non_positive",
+            "Une quantité d'ouvrage est strictement positive. Pour écarter "
+            "cette mesure, utilisez « Rejeter » plutôt qu'une valeur nulle.",
+        )
+
+    unite = apres.get("unite")
+    if unite is not None and str(unite) != unite_attendue:
+        raise ValeurRetenueRefusee(
+            "unite_retenue_differente",
+            f"Cette mesure est en {lisible.unite_affichee(unite_attendue)} ; "
+            f"la valeur retenue ne peut pas être en {lisible.unite_affichee(str(unite))}.",
+        )
+
+    # Normalisée EN PLACE : ce qui part en base est le nombre, pas la frappe.
+    # Conserver « 3800,5 » obligerait chaque lecteur à refaire la conversion,
+    # et le premier qui l'oublierait lirait zéro.
+    apres["valeur"] = str(valeur)
+    apres["unite"] = unite_attendue
+
+
+def reprenables(session: Session, *, organization_id: str, revision_id: str) -> list[MesureALire]:
+    """Les seules mesures qu'un bordereau a le droit de reprendre.
+
+    **La garantie que cette fonction porte** : une mesure REJETÉE n'y figure
+    jamais, ni une mesure sur laquelle personne n'a tranché. Elle existe pour
+    qu'il n'y ait qu'un seul endroit où cette règle est écrite, et pour qu'un
+    test puisse la tenir — plutôt que de compter sur chaque futur appelant pour
+    refaire le filtre, et sur chacun pour le refaire juste.
+
+    Aucun code ne reprend encore de mesure dans un bordereau : cette fonction
+    est donc en avance sur son appelant, et c'est assumé. La règle qu'elle
+    porte est une promesse du produit, et une promesse sans point d'application
+    se perd au premier développeur qui ne l'a pas lue.
+    """
+    return [
+        mesure
+        for mesure in lister(session, organization_id=organization_id, revision_id=revision_id)
+        if mesure.reprenable
+    ]
+
+
+def lister_les_calibrations(
+    session: Session, *, organization_id: str, revision_id: str
+) -> list[PlanCalibration]:
+    """Les échelles déclarées sur cette révision, la plus récente d'abord."""
+    return list(
+        session.scalars(
+            owned_query(PlanCalibration, organization_id)
+            .where(PlanCalibration.revision_id == revision_id)
+            .order_by(PlanCalibration.created_at.desc())
+        ).all()
+    )
+
+
+def facteur_lisible(calibration: PlanCalibration) -> str:
+    """« 50 mm par point », pour l'écran et pour le journal.
+
+    Rendu comme une chaîne : c'est une information à LIRE, pas à recalculer.
+    Un écran qui en referait l'arithmétique obtiendrait un second facteur, et
+    les deux finiraient par diverger.
+    """
+    facteur = mesures_pdf.facteur(_en_calibration(calibration))
+    # Quatre chiffres significatifs, écrits en français.
+    #
+    # `_sans_zeros_inutiles` ne retirait que les zéros TERMINAUX : un facteur
+    # de 25,0221108491 n'en a aucun, et s'affichait donc en entier. Dix
+    # décimales sur un rapport d'échelle n'apprennent rien — le quatrième
+    # chiffre vaut déjà le micromètre d'ouvrage — et elles donnaient à cet
+    # en-tête l'allure d'une mesure de laboratoire.
+    return (
+        f"{lisible.nombre_francais_court(facteur, _decimales_du_facteur(facteur))} "
+        f"{lisible.unite_affichee(calibration.unite)} par point"
+    )
+
+
+def _decimales_du_facteur(facteur: Decimal) -> int:
+    """Quatre chiffres significatifs, jamais plus de six décimales.
+
+    Un facteur peut valoir 0,0004 (un plan au 1:2000 coté en mètres) comme
+    500 (un détail coté en millimètres) : un nombre fixe de décimales rendrait
+    l'un illisible et l'autre creux. On compte donc en chiffres SIGNIFICATIFS.
+    """
+    if facteur <= 0:
+        return 2
+    rang = math.floor(math.log10(float(facteur)))
+    return max(0, min(6, 3 - rang))
+
+
+def _sans_zeros_inutiles(valeur: Decimal) -> str:
+    """« 50 » plutôt que « 50.0000000000 », et « 33.333333 » reste entier.
+
+    Le facteur est quantisé à dix décimales pour l'arithmétique — c'est ce que
+    `Amount` conserve — mais ces dix décimales sont du bruit sur un écran. Un
+    utilisateur qui lit « 50.0000000000 mm par point » apprend la même chose
+    que devant « 50 mm », et doute un peu plus.
+
+    `normalize()` seul ne suffit pas : sur 50, il rend `5E+1`, qui est pire.
+    """
+    reduite = valeur.normalize()
+    _, _, exposant = reduite.as_tuple()
+    if isinstance(exposant, int) and exposant > 0:
+        reduite = reduite.quantize(Decimal(1))
+    return f"{reduite}"
+
+
+def en_json(calibration: PlanCalibration) -> str:
+    """La calibration, pour un artefact ou une trace. Sans le motif."""
+    return json.dumps(
+        {
+            "id": calibration.id,
+            "page": calibration.page,
+            "unite": calibration.unite,
+            "distance_reelle": str(calibration.distance_reelle),
+            "resolution_du_pointage": str(calibration.resolution_du_pointage),
+        },
+        ensure_ascii=False,
+    )

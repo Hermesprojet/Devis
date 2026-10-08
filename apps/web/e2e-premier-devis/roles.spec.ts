@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 
 import { ADMIN } from './banc'
-import { seConnecter, seDeconnecter } from './parcours'
+import { enBelge, seConnecter, seDeconnecter } from './parcours'
 
 /**
  * Ce que les autres rôles peuvent faire de la configuration de l'entreprise.
@@ -97,7 +97,7 @@ test('un lecteur consulte le devis sans aucune commande interdite', async ({ pag
 
   // Il lit les montants du devis remis au client.
   await expect(page.getByText('Gelée', { exact: true })).toBeVisible()
-  await expect(page.getByText('23080.10 EUR').first()).toBeVisible()
+  await expect(page.getByText(`${enBelge('23080.10')} EUR`).first()).toBeVisible()
 
   // Aucune commande d'écriture ne lui est proposée : ni gel, ni saisie.
   await expect(page.getByRole('button', { name: 'Geler cette version' })).toHaveCount(0)
