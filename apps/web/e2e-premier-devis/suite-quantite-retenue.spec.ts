@@ -86,9 +86,11 @@ test('la quantité reprise est proposée à la finesse de la mesure, choisie dan
   await expect(formulaire).toBeVisible()
   await formulaire.getByTestId('pdf-reprise-unite').selectOption('m')
 
+  // « 6,0012 m ± 0,0013 m » : la brute et son ±, dans l'unité choisie — en
+  // mètres, pas en millimètres (« mm » contient « m », d'où le motif strict).
   const brute = page.getByTestId('pdf-apercu-brute')
-  await expect(brute).toContainText('±', { timeout: 20_000 })
-  await expect(brute).toContainText('m')
+  await expect(brute).toContainText(/\d m ± [\d,]+ m$/, { timeout: 20_000 })
+  const [bruteM, plusOuMoinsM] = lireBruteEtPlusOuMoins(await brute.innerText())
 
   const retenue = formulaire.getByTestId('pdf-reprise-quantite')
   await expect(retenue).toBeEnabled({ timeout: 20_000 })
@@ -98,16 +100,26 @@ test('la quantité reprise est proposée à la finesse de la mesure, choisie dan
   await expect(apercu).toHaveText(`${proposition} m`)
 
   // ---- Hors du ± : refusé, en clair, et rien ne peut être écrit.
-  await retenue.fill('6,05')
+  // Dix fois le ± au-delà de la brute : un AUTRE nombre, quelle que soit la
+  // finesse du pointage de cette exécution.
+  const horsDuPlusOuMoins = ecrireEnFrancais(bruteM + 10 * plusOuMoinsM, 4)
+  await retenue.fill(horsDuPlusOuMoins)
   await expect(formulaire.getByTestId('notice-erreur')).toContainText('corrigez la mesure', {
     timeout: 20_000,
   })
   await expect(formulaire.getByTestId('pdf-reprendre')).toBeDisabled()
 
-  // ---- Dans le ± : « 6 » est une écriture de 6 000 mm ± 1,3 mm.
-  await retenue.fill('6')
-  await expect(apercu).toHaveText('6 m', { timeout: 20_000 })
+  // ---- Dans le ± : une autre écriture de la même mesure, choisie d'après la
+  // brute et le ± réellement affichés — jamais un nombre fixé d'avance qui ne
+  // tiendrait dans le ± qu'à un pixel près.
+  const autreEcriture = uneAutreEcritureDansLePlusOuMoins(proposition, bruteM, plusOuMoinsM)
+  await retenue.fill(autreEcriture)
+  await expect(apercu).toHaveText(`${autreEcriture} m`, { timeout: 20_000 })
   await expect(formulaire.getByTestId('notice-erreur')).toHaveCount(0)
+  // La provenance dit que c'est la personne qui a retenu ce nombre.
+  await expect(page.getByTestId('pdf-apercu-provenance')).toContainText(
+    `quantité retenue ${autreEcriture} m, dans le ± de la mesure`,
+  )
 
   await formulaire.getByTestId('pdf-reprise-position').fill(POSTE)
   await formulaire.getByTestId('pdf-reprise-designation').fill(DESIGNATION)
@@ -119,7 +131,47 @@ test('la quantité reprise est proposée à la finesse de la mesure, choisie dan
   await page.goto(urlChantier)
   const ligne = page.locator('tr').filter({ hasText: POSTE }).first()
   await expect(ligne).toBeVisible({ timeout: 20_000 })
-  await expect(ligne).toContainText('6 m')
-  await expect(ligne).not.toContainText('6,0')
+  await expect(ligne).toContainText(`${autreEcriture} m`)
+  await expect(ligne).not.toContainText(`${proposition} m`)
   await expect(ligne.getByTestId('boq-provenance')).toBeVisible()
 })
+
+/** « 6,0012 m ± 0,0013 m » → [6.0012, 0.0013]. */
+function lireBruteEtPlusOuMoins(texte: string): [number, number] {
+  // Un nombre commence par un chiffre : « 6 001,2 » oui, un simple espace non.
+  const nombres = texte.match(/\d[\d\s\u00a0]*(?:,\d+)?/g) ?? []
+  const lus = nombres
+    .map((n) => Number(n.replace(/[\s\u00a0]/g, '').replace(',', '.')))
+    .filter((n) => !Number.isNaN(n))
+  if (lus.length < 2) throw new Error(`brute et ± illisibles : « ${texte} »`)
+  return [lus[0] as number, lus[1] as number]
+}
+
+/** Un nombre à la belge, sans zéros de fin — comme l'écran l'écrit. */
+function ecrireEnFrancais(valeur: number, decimales: number): string {
+  return valeur
+    .toFixed(decimales)
+    .replace(/\.?0+$/, '')
+    .replace('.', ',')
+}
+
+/**
+ * Une écriture DIFFÉRENTE de la proposition, à l'intérieur du ± de la brute :
+ * la proposition décalée d'une unité de sa dernière décimale si cela tient,
+ * sinon la brute écrite avec une décimale de plus que la proposition.
+ */
+function uneAutreEcritureDansLePlusOuMoins(
+  proposition: string,
+  brute: number,
+  plusOuMoins: number,
+): string {
+  const decimales = (proposition.split(',')[1] ?? '').length
+  const pas = 10 ** -decimales
+  const proposee = Number(proposition.replace(',', '.'))
+  for (const candidate of [proposee + pas, proposee - pas]) {
+    if (candidate > 0 && Math.abs(candidate - brute) <= plusOuMoins) {
+      return ecrireEnFrancais(candidate, decimales)
+    }
+  }
+  return ecrireEnFrancais(brute, decimales + 1)
+}

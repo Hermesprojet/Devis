@@ -33,9 +33,12 @@ et ce qui ne l'est pas. Chemins abrégés ci-dessous : `models.py`, `config.py`,
 
 Phrase à tenir telle quelle face à un utilisateur ou un PO : *Metreo réalise une **mesure
 assistée** sur un plan — une personne déclare une échelle sur une cote qu'elle connaît, pointe,
-et le programme rend un nombre avec son incertitude. Sa **justesse sur des plans réels reste à
-établir** : la procédure d'essai est `docs/VALIDATION_SUR_PLANS_REELS.md`, et aucun essai n'a
-encore eu lieu.*
+et le programme rend un nombre avec son incertitude. Un premier essai a eu lieu sur un dossier
+d'exécution réel, hors dépôt, selon `docs/ESSAI_GUIDE_PLANS_REELS.md` ; il a mis au jour
+l'écriture à dix décimales, d'où la quantité retenue. Il n'établit pas la **justesse** : les
+écarts relevés sont ceux d'un plan, par des pointages automatisés, et aucune tolérance
+d'entreprise n'est fixée. La procédure d'un essai par une personne reste
+`docs/VALIDATION_SUR_PLANS_REELS.md`.*
 
 Ce qu'il ne faut pas en conclure : ni qu'un plan est lu automatiquement — aucune quantité ne
 part dans un bordereau sans décision humaine — ni qu'un DWG, un IFC ou un rapprochement

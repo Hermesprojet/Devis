@@ -3,13 +3,15 @@
 > **Ce document est une procédure, pas un constat.** Il dit exactement quels
 > fichiers fournir, quelles cotes relever, comment conduire l'essai et sous
 > quelle forme rendre le résultat. Il ne contient aucun chiffre mesuré sur un
-> plan réel : **aucun essai n'a encore eu lieu**.
+> plan réel. Un premier essai a eu lieu, hors dépôt, par des **pointages
+> automatisés** sur un dossier d'exécution réel (procédure et harnais dans
+> `docs/ESSAI_GUIDE_PLANS_REELS.md`, résultats dans l'espace privé de la
+> machine d'essai) ; il ne remplace pas l'essai **par une personne** que ce
+> document décrit, et n'établit pas la justesse.
 >
-> **Les plans réels ne sont pas accessibles dans l'environnement de travail
-> actuel.** Les quatre fichiers fournis lors d'un échange précédent vivaient
-> dans un espace de session (`/tmp/.../prive/`) qui a disparu avec le
-> conteneur. Rien de ce qui suit n'a donc pu être joué, et ce document existe
-> pour que l'essai soit possible **sans nouvelle discussion** le jour où les
+> **Les plans réels ne sont jamais dans le dépôt.** Ils vivent dans l'espace
+> privé de la machine d'essai (`/root/.metreo-essai/plans/`), et ce document
+> existe pour que l'essai soit possible **sans nouvelle discussion** le jour où les
 > fichiers seront là.
 >
 > **Leur absence ne bloque rien d'autre.** Tout ce qui pouvait être éprouvé

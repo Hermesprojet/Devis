@@ -340,7 +340,16 @@ test('un plan réel, de son dépôt au PDF du devis', async ({ page }) => {
   )
   if (PLAN.reprise.quantite_retenue) {
     await champRetenue.fill(PLAN.reprise.quantite_retenue)
-    await expect(apercu).toContainText(PLAN.reprise.quantite_retenue, { timeout: DELAI })
+    // Le serveur écrit à la belge, sans zéro de fin : « 6.38 » ou « 6,380 »
+    // dans le plan d'essai s'affichent « 6,38 ».
+    const ecritureAttendue = PLAN.reprise.quantite_retenue
+      .trim()
+      .replace(/[\s\u00a0]/g, '')
+      .replace(',', '.')
+      .replace(/(\.\d*?)0+$/, '$1')
+      .replace(/\.$/, '')
+      .replace('.', ',')
+    await expect(apercu).toContainText(ecritureAttendue, { timeout: DELAI })
     await expect(reprise.getByTestId('notice-erreur')).toHaveCount(0)
     lues.reprise.retenue = PLAN.reprise.quantite_retenue
     lues.reprise.apercu = (await apercu.innerText()).trim()

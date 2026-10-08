@@ -248,7 +248,7 @@ Une page suffit. Pour chaque plan :
 | Cote 2 — idem | |
 | Cote 3 (oblique) — idem | |
 | Surface — attendue / mesurée / écart / ± affiché | |
-| Quantité reprise au bordereau, et quantité imprimée sur le devis | |
+| Quantité brute et son ± / proposée / retenue (et par qui) / imprimée sur le devis | |
 | **Votre tolérance** — l'écart au-delà duquel vous refuseriez le chiffre | |
 
 La dernière ligne est volontairement vide. Elle est la seule que je ne peux pas
@@ -314,9 +314,12 @@ Puis, dans l'ordre :
    liste les types d'entités qui ne deviennent pas des mesures.
 2. **Écrire le plan d'essai**, un fichier JSON privé : les deux extrémités de
    la cote de calibration, les cotes courte, longue et oblique, les coins d'une
-   surface, les cinq répétitions, la mesure à reprendre. Les points s'écrivent
-   en fractions de page, origine en haut à gauche, comme l'écran les compte.
-   `textes` et `tuile` aident à les situer.
+   surface (`surface` est facultative — un plan de toiture n'en a pas), les
+   cinq répétitions, la mesure à reprendre. `reprise.quantite_retenue`
+   (facultatif, virgule belge, par exemple « 6,38 ») est l'écriture que la
+   personne retient, dans le ± de la mesure ; omis, la proposition du serveur
+   s'écrit. Les points s'écrivent en fractions de page, origine en haut à
+   gauche, comme l'écran les compte. `textes` et `tuile` aident à les situer.
 3. **Rejouer le parcours au navigateur**, qui photographie chaque étape :
    `apps/web/playwright.essai.config.ts`. Il refuse de démarrer si ses sorties
    ou le plan d'essai sont dans le dépôt, et aucune configuration de CI ne le

@@ -71,6 +71,7 @@ def _mesure_tranchee(
     corrigee: str | None = None,
     type_de_mesure: str = "segment",
     libelle: str = "Façade sud",
+    points: list[tuple[float, float]] | None = None,
 ) -> dict:
     """Un plan déposé sur ce projet, calibré, mesuré, puis tranché.
 
@@ -97,11 +98,12 @@ def _mesure_tranchee(
     assert analyse.status_code == 200, analyse.text
 
     assert _calibrer(client, entetes, document_id, revision_id).status_code == 201
-    points = (
-        [(0.0, 0.5), (0.25, 0.5)]
-        if type_de_mesure == "segment"
-        else [(0.1, 0.4), (0.4, 0.4), (0.4, 0.6), (0.1, 0.6)]
-    )
+    if points is None:
+        points = (
+            [(0.0, 0.5), (0.25, 0.5)]
+            if type_de_mesure == "segment"
+            else [(0.1, 0.4), (0.4, 0.4), (0.4, 0.6), (0.1, 0.6)]
+        )
     mesure = _mesurer(
         client,
         entetes,
@@ -846,6 +848,13 @@ def test_une_quantite_a_dix_decimales_s_ecrit_pareil_de_l_apercu_au_pdf(
 # dans le ± : 6,38 est une écriture de la même mesure, 6,5 un autre nombre.
 
 
+#: Un quadrilatère oblique : son aire n'est pas un nombre rond, donc la brute
+#: porte plus de décimales que le ± n'en autorise — le cas où proposer
+#: arrondit réellement. Le rectangle par défaut vaut exactement 9,9 m², et
+#: n'éprouverait l'arrondi que tautologiquement.
+_QUADRILATERE_OBLIQUE = [(0.1, 0.4), (0.37, 0.43), (0.33, 0.61), (0.12, 0.58)]
+
+
 def _surface_confirmee(seeded_client: TestClient, chantier) -> dict:
     """Une surface mesurée et CONFIRMÉE : elle a un ±, donc une proposition."""
     mesure = _mesure_tranchee(
@@ -855,6 +864,7 @@ def _surface_confirmee(seeded_client: TestClient, chantier) -> dict:
         decision="accepted",
         type_de_mesure="surface",
         libelle="Dalle du balcon",
+        points=_QUADRILATERE_OBLIQUE,
     )
     assert mesure["incertitude"] not in (None, "")
     assert Decimal(mesure["incertitude"]) > 0
@@ -882,6 +892,11 @@ def test_l_apercu_propose_la_quantite_a_la_finesse_de_la_mesure(
         Decimal(1).scaleb(-decimales), rounding=ROUND_HALF_UP
     )
     assert abs(Decimal(apercu["quantite_proposee"]) - brute) <= incertitude
+    # Et elle arrondit RÉELLEMENT : la brute de cette surface oblique porte dix
+    # décimales, la proposée s'arrête à celles du ±.
+    assert Decimal(apercu["quantite_proposee"]) != brute
+    assert -Decimal(apercu["quantite_proposee"]).as_tuple().exponent == decimales
+    assert -brute.as_tuple().exponent > decimales
     assert apercu["quantite"] == apercu["quantite_proposee"]
     assert apercu["quantite_retenue_par"] == "proposition"
     assert apercu["quantite_lisible"] == apercu["quantite_proposee_lisible"]
@@ -935,7 +950,11 @@ def test_une_quantite_retenue_dans_le_plus_ou_moins_s_ecrit_jusqu_au_pdf(
     ).json()
     assert Decimal(annonce["quantite"]) == retenue
     assert annonce["quantite_retenue_par"] == "personne"
-    assert "quantité retenue" in annonce["provenance_lisible"]
+    assert annonce["provenance_lisible"].endswith(
+        f" — quantité retenue {lisible.quantite_de_document_lisible(retenue, 'm2')}, "
+        "dans le ± de la mesure"
+    )
+    assert "quantité retenue" not in apercu["provenance_lisible"], "sans choix, rien à dire"
     assert Decimal(annonce["quantite_brute"]) == brute, "la brute ne bouge pas"
 
     prix = seeded_client.post(
@@ -1002,6 +1021,8 @@ def test_une_quantite_retenue_dans_le_plus_ou_moins_s_ecrit_jusqu_au_pdf(
     ecriture = lisible.nombre_francais_tel_quel(str(retenue)).replace("\u202f", "\u00a0")
     assert ecriture in texte
     assert "m²" in texte, "le devis imprime le symbole, pas le code"
+    # Aucune ligne du devis — ni celle-ci ni celles du chantier — n'imprime le code.
+    assert "m2" not in texte and "m3" not in texte
     # La brute à dix décimales, elle, n'est imprimée nulle part.
     brute_stockee = ligne["source_mesure"]["quantite_brute"]
     assert "." in brute_stockee and len(brute_stockee.split(".")[1]) == 10
@@ -1014,7 +1035,11 @@ def test_une_quantite_retenue_dans_le_plus_ou_moins_s_ecrit_jusqu_au_pdf(
     reprise = next(e for e in evenements if e["action"] == "boq_item.created_from_measurement")
     assert Decimal(reprise["payload"]["quantity"]) == retenue
     assert Decimal(reprise["payload"]["quantity_raw"]) == brute
+    assert Decimal(reprise["payload"]["quantity_proposed"]) == Decimal(apercu["quantite_proposee"])
     assert reprise["payload"]["quantity_retained_by"] == "personne"
+    assert reprise["payload"]["unit"] == "m2"
+    assert reprise["payload"]["decision"] == "accepted"
+    assert reprise["payload"]["proposal_id"] == mesure["proposal_id"]
     # Le ± qui a justifié l'acceptation est dans l'événement : il se relit seul.
     assert Decimal(reprise["payload"]["quantity_uncertainty"]) == incertitude
 
@@ -1030,7 +1055,34 @@ def test_une_quantite_retenue_hors_du_plus_ou_moins_est_refusee(
     entetes = chantier["entetes"]
     mesure = _surface_confirmee(seeded_client, chantier)
     apercu = _apercu(seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"]).json()
-    trop = Decimal(apercu["quantite_brute"]) + 3 * Decimal(apercu["incertitude"]) + 1
+    brute = Decimal(apercu["quantite_brute"])
+    incertitude = Decimal(apercu["incertitude"])
+
+    # La frontière exacte : brute + ± est encore une écriture de la mesure ;
+    # un dix-milliardième de plus — la dernière décimale de la colonne — ne
+    # l'est plus. C'est le « ≤ » de la règle, éprouvé des deux côtés.
+    limite = _apercu(
+        seeded_client,
+        entetes,
+        chantier["boq_id"],
+        mesure["proposal_id"],
+        quantite_retenue=str(brute + incertitude),
+    )
+    assert limite.status_code == 200, limite.text
+    assert limite.json()["quantite_retenue_par"] == "personne"
+    assert Decimal(limite.json()["quantite"]) == brute + incertitude
+    juste_au_dela = _apercu(
+        seeded_client,
+        entetes,
+        chantier["boq_id"],
+        mesure["proposal_id"],
+        quantite_retenue=str(brute + incertitude + Decimal("0.0000000001")),
+    )
+    assert juste_au_dela.status_code == 422, juste_au_dela.text
+    assert juste_au_dela.json()["detail"]["code"] == "quantite_retenue_hors_tolerance"
+    assert apercu["incertitude_lisible"] in juste_au_dela.json()["detail"]["message"]
+
+    trop = brute + 3 * incertitude + 1
 
     avant = seeded_client.get(f"/api/v1/boqs/{chantier['boq_id']}/items", headers=entetes).json()
     for route in (_apercu, _reprendre):
@@ -1047,12 +1099,29 @@ def test_une_quantite_retenue_hors_du_plus_ou_moins_est_refusee(
     apres = seeded_client.get(f"/api/v1/boqs/{chantier['boq_id']}/items", headers=entetes).json()
     assert len(apres) == len(avant)
 
-    # Zéro n'est pas une quantité d'ouvrage non plus.
-    nul = _apercu(
-        seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], quantite_retenue="0"
+    # Zéro n'est pas une quantité d'ouvrage non plus — sur les deux routes ; et
+    # une valeur négative n'atteint même pas le service : la borne du schéma la
+    # refuse, en nommant le champ.
+    for route in (_apercu, _reprendre):
+        nul = route(
+            seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], quantite_retenue="0"
+        )
+        assert nul.status_code == 422, nul.text
+        assert nul.json()["detail"]["code"] == "quantite_retenue_invalide"
+        negatif = route(
+            seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], quantite_retenue="-1"
+        )
+        assert negatif.status_code == 422, negatif.text
+        assert "quantite_retenue" in negatif.text
+    # Et un champ laissé vide n'est pas une quantité : c'est l'absence de choix.
+    vide = _apercu(
+        seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], quantite_retenue=""
     )
-    assert nul.status_code == 422
-    assert nul.json()["detail"]["code"] == "quantite_retenue_invalide"
+    assert vide.status_code == 200, vide.text
+    assert vide.json()["quantite_retenue_par"] == "proposition"
+    assert len(
+        seeded_client.get(f"/api/v1/boqs/{chantier['boq_id']}/items", headers=entetes).json()
+    ) == len(avant)
 
 
 def test_une_mesure_corrigee_n_a_pas_de_plus_ou_moins_et_s_ecrit_telle_quelle(
@@ -1087,16 +1156,20 @@ def test_une_mesure_corrigee_n_a_pas_de_plus_ou_moins_et_s_ecrit_telle_quelle(
     )
     assert meme.status_code == 200, meme.text
     assert meme.json()["quantite_retenue_par"] == "proposition"
-    autre = _apercu(
-        seeded_client,
-        entetes,
-        chantier["boq_id"],
-        mesure["proposal_id"],
-        unite_cible="m",
-        quantite_retenue="6.0",
-    )
-    assert autre.status_code == 422
-    assert autre.json()["detail"]["code"] == "quantite_retenue_hors_tolerance"
+    for route in (_apercu, _reprendre):
+        autre = route(
+            seeded_client,
+            entetes,
+            chantier["boq_id"],
+            mesure["proposal_id"],
+            unite_cible="m",
+            quantite_retenue="6.0",
+        )
+        assert autre.status_code == 422, autre.text
+        assert autre.json()["detail"]["code"] == "quantite_retenue_hors_tolerance"
+        # Sans ±, le message ne prête aucune marge à la mesure.
+        assert "±" not in autre.json()["detail"]["message"]
+        assert "6,02 m" in autre.json()["detail"]["message"]
 
 
 def test_l_apercu_dit_d_ou_vient_le_nombre(seeded_client: TestClient, chantier) -> None:
@@ -1152,3 +1225,61 @@ def test_l_apercu_est_offert_a_qui_lit_un_bordereau_sans_pouvoir_y_ecrire(
 
     refus = _reprendre(seeded_client, lecteur, chantier["boq_id"], mesure["proposal_id"])
     assert refus.status_code == 403, refus.text
+
+
+def test_la_quantite_retenue_se_juge_dans_l_unite_du_poste(
+    seeded_client: TestClient, chantier
+) -> None:
+    """Une longueur confirmée en millimètres, reprise en mètres : le ± est converti
+    avec la brute, la proposition suit ses décimales, et le choix de la personne
+    se juge dans cette unité-là."""
+    entetes = chantier["entetes"]
+    mesure = _mesure_tranchee(seeded_client, entetes, chantier["project_id"], decision="accepted")
+    assert mesure["unite"] == "mm"
+    en_mm = _apercu(seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"]).json()
+    en_m = _apercu(
+        seeded_client, entetes, chantier["boq_id"], mesure["proposal_id"], unite_cible="m"
+    ).json()
+    assert en_m["unite"] == "m"
+    # Convertis comme la colonne les porte : à dix décimales.
+    colonne = Decimal("0.0000000001")
+    assert Decimal(en_m["quantite_brute"]) == (Decimal(en_mm["quantite_brute"]) / 1000).quantize(
+        colonne
+    )
+    assert Decimal(en_m["incertitude"]) == (Decimal(en_mm["incertitude"]) / 1000).quantize(colonne)
+    assert en_m["incertitude_lisible"].endswith(" m")
+    decimales = lisible.decimales_utiles(Decimal(en_m["incertitude"]))
+    assert -Decimal(en_m["quantite_proposee"]).as_tuple().exponent <= decimales
+
+    # Dans le ± converti : accepté, en mètres, et l'empreinte garde ce ± converti.
+    brute_m = Decimal(en_m["quantite_brute"])
+    incertitude_m = Decimal(en_m["incertitude"])
+    retenue = (brute_m + incertitude_m / 2).quantize(Decimal("0.0001"))
+    if abs(retenue - brute_m) > incertitude_m:
+        retenue = brute_m
+    ligne = _reprendre(
+        seeded_client,
+        entetes,
+        chantier["boq_id"],
+        mesure["proposal_id"],
+        position="70.40",
+        designation="Façade sud, reprise en mètres",
+        unite_cible="m",
+        quantite_retenue=str(retenue),
+    )
+    assert ligne.status_code == 201, ligne.text
+    assert ligne.json()["unit_code"] == "m"
+    assert Decimal(ligne.json()["quantity"]) == retenue
+    assert Decimal(ligne.json()["source_mesure"]["incertitude_reprise"]) == incertitude_m
+
+    # Le même nombre en millimètres, lui, est un AUTRE nombre en mètres.
+    hors = _apercu(
+        seeded_client,
+        entetes,
+        chantier["boq_id"],
+        mesure["proposal_id"],
+        unite_cible="m",
+        quantite_retenue=en_mm["quantite_proposee"],
+    )
+    assert hors.status_code == 422, hors.text
+    assert hors.json()["detail"]["code"] == "quantite_retenue_hors_tolerance"

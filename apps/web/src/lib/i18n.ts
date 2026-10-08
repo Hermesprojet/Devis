@@ -441,6 +441,9 @@ const fr: Dictionary = {
   'plan.pdf.quantiteRetenueAide':
     'Proposée à la finesse de la mesure. Vous pouvez en retenir une autre écriture, dans le ± de la '
     + 'mesure ; au-delà, corrigez la mesure sur le plan, avec un motif.',
+  'plan.pdf.quantiteRetenueAideCorrigee':
+    'Mesure corrigée : elle n’a pas de ±, seule sa valeur exacte s’écrit. Pour un autre nombre, '
+    + 'corrigez à nouveau la mesure sur le plan, avec un motif.',
   'plan.pdf.quantiteReprise': 'Quantité qui sera écrite',
   'plan.pdf.provenance': 'Provenance',
   'plan.pdf.reprendreConfirmer': 'Reprendre',

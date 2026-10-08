@@ -215,9 +215,11 @@ def quantite_de_document_lisible(valeur: Decimal, unite: str) -> str:
     mesurée sur un balcon, reprise au bordereau, s'écrivait « 6,378795 m² »
     dans l'aperçu et au bordereau, et « 6,3787950927 » dans l'étude et sur le
     PDF remis au client : la même valeur, deux écritures, et un aperçu qui
-    annonçait un nombre que la ligne ne portait pas. Arrondir cette quantité
-    est une décision de chiffrage, ouverte dans `docs/ARRONDI_DES_DOCUMENTS.md` ;
-    l'écrire de deux façons n'en était pas une.
+    annonçait un nombre que la ligne ne portait pas. Le nombre de décimales
+    d'une quantité reprise d'un plan est tranché depuis dans
+    `docs/ARRONDI_DES_DOCUMENTS.md` (« la quantité RETENUE ») et appliqué par
+    `reprise_de_mesure` : proposée à la finesse du ±, retenue dans le ±. Cette
+    fonction, elle, n'arrondit toujours rien : elle transcrit.
 
     >>> quantite_de_document_lisible(Decimal("6.0200000000"), "m")
     '6,02 m'

@@ -964,8 +964,8 @@ export type BoqItem = {
       moins) et le symbole de l'unité (« m² » là où le code dit « m2 »).
       Vide sur une section, qui n'a pas de quantité. */
   quantity_lisible: string
-  /** « m² » pour « m2 » : le symbole, rendu par le serveur. */
-  unit_lisible: string
+  /** « m² » pour « m2 » : le symbole, rendu par le serveur ; absent d'une API plus ancienne. */
+  unit_lisible?: string
   kind: string
   status: string
   formula: string | null

@@ -326,7 +326,7 @@ chaînes, et l'API les rend telles quelles.
   et pour la même raison : on ne réécrit pas un document déjà entre les mains
   d'un client.
 
-## Ce qui reste ouvert, et qui est une décision de chiffrage
+## Une quantité reprise d'un plan : du constat à la quantité retenue
 
 **Une quantité reprise d'un plan porte dix décimales.** La mesure est quantisée
 à dix décimales à son calcul, la conversion d'unité en produit autant, et la
@@ -346,6 +346,12 @@ pointée à ses quatre coins puis confirmée, a donné une ligne de bordereau de
 | La ligne du bordereau | `6,378795 m²` | `6,3787950927 m²` |
 | L'étude de prix | `6,3787950927` | inchangé |
 | Le PDF remis au client | `6,3787950927` | inchangé |
+
+Depuis la quantité retenue (ci-dessous), l'aperçu et le bordereau écrivent la
+**proposée** (6,379 m²) ou la **retenue** (6,38 m²) ; la brute 6,3787950927 m²
+reste dans `source_mesure.quantite_brute` et au journal (`quantity_raw`), et
+l'étude comme le PDF lisent la même colonne que le bordereau.
+
 
 **Ce qui a été corrigé, et ce qui ne l'a pas été.** L'aperçu annonçait un
 nombre que la ligne ne portait pas, et l'écran disait autre chose que le

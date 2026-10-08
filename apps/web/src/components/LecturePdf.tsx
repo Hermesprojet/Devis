@@ -43,15 +43,11 @@ import {
   type UniteConnue,
 } from '@/lib/api'
 import { t } from '@/lib/i18n'
+import { uniteLisible } from '../lib/unites'
 import { ErrorNotice } from '@/components/Feedback'
 
 /** Les unités de longueur que la calibration accepte, dans l'ordre d'usage. */
 const UNITES = ['mm', 'cm', 'm'] as const
-/** Le symbole d'une unité de poste, comme le serveur l'écrit (`lisible.unite_affichee`). */
-const UNITE_LISIBLE: Record<string, string> = { m2: 'm²', m3: 'm³' }
-function uniteLisible(code: string): string {
-  return UNITE_LISIBLE[code] ?? code
-}
 
 /**
  * La taille d'une loupe, en fraction de la page.
@@ -1616,6 +1612,11 @@ function LigneDeMesurePdf({
  * ne se voit pas sur le nombre — elle se voit sur le total, des semaines plus
  * tard.
  */
+/** « 6 001,2 » → « 6001.2 » : espaces de milliers retirés, virgule belge en point. */
+function normaliserLaSaisie(texte: string): string {
+  return texte.replace(/[\s\u00a0]/g, '').replace(',', '.')
+}
+
 function FormulaireDeReprise({
   mesure,
   bordereaux,
@@ -1668,10 +1669,14 @@ function FormulaireDeReprise({
   useEffect(() => {
     if (!bordereauId) return
     let abandonne = false
-    setApercu(null)
+    // L'aperçu précédent reste affiché le temps de la réponse : la brute et
+    // son ± ne clignotent pas à chaque frappe. Une réponse en retard est
+    // ignorée (`abandonne`), donc rien de périmé ne remplace du plus récent.
     setErreur(null)
-    const cle = `${bordereauId}|${uniteCible}`
-    const saisie = quantiteRetenue.trim().replace(',', '.')
+    // La proposition dépend de l'UNITÉ, pas du bordereau : changer de
+    // bordereau garde ce que la personne a tapé.
+    const cle = uniteCible
+    const saisie = normaliserLaSaisie(quantiteRetenue)
     const saisieValable = proposition !== null && proposition.cle === cle && saisie !== ''
     api
       .apercuDeReprise(bordereauId, {
@@ -1687,7 +1692,13 @@ function FormulaireDeReprise({
           setQuantiteRetenue(lu.quantite_proposee.replace('.', ','))
         }
       })
-      .catch((cause) => !abandonne && setErreur(cause))
+      .catch((cause) => {
+        if (abandonne) return
+        // Un refus laisse la brute visible, mais aucune quantité « qui sera
+        // écrite » : le bouton Reprendre se ferme avec l'aperçu.
+        setApercu(null)
+        setErreur(cause)
+      })
     return () => {
       abandonne = true
     }
@@ -1708,7 +1719,10 @@ function FormulaireDeReprise({
         designation: designation.trim(),
         unite_cible: uniteCible,
         // Exactement ce que l'aperçu a jugé : la ligne portera le nombre montré.
-        quantite_retenue: quantiteRetenue.trim().replace(',', '.'),
+        // Un champ vide n'est pas une quantité : il ne part pas, comme pour l'aperçu.
+        ...(normaliserLaSaisie(quantiteRetenue) !== ''
+          ? { quantite_retenue: normaliserLaSaisie(quantiteRetenue) }
+          : {}),
       })
       onReprise(ligne, bordereau)
     } catch (cause) {
@@ -1722,7 +1736,9 @@ function FormulaireDeReprise({
     <form className="pdf-reprise" data-testid="pdf-formulaire-reprise" onSubmit={reprendre}>
       <h4>{t('plan.pdf.reprendreTitre')}</h4>
       <p className="muted">{t('plan.pdf.reprendreAide')}</p>
-      <ErrorNotice error={erreur} />
+      <div id={`reprise-refus-${mesure.proposal_id}`}>
+        <ErrorNotice error={erreur} />
+      </div>
 
       <div className="row">
         <div className="field">
@@ -1816,11 +1832,15 @@ function FormulaireDeReprise({
               value={quantiteRetenue}
               onChange={(e) => setQuantiteRetenue(e.target.value)}
               disabled={proposition === null}
-              aria-describedby={`reprise-quantite-aide-${mesure.proposal_id}`}
+              aria-describedby={`reprise-quantite-unite-${mesure.proposal_id} reprise-quantite-aide-${mesure.proposal_id} reprise-refus-${mesure.proposal_id}`}
             />{' '}
-            <span className="mono">{apercu ? uniteLisible(apercu.unite) : ''}</span>
+            <span id={`reprise-quantite-unite-${mesure.proposal_id}`} className="mono">
+              {apercu ? uniteLisible(apercu.unite) : ''}
+            </span>
             <p id={`reprise-quantite-aide-${mesure.proposal_id}`} className="muted plan-faits">
-              {t('plan.pdf.quantiteRetenueAide')}
+              {apercu && apercu.incertitude === null
+                ? t('plan.pdf.quantiteRetenueAideCorrigee')
+                : t('plan.pdf.quantiteRetenueAide')}
             </p>
           </dd>
         </div>

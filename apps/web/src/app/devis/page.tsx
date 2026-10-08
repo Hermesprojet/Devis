@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { api, ApiError, type PublicQuoteView, type PublicReceipt } from '@/lib/api'
 import { ecrireEnFrancais } from '@/lib/nombres'
+import { uniteLisible } from '../../lib/unites'
 
 /**
  * La page que le destinataire d'un devis ouvre, sans compte Metreo.
@@ -245,7 +246,7 @@ export default function PublicQuotePage() {
               <tr key={`${ligne.position}-${index}`}>
                 <td className="mono">{ligne.position}</td>
                 <td>{ligne.designation}</td>
-                <td>{ligne.unit}</td>
+                <td>{uniteLisible(ligne.unit)}</td>
                 <td className="num">{ecrireEnFrancais(ligne.quantity)}</td>
                 <td className="num">{ecrireEnFrancais(ligne.unit_price_ht)}</td>
                 <td className="num">{ecrireEnFrancais(ligne.total_ht)}</td>

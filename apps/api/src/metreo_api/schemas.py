@@ -19,6 +19,7 @@ from pydantic import (
     StringConstraints,
     computed_field,
     field_serializer,
+    field_validator,
     model_validator,
 )
 
@@ -1698,6 +1699,14 @@ class ApercuDeRepriseCreate(BaseModel):
     #: proposition du serveur. Refusée hors du ± de la mesure.
     quantite_retenue: Decimal | None = _bounded_opt(bounds.QUANTITY)
 
+    @field_validator("quantite_retenue", mode="before")
+    @classmethod
+    def _vide_vaut_absent(cls, valeur: object) -> object:
+        """Un champ de formulaire laissé vide n'est pas une quantité : c'est l'absence de choix."""
+        if isinstance(valeur, str) and not valeur.strip():
+            return None
+        return valeur
+
 
 class ApercuDeReprise(DecimalOut):
     """La quantité qu'une reprise écrirait, et d'où elle vient.
@@ -1757,6 +1766,15 @@ class RepriseDeMesureCreate(BaseModel):
     #: de la mesure. Omise, la proposition de l'aperçu s'écrit — exactement le
     #: nombre que l'aperçu a montré.
     quantite_retenue: Decimal | None = _bounded_opt(bounds.QUANTITY)
+
+    @field_validator("quantite_retenue", mode="before")
+    @classmethod
+    def _vide_vaut_absent(cls, valeur: object) -> object:
+        """Un champ de formulaire laissé vide n'est pas une quantité : c'est l'absence de choix."""
+        if isinstance(valeur, str) and not valeur.strip():
+            return None
+        return valeur
+
     position: str = Field(min_length=1, max_length=40)
     designation: str = Field(min_length=1)
     unite_cible: str | None = Field(default=None, max_length=12)
