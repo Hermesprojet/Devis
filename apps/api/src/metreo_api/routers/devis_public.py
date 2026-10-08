@@ -40,6 +40,7 @@ from ..schemas import (
 )
 from ..services import cycle_devis, partage
 from ..services.document_storage import ContenuRefuse, StockageLocal
+from ..services.lisible import unite_affichee
 from ..services.quote_pdf import lignes_d_adresse_emetteur
 from ..transactions import RouteTransactionnelle
 
@@ -140,7 +141,7 @@ def _lignes(devis: IssuedQuote) -> list[PublicQuoteLine]:
         PublicQuoteLine(
             position=str(ligne.get("position", "")),
             designation=str(ligne.get("designation", "")),
-            unit=str(ligne.get("unit", "")),
+            unit=unite_affichee(str(ligne.get("unit", ""))),
             quantity=str(ligne.get("quantity", "")),
             unit_price_ht=str(ligne.get("unit_price_ht", "")),
             total_ht=str(ligne.get("selling_price_ht", "")),

@@ -303,6 +303,7 @@ def preview_measurement_carry_over(
             organization_id=context.organization_id,
             proposal_id=payload.proposal_id,
             unite_cible=payload.unite_cible,
+            quantite_retenue=payload.quantite_retenue,
         )
     except reprise_de_mesure.RepriseRefusee as refus:
         raise HTTPException(
@@ -321,6 +322,13 @@ def preview_measurement_carry_over(
         unite=reprise.unite,
         quantite_lisible=reprise.quantite_lisible,
         provenance_lisible=reprise.provenance_lisible,
+        quantite_brute=reprise.quantite_brute,
+        quantite_brute_lisible=reprise.quantite_brute_lisible,
+        incertitude=reprise.incertitude,
+        incertitude_lisible=reprise.incertitude_lisible,
+        quantite_proposee=reprise.quantite_proposee,
+        quantite_proposee_lisible=reprise.quantite_proposee_lisible,
+        quantite_retenue_par=reprise.quantite_retenue_par,
     )
 
 
@@ -361,6 +369,7 @@ def create_item_from_measurement(
             organization_id=context.organization_id,
             proposal_id=payload.proposal_id,
             unite_cible=payload.unite_cible,
+            quantite_retenue=payload.quantite_retenue,
         )
     except reprise_de_mesure.RepriseRefusee as refus:
         raise HTTPException(
@@ -456,6 +465,14 @@ def create_item_from_measurement(
             "unit": item.unit_code,
             "proposal_id": payload.proposal_id,
             "decision": reprise.source_mesure["decision"],
+            # La décision sur la quantité, tracée : ce qu'elle valait, ce qui
+            # était proposé, ce qui a été retenu, et par qui.
+            "quantity_raw": str(reprise.quantite_brute),
+            "quantity_uncertainty": (
+                str(reprise.incertitude) if reprise.incertitude is not None else None
+            ),
+            "quantity_proposed": str(reprise.quantite_proposee),
+            "quantity_retained_by": reprise.quantite_retenue_par,
         },
     )
     return item

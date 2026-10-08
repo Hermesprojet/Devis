@@ -18,7 +18,7 @@ from typing import Any
 
 from . import pdf as moteur
 from .images import ImageRefusee, lire_png
-from .lisible import nombre_francais_tel_quel
+from .lisible import nombre_francais_tel_quel, unite_affichee
 
 GRIS_ENTETE = 0.88
 GRIS_TOTAL = 0.94
@@ -580,6 +580,10 @@ def _tableau(
             valeur = str(ligne.get(cle, "") or "")
             if section and cle not in ("position", "designation"):
                 valeur = ""
+            elif cle == "unit":
+                # « m² » et non « m2 » : le symbole, par la même table que
+                # l'écran. Le code reste dans l'instantané et dans le CSV.
+                valeur = unite_affichee(valeur)
             elif a_droite:
                 # Les colonnes alignées à droite sont les colonnes de nombres, et
                 # elles seules. Le moteur a déjà décidé le nombre et ses

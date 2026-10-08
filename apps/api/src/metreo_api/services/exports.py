@@ -19,7 +19,7 @@ from metreo_domain.estimate import EstimateResult
 from metreo_domain.money import RoundingPolicy
 
 from ..models import Estimate, EstimateVersion, Organization, Project
-from .lisible import nombre_francais_tel_quel
+from .lisible import nombre_francais_tel_quel, unite_affichee
 
 CSV_DELIMITER = ";"
 
@@ -300,7 +300,7 @@ def quote_html(
             )
             + ('<br><span class="meta">Poste non chiffré</span>' if row["missing_price"] else "")
             + "</td>"
-            f"<td>{escape(row['unit']) if row['kind'] != 'section' else ''}</td>"
+            f"<td>{escape(unite_affichee(row['unit'])) if row['kind'] != 'section' else ''}</td>"
             f'<td class="num">{escape(nombre_francais_tel_quel(row["quantity"])) if row["kind"] != "section" else ""}</td>'
             f'<td class="num">{escape(nombre_francais_tel_quel(str(row["unit_price_ht"])))}</td>'
             f'<td class="num">{escape(nombre_francais_tel_quel(str(row["selling_price_ht"])))}</td>'

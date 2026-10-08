@@ -1673,6 +1673,14 @@ class BoqItemOut(DecimalOut):
             return ""
         return lisible.quantite_de_document_lisible(self.quantity, self.unit_code)
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def unit_lisible(self) -> str:
+        """« m² » là où le code dit « m2 » — le symbole, rendu par le serveur."""
+        from .services import lisible
+
+        return lisible.unite_affichee(self.unit_code)
+
 
 class ApercuDeRepriseCreate(BaseModel):
     """Ce qu'il faut pour CALCULER une reprise sans l'écrire.
@@ -1686,6 +1694,9 @@ class ApercuDeRepriseCreate(BaseModel):
 
     proposal_id: str
     unite_cible: str | None = Field(default=None, max_length=12)
+    #: Ce que la personne veut écrire, dans `unite_cible`. Absente : la
+    #: proposition du serveur. Refusée hors du ± de la mesure.
+    quantite_retenue: Decimal | None = _bounded_opt(bounds.QUANTITY)
 
 
 class ApercuDeReprise(DecimalOut):
@@ -1702,24 +1713,37 @@ class ApercuDeReprise(DecimalOut):
     puis confirmer.** Rien n'est écrit tant que la personne n'a pas vu.
     """
 
-    #: La quantité exacte, dans `unite`. C'est elle qui serait écrite.
+    #: Ce qui sera ÉCRIT, dans `unite` : la quantité retenue par la personne,
+    #: ou à défaut la proposition du serveur.
     quantite: Decimal
     #: Le code d'unité canonique de la quantité.
     unite: str
-    #: La même quantité, écrite pour être LUE, arrondie à la décimale que
-    #: l'incertitude de la mesure autorise.
+    #: La même quantité, écrite pour être LUE, comme le devis l'écrira.
     quantite_lisible: str
     #: Une phrase qui dit d'où vient le nombre : page, décision, valeur retenue.
     provenance_lisible: str
+    #: La mesure brute dans `unite`, convertie sans aucun arrondi, et son ±
+    #: dans la même unité — `None` pour une mesure corrigée.
+    quantite_brute: Decimal
+    quantite_brute_lisible: str
+    incertitude: Decimal | None
+    incertitude_lisible: str | None
+    #: Ce que le serveur propose d'écrire : la brute, à la finesse de son ±.
+    quantite_proposee: Decimal
+    quantite_proposee_lisible: str
+    #: « proposition » ou « personne » : qui a retenu `quantite`.
+    quantite_retenue_par: Literal["proposition", "personne"]
 
 
 class RepriseDeMesureCreate(BaseModel):
     """Reprendre une mesure tranchée dans une ligne de bordereau.
 
-    **La quantité n'y figure pas, et c'est tout l'objet de cette route.** Elle
-    vient de la mesure et de la décision humaine qui l'a retenue ; la laisser
-    déclarer ici rendrait possible une ligne qui annonce une provenance et
-    porte un autre nombre, ce qui est pire que pas de provenance du tout.
+    **La quantité ne se déclare pas librement, et c'est tout l'objet de cette
+    route.** Elle vient de la mesure et de la décision humaine qui l'a retenue.
+    La personne peut seulement choisir une ÉCRITURE de cette mesure
+    (`quantite_retenue`), dans son ± ; au-delà, la reprise est refusée et nommée.
+    Une ligne qui annonce une provenance et porte un autre nombre serait pire
+    que pas de provenance du tout.
 
     `unite_cible` est la seule conversion du parcours, et elle est explicite :
     une mesure en millimètres se reprend en mètres si la personne le demande,
@@ -1729,6 +1753,10 @@ class RepriseDeMesureCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     proposal_id: str
+    #: Une ÉCRITURE de la mesure, choisie par la personne : refusée hors du ±
+    #: de la mesure. Omise, la proposition de l'aperçu s'écrit — exactement le
+    #: nombre que l'aperçu a montré.
+    quantite_retenue: Decimal | None = _bounded_opt(bounds.QUANTITY)
     position: str = Field(min_length=1, max_length=40)
     designation: str = Field(min_length=1)
     unite_cible: str | None = Field(default=None, max_length=12)
