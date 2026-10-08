@@ -401,7 +401,7 @@ function LineRow({
           </details>
         )}
       </td>
-      <td>{isSection ? '' : line.unit}</td>
+      <td>{isSection ? '' : (line.unit_lisible ?? line.unit)}</td>
       <td className="num">{isSection ? '' : ecrireEnFrancais(line.quantity)}</td>
       {internal && <td className="num">{ecrireEnFrancais(price?.direct_cost)}</td>}
       <td className="num">{ecrireEnFrancais(price?.unit_price_ht)}</td>

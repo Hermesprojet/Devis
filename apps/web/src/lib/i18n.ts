@@ -436,6 +436,11 @@ const fr: Dictionary = {
     + 'Choisissez où l’écrire et dans quelle unité, vérifiez le nombre, puis confirmez.',
   'plan.pdf.bordereau': 'Bordereau',
   'plan.pdf.uniteCible': 'Unité du poste',
+  'plan.pdf.mesureBrute': 'Mesure brute',
+  'plan.pdf.quantiteRetenue': 'Quantité retenue',
+  'plan.pdf.quantiteRetenueAide':
+    'Proposée à la finesse de la mesure. Vous pouvez en retenir une autre écriture, dans le ± de la '
+    + 'mesure ; au-delà, corrigez la mesure sur le plan, avec un motif.',
   'plan.pdf.quantiteReprise': 'Quantité qui sera écrite',
   'plan.pdf.provenance': 'Provenance',
   'plan.pdf.reprendreConfirmer': 'Reprendre',

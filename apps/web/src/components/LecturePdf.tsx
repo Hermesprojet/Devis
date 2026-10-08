@@ -47,6 +47,11 @@ import { ErrorNotice } from '@/components/Feedback'
 
 /** Les unités de longueur que la calibration accepte, dans l'ordre d'usage. */
 const UNITES = ['mm', 'cm', 'm'] as const
+/** Le symbole d'une unité de poste, comme le serveur l'écrit (`lisible.unite_affichee`). */
+const UNITE_LISIBLE: Record<string, string> = { m2: 'm²', m3: 'm³' }
+function uniteLisible(code: string): string {
+  return UNITE_LISIBLE[code] ?? code
+}
 
 /**
  * La taille d'une loupe, en fraction de la page.
@@ -1629,6 +1634,14 @@ function FormulaireDeReprise({
   const [position, setPosition] = useState('')
   const [designation, setDesignation] = useState(mesure.libelle)
   const [apercu, setApercu] = useState<ApercuDeReprise | null>(null)
+  // Ce que la personne retient, tel qu'elle le tape — virgule belge admise.
+  // Vide tant que le serveur n'a pas proposé : le champ se remplit de la
+  // proposition à la première réponse, et jamais plus ensuite.
+  const [quantiteRetenue, setQuantiteRetenue] = useState('')
+  // La proposition du serveur, et POUR QUELS bordereau et unité elle vaut : une
+  // quantité tapée en millimètres n'a aucun sens une fois l'unité passée en
+  // mètres, et l'envoyer ferait refuser « 6 001,2 m » — mesuré.
+  const [proposition, setProposition] = useState<{ cle: string; valeur: string } | null>(null)
   const [occupe, setOccupe] = useState(false)
   const [erreur, setErreur] = useState<unknown>(null)
 
@@ -1646,22 +1659,41 @@ function FormulaireDeReprise({
   // réponse en retard ne remplace jamais une plus récente : deux clics rapides
   // sur le sélecteur d'unité afficheraient sinon la quantité de l'avant-dernier
   // choix, en se croyant à jour. Même règle que pour les tuiles de plan.
+  //
+  // **La quantité retenue passe par le même aperçu.** Le navigateur ne juge
+  // pas si « 6,38 » est une écriture de « 6,3787950927 ± 0,041 » : il envoie
+  // ce qui est tapé, et c'est le serveur qui répond par le nombre qui sera
+  // écrit — ou par un refus, affiché tel quel. Une nouvelle proposition du
+  // serveur — autre unité, autre bordereau — remplace la saisie.
   useEffect(() => {
     if (!bordereauId) return
     let abandonne = false
     setApercu(null)
     setErreur(null)
+    const cle = `${bordereauId}|${uniteCible}`
+    const saisie = quantiteRetenue.trim().replace(',', '.')
+    const saisieValable = proposition !== null && proposition.cle === cle && saisie !== ''
     api
       .apercuDeReprise(bordereauId, {
         proposal_id: mesure.proposal_id,
         unite_cible: uniteCible,
+        ...(saisieValable ? { quantite_retenue: saisie } : {}),
       })
-      .then((lu) => !abandonne && setApercu(lu))
+      .then((lu) => {
+        if (abandonne) return
+        setApercu(lu)
+        if (proposition === null || proposition.cle !== cle) {
+          setProposition({ cle, valeur: lu.quantite_proposee })
+          setQuantiteRetenue(lu.quantite_proposee.replace('.', ','))
+        }
+      })
       .catch((cause) => !abandonne && setErreur(cause))
     return () => {
       abandonne = true
     }
-  }, [bordereauId, uniteCible, mesure.proposal_id])
+    // `proposition` est posée PAR cet effet : la relire ici le ferait boucler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bordereauId, uniteCible, mesure.proposal_id, quantiteRetenue])
 
   async function reprendre(evenement: React.FormEvent) {
     evenement.preventDefault()
@@ -1675,6 +1707,8 @@ function FormulaireDeReprise({
         position: position.trim(),
         designation: designation.trim(),
         unite_cible: uniteCible,
+        // Exactement ce que l'aperçu a jugé : la ligne portera le nombre montré.
+        quantite_retenue: quantiteRetenue.trim().replace(',', '.'),
       })
       onReprise(ligne, bordereau)
     } catch (cause) {
@@ -1749,12 +1783,47 @@ function FormulaireDeReprise({
       </div>
 
       {/*
-        **Ce qui sera écrit, avant de l'écrire.** Le nombre vient du serveur,
-        arrondi à la décimale que l'incertitude de la mesure autorise — pas une
-        de plus. La phrase de provenance dit d'où il vient : la page, la
-        décision prise, et la valeur retenue.
+        **Ce qui sera écrit, avant de l'écrire.** La mesure brute et son ±
+        restent visibles ; le serveur propose la quantité à la finesse du ±,
+        et la personne peut en retenir une autre écriture — dans le ±. Au-delà,
+        le serveur refuse et le dit ici, et rien ne s'écrit.
       */}
       <dl className="pdf-apercu-reprise" data-testid="pdf-apercu-reprise">
+        <div>
+          <dt>{t('plan.pdf.mesureBrute')}</dt>
+          <dd data-testid="pdf-apercu-brute">
+            {apercu ? (
+              <>
+                {apercu.quantite_brute_lisible}
+                {apercu.incertitude_lisible ? ` ${apercu.incertitude_lisible}` : ''}
+              </>
+            ) : (
+              <span className="muted">{t('common.loading')}</span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>
+            <label htmlFor={`reprise-quantite-${mesure.proposal_id}`}>
+              {t('plan.pdf.quantiteRetenue')}
+            </label>
+          </dt>
+          <dd>
+            <input
+              id={`reprise-quantite-${mesure.proposal_id}`}
+              data-testid="pdf-reprise-quantite"
+              inputMode="decimal"
+              value={quantiteRetenue}
+              onChange={(e) => setQuantiteRetenue(e.target.value)}
+              disabled={proposition === null}
+              aria-describedby={`reprise-quantite-aide-${mesure.proposal_id}`}
+            />{' '}
+            <span className="mono">{apercu ? uniteLisible(apercu.unite) : ''}</span>
+            <p id={`reprise-quantite-aide-${mesure.proposal_id}`} className="muted plan-faits">
+              {t('plan.pdf.quantiteRetenueAide')}
+            </p>
+          </dd>
+        </div>
         <div>
           <dt>{t('plan.pdf.quantiteReprise')}</dt>
           <dd data-testid="pdf-apercu-quantite">

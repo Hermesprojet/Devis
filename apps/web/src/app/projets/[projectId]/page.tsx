@@ -279,7 +279,7 @@ export default function ProjectPage() {
                       */}
                       <ProvenanceDuPoste item={item} />
                     </td>
-                    <td>{item.kind === 'section' ? '' : item.unit_code}</td>
+                    <td>{item.kind === 'section' ? '' : item.unit_lisible}</td>
                     <td className="num">{item.quantity_lisible}</td>
                     <td>
                       <span className={`badge ${item.status === 'approved' ? 'success' : ''}`}>

@@ -586,14 +586,18 @@ export const api = {
    * précisément le genre de facteur qu'on finit par écrire deux fois : une en
    * Python, une ici. Les deux divergent au premier arrondi.
    */
-  apercuDeReprise: (boqId: string, body: { proposal_id: string; unite_cible?: string }) =>
+  apercuDeReprise: (
+    boqId: string,
+    body: { proposal_id: string; unite_cible?: string; quantite_retenue?: string },
+  ) =>
     request<ApercuDeReprise>(`/boqs/${boqId}/reprises-de-mesure/apercu`, {
       method: 'POST',
       body,
     }),
 
   /** Écrit la ligne. La quantité n'est PAS déclarée ici : elle est lue de la
-      mesure et de la décision humaine qui l'a retenue. */
+      mesure et de la décision humaine qui l'a retenue. `quantite_retenue` n'est
+      qu'une ÉCRITURE de cette mesure, dans son ±, et le serveur la refuse au-delà. */
   reprendreUneMesure: (
     boqId: string,
     body: {
@@ -601,6 +605,7 @@ export const api = {
       position: string
       designation: string
       unite_cible?: string
+      quantite_retenue?: string
       notes?: string
     },
   ) => request<BoqItem>(`/boqs/${boqId}/items:depuis-une-mesure`, { method: 'POST', body }),
@@ -959,6 +964,8 @@ export type BoqItem = {
       moins) et le symbole de l'unité (« m² » là où le code dit « m2 »).
       Vide sur une section, qui n'a pas de quantité. */
   quantity_lisible: string
+  /** « m² » pour « m2 » : le symbole, rendu par le serveur. */
+  unit_lisible: string
   kind: string
   status: string
   formula: string | null
@@ -975,10 +982,21 @@ export type BoqItem = {
 
 /** Ce qu'une reprise écrirait, calculé par le serveur et jamais par l'écran. */
 export type ApercuDeReprise = {
+  /** Ce qui sera ÉCRIT : la quantité retenue par la personne, ou la proposition. */
   quantite: string
   unite: string
   quantite_lisible: string
   provenance_lisible: string
+  /** La mesure brute, convertie sans arrondi, et son ± dans la même unité (`null` si corrigée). */
+  quantite_brute: string
+  quantite_brute_lisible: string
+  incertitude: string | null
+  incertitude_lisible: string | null
+  /** Ce que le serveur propose : la brute, à la finesse de son ±. */
+  quantite_proposee: string
+  quantite_proposee_lisible: string
+  /** `'proposition'` ou `'personne'` : qui a retenu `quantite`. */
+  quantite_retenue_par: string
 }
 
 /** Une unité reconnue par le moteur, avec sa dimension. */
@@ -1466,6 +1484,8 @@ export type EstimateLine = {
   kind: string
   quantity: string
   unit: string
+  /** « m² » pour « m2 », rendu par le serveur. Absent d'un instantané ancien. */
+  unit_lisible?: string
   missing_price: boolean
   included_in_total: boolean
   price: LinePrice | null
